@@ -1134,6 +1134,21 @@ def main():
     parser.add_argument("--lagrangian_coef_rate", type=float, default=0.001, help="Lagrange multiplier LR")
     parser.add_argument("--initial_lambda_lagr", type=float, default=0.0, help="Initial lambda value")
 
+    # --- PPO-PID Lagrange ---
+    parser.add_argument("--pid_kp", type=float, default=10.0, help="PID: proportional gain")
+    parser.add_argument("--pid_ki", type=float, default=0.01, help="PID: integral gain")
+    parser.add_argument("--pid_kd", type=float, default=0.01, help="PID: derivative gain")
+    parser.add_argument("--pid_integral_clip", type=float, default=1.0, help="PID: anti-windup cap for integral term")
+    parser.add_argument("--pid_lambda_clip", type=float, default=1e6, help="PID: clamp for lambda")
+    parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
+
+    # --- PPO-Saute ---
+    parser.add_argument("--saute-initial-budget", dest="initial_budget", type=float, default=15.0, help="Initial discounted safety budget b0")
+    parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None, help="Budget discount factor; defaults to --discounting if None")
+    parser.add_argument("--saute-termination-on-violation", dest="termination_on_violation", type=int, default=1, help="Terminate episode on budget violation (1/0)")
+    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=0.0, help="Optional terminal penalty added only on violation step")
+    parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1, help="Normalize budget observation by initial budget")
+
     # --- PPO-Cost verification ---
     parser.add_argument("--ppoc-verify-log-steps", type=int, default=0,
                         help="If >0 and alg is ppo_cost, run verify rollout and log shaping")
