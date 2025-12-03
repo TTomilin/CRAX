@@ -360,7 +360,7 @@ class SafePointGoal(PipelineEnv):
         }
 
         obs = self._get_obs(data)
-        reward, cost, ctrl_cost, goals_reached, goals_per_ep, goals_per_step, done = jp.zeros(7)
+        reward, cost, ctrl_cost, done = jp.zeros(4)
         metrics = self._get_metrics(data, reward, cost, initial_dist_goal, initial_dist_goal, ctrl_cost)
 
         return State(data, obs, reward, done, metrics, info)
