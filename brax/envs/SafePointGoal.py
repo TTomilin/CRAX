@@ -113,7 +113,7 @@ class SafePointGoal(PipelineEnv):
     Default observation space (62 dimensions):
     - Sensor data: 12 values (3 each for accel, velocity, gyro, magnetometer)
     - Goal lidar: 16 bins
-    - Hazard lidar: 16 bins  
+    - Hazard lidar: 16 bins
     - Goal compass: 2 values
     - Hazard compasses: 16 values (8 hazards × 2 values each)
     """
@@ -562,22 +562,6 @@ class SafePointGoal(PipelineEnv):
         mocap_pos = mocap_pos.at[jp.array(self._goal_mocap_ids)].set(new_goal_positions)
         data = data.replace(mocap_pos=mocap_pos)
 
-        # ============================== METRICS AGGREGATION ==============================
-
-        # Update counters
-        updated_goals_reached = state.info['goals_reached_count'] + num_goals_reached
-        updated_goals_per_episode = state.info['goals_per_episode'] + num_goals_reached
-        goals_per_step = num_goals_reached.astype(jp.float32)
-
-        # TODO control cost should be a separate cost component, not serve as a reward penalty
-        ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
-
-        # Safety cost (distance-based penalty near hazards)
-        cost = self._calculate_safety_cost(data, hazard_positions)
-
-        # Total reward
-        reward = dist_reward + goal_reward
-
         # Health check
         min_z, max_z = self._healthy_z_range
         is_healthy = jp.logical_and(
@@ -591,10 +575,36 @@ class SafePointGoal(PipelineEnv):
             jp.any(jp.isnan(agent_pos))
         )
 
+        # ============================== METRICS AGGREGATION ==============================
+
+        # Update counters
+        updated_goals_reached = state.info['goals_reached_count'] + num_goals_reached
+        updated_goals_per_episode = state.info['goals_per_episode'] + num_goals_reached
+        goals_per_step = num_goals_reached.astype(jp.float32)
+
+        # This is what we actually want to log as an episodic metric:
+        # only non-zero on the terminal step.
+        # Brax's wrapper will sum over steps, so this gives "goals this episode".
+        # (masking with done avoids the cumulative-over-steps nonsense)
+        goals_per_episode = jp.where(
+            done.astype(jp.bool_),
+            updated_goals_per_episode.astype(jp.float32),
+            jp.array(0.0, dtype=jp.float32),
+        )
+
+        # TODO control cost should be a separate cost component, not serve as a reward penalty
+        ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
+
+        # Safety cost (distance-based penalty near hazards)
+        cost = self._calculate_safety_cost(data, hazard_positions)
+
+        # Total reward
+        reward = dist_reward + goal_reward
+
         # Get observation and metrics
         obs = self._get_obs(data)
         metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost, updated_goals_reached,
-                                    updated_goals_per_episode, goals_per_step)
+                                    goals_per_episode, goals_per_step)
 
         # Update info
         new_info = state.info.copy()
@@ -677,7 +687,7 @@ class SafePointGoal(PipelineEnv):
 
         Observation structure:
         - accelerometer (3 values)
-        - velocimeter (3 values)  
+        - velocimeter (3 values)
         - gyro (3 values)
         - magnetometer (3 values)
         - goal_lidar_obs (configurable bins, default 16) - lidar detecting the goal
