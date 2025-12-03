@@ -1,0 +1,46 @@
+{
+  "env": "humanoid_hop",
+  "env_name": "humanoid_hop",
+  "alg": "ppo_lagrange_v2",
+  "out_dir": "runs/humanoid_hop_experiments",
+  "num_timesteps": 100000000,
+  "episode_length": 2000,
+  "num_envs": 2048,
+  "unroll_length": 8,
+  "batch_size": 1024,
+  "num_minibatches": 64,
+  "num_updates_per_batch": 6,
+  "learning_rate": 0.0005,
+  "entropy_cost": 0.005,
+  "discounting": 0.99,
+  "reward_scaling": 0.001,
+  "gae_lambda": 0.95,
+  "clipping_epsilon": 0.3,
+  "normalize_observations": true,
+  "num_evals": 5,
+  "num_eval_envs": 128,
+  "deterministic_eval": false,
+  "training_metrics_steps": 100000,
+  "safety_bound": 0.1,
+  "lagrangian_coef_rate": 0.1,
+  "initial_lambda_lagr": 0.0,
+  "env_kwargs": {
+    "hopping_leg": "left",
+    "contact_threshold": 0.5,
+    "cost_weight": 1.0,
+    "contact_scale": 4.35,
+    "enable_contact_metrics": true
+  },
+  "use_wandb": true,
+  "wandb_project": "safe-brax-humanoid-hop",
+  "wandb_group": "humanoid-hop-ppol",
+  "wandb_tags": [
+    "ppo-lagrange"
+  ],
+  "save_checkpoint_path": "/vast.mnt/home/20191873/safebrax/runs/humanoid_hop_experiments/checkpoints",
+  "camera": "track",
+  "video_width": 640,
+  "video_height": 480,
+  "video_fps": 30
+}
+

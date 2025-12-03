@@ -2,12 +2,12 @@
   "env": "point_resetting_goal_random_hazard_lidar_sensor_obs",
   "alg": "ppo",
   "out_dir": "runs/experimental_results",
-  "num_timesteps": 30000000,
+  "num_timesteps": 100000000,
   "episode_length": 2000,
   "num_envs": 2048,
   "unroll_length": 8,
   "batch_size": 1024,
-  "num_minibatches": 32,
+  "num_minibatches": 64,
   "num_updates_per_batch": 6,
   "learning_rate": 0.0005,
   "entropy_cost": 0.005,
@@ -33,12 +33,13 @@
   },
   "use_wandb": true,
   "wandb_project": "safe-brax-experimental-results",
-  "wandb_group": "pointgoal-baselines",
+  "wandb_group": "ppo_baseline",
   "wandb_tags": [
     "experimental-results",
     "baselines",
     "ppo",
-    "pointgoal"
+    "pointgoal",
+    "hparam_id_8"
   ],
   "env_name": "safe_point_goal"
 }

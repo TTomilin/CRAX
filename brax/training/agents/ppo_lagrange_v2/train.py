@@ -236,6 +236,7 @@ def train(
     num_eval_envs: int = 128,
     deterministic_eval: bool = False,
     # training metrics
+    buffer_size: int = 1000,
     log_training_metrics: bool = False,
     training_metrics_steps: Optional[int] = None,
     # callbacks
@@ -435,17 +436,18 @@ def train(
     def loss_and_pgrad(params, normalizer_params, data, rng, lambda_lagr):
       total_loss, metrics = loss_fn(params, normalizer_params, data, rng, lambda_lagr)
       return total_loss, metrics
-    
+
     grad_fn = jax.value_and_grad(loss_and_pgrad, has_aux=True)
     (loss, metrics), grads = grad_fn(params, normalizer_params, data, rng, lambda_lagr)
-    
+
     # Apply gradient updates
     updates, new_optimizer_state = optimizer.update(grads, optimizer_state, params)
     new_params = optax.apply_updates(params, updates)
-    
+
     return (loss, metrics), new_params, new_optimizer_state
 
-  metrics_aggregator = metric_logger.EpisodeMetricsLogger(
+  metrics_aggregator = metric_logger.MetricsLogger(
+      buffer_size=buffer_size,
       steps_between_logging=training_metrics_steps
       or env_step_per_training_step,
       progress_fn=progress_fn,
@@ -546,9 +548,10 @@ def train(
 
     if log_training_metrics:  # log unroll metrics
       jax.debug.callback(
-          metrics_aggregator.update_episode_metrics,
+          metrics_aggregator.update_env_metrics,
           data.extras['state_extras']['episode_metrics'],
           data.extras['state_extras']['episode_done'],
+          training_state.env_steps + env_step_per_training_step,
       )
 
     # Update normalization params and normalize observations.
@@ -573,7 +576,7 @@ def train(
     cost_violation = avg_cost - safety_bound
     delta_lambda = cost_violation * lagrangian_coef_rate
     updated_lambda_lagr = jax.nn.relu(training_state.lambda_lagr + delta_lambda)
-    
+
     # Add lambda info to metrics
     metrics['lambda_lagr'] = updated_lambda_lagr
     metrics['cost_violation'] = cost_violation
@@ -585,6 +588,14 @@ def train(
         env_steps=training_state.env_steps + env_step_per_training_step,
         lambda_lagr=updated_lambda_lagr,
     )
+    
+    if log_training_metrics:
+      jax.debug.callback(
+          metrics_aggregator.update_train_metrics,
+          metrics,
+          new_training_state.env_steps,
+      )
+    
     return (new_training_state, state, new_key), metrics
 
   def training_epoch(

@@ -2,7 +2,7 @@
   "env_name": "ant_velocity_constrained",
   "env": "ant_velocity_constrained",
   "alg": "ppo_lagrange_v2",
-  "out_dir": "runs/experimental_results",
+  "out_dir": "runs/final_experiments",
   "env_kwargs": {
     "config_overrides": {
       "max_velocity": 3.0
@@ -31,11 +31,15 @@
   "lagrangian_coef_rate": 0.1,
   "initial_lambda_lagr": 0.0,
   "use_wandb": true,
-  "wandb_project": "safe-brax-ant_velocity",
-  "wandb_group": "ant-velocity",
+  "wandb_project": "safe-brax-ant_velocity_final",
+  "wandb_group": "ant-velocity-ppol-sb0.2",
   "wandb_tags": [
-    "experimental-results",
-    "ppo-lagrange-v2",
-    "ant-velocity"
+    "final",
+    "ppo-lagrange",
+    "ant-velocity",
+    "sb-0.2"
   ]
 }
+
+
+

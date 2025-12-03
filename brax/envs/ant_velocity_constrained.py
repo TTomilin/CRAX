@@ -16,8 +16,28 @@
 
 import jax
 from jax import numpy as jp
+from ml_collections import config_dict
 from brax.envs.ant import Ant
 from brax.envs.base import State
+
+
+def default_config() -> config_dict.ConfigDict:
+  """Returns the default config for AntVelocityConstrained environment."""
+  config = config_dict.create(
+      max_velocity=0.5,  # Set below ant's natural max velocity (~0.81) to ensure violations
+      velocity_cost_weight=1.0,
+      # Ant base parameters
+      ctrl_cost_weight=0.5,
+      use_contact_forces=False,
+      contact_cost_weight=5e-4,
+      healthy_reward=1.0,
+      terminate_when_unhealthy=True,
+      healthy_z_range=(0.2, 1.0),
+      contact_force_range=(-1.0, 1.0),
+      reset_noise_scale=0.1,
+      exclude_current_positions_from_observation=True,
+  )
+  return config
 
 
 class AntVelocityConstrained(Ant):
@@ -31,20 +51,57 @@ class AntVelocityConstrained(Ant):
 
   def __init__(
       self,
-      max_velocity: float = 0.5,  # Set below ant's natural max velocity (~0.81) to ensure violations
-      velocity_cost_weight: float = 1.0,
+      config: config_dict.ConfigDict = None,
       **kwargs,
   ):
     """Initialize the velocity-constrained ant environment.
     
     Args:
-      max_velocity: Maximum allowed velocity magnitude (m/s).
-      velocity_cost_weight: Weight for velocity constraint violation cost.
+      config: Configuration dictionary. If None, uses default_config().
       **kwargs: Additional arguments passed to parent Ant class.
     """
-    super().__init__(**kwargs)
-    self._max_velocity = max_velocity
-    self._velocity_cost_weight = velocity_cost_weight
+    # Use provided config or create default
+    if config is None:
+      config = default_config()
+
+    # Apply optional config overrides passed via env_kwargs without leaking to PipelineEnv
+    overrides = kwargs.pop('config_overrides', None)
+    if isinstance(overrides, dict):
+      for key, value in overrides.items():
+        config[key] = value
+
+    # Extract Ant-specific parameters from config
+    # Priority: kwargs override config
+    ant_kwargs = {}
+    ant_param_names = {
+        'ctrl_cost_weight',
+        'use_contact_forces',
+        'contact_cost_weight',
+        'healthy_reward',
+        'terminate_when_unhealthy',
+        'healthy_z_range',
+        'contact_force_range',
+        'reset_noise_scale',
+        'exclude_current_positions_from_observation',
+        'backend',
+        'n_frames',
+    }
+    
+    for key in ant_param_names:
+      if key in kwargs:
+        ant_kwargs[key] = kwargs.pop(key)
+      elif key in config:
+        ant_kwargs[key] = config[key]
+
+    # Merge remaining kwargs (non-Ant params)
+    ant_kwargs.update(kwargs)
+
+    super().__init__(**ant_kwargs)
+    
+    # Store config
+    self._config = config
+    self._max_velocity = config.max_velocity
+    self._velocity_cost_weight = config.velocity_cost_weight
 
   def step(self, state: State, action: jax.Array) -> State:
     """Run one timestep of the environment's dynamics with velocity constraints."""

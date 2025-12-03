@@ -45,7 +45,7 @@
     <!-- brax custom params -->
     <numeric data="10000" name="constraint_limit_stiffness"/>
     <numeric data="20000" name="constraint_stiffness"/>
-    <numeric data="10 2 2 2 10 2 1 1 1 1 1 1 1 1 1 1" name="constraint_ang_damping"/>
+    <numeric data="10 2 2 2 10 2 1" name="constraint_ang_damping"/>
     <numeric data="10" name="constraint_vel_damping"/>
     <numeric data="-0.01" name="ang_damping"/>
     <numeric data="0.2" name="baumgarte_erp"/>

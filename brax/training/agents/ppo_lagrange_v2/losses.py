@@ -192,7 +192,6 @@ def compute_ppo_lagrange_loss(
       discount=discounting,
   )
   
-  # Modify advantages with Lagrangian term
   modified_advantages = advantages - lambda_lagr * cost_advantages
   
   if normalize_advantage:

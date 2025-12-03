@@ -1,0 +1,39 @@
+{
+  "env": "humanoid_hop",
+  "env_name": "humanoid_hop",
+  "alg": "ppo_lagrange_v2",
+  "out_dir": "runs/humanoid_hop_debug",
+  "num_timesteps": 10000,
+  "episode_length": 100,
+  "num_envs": 4,
+  "unroll_length": 8,
+  "batch_size": 4,
+  "num_minibatches": 1,
+  "num_updates_per_batch": 1,
+  "learning_rate": 0.0005,
+  "entropy_cost": 0.005,
+  "discounting": 0.99,
+  "reward_scaling": 0.1,
+  "gae_lambda": 0.95,
+  "clipping_epsilon": 0.3,
+  "normalize_observations": true,
+  "num_evals": 2,
+  "num_eval_envs": 4,
+  "deterministic_eval": false,
+  "training_metrics_steps": 1000,
+  "safety_bound": 0.1,
+  "lagrangian_coef_rate": 0.1,
+  "initial_lambda_lagr": 0.0,
+  "env_kwargs": {
+    "hopping_leg": "left",
+    "contact_threshold": 0.5,
+    "cost_weight": 1.0
+  },
+  "use_wandb": false,
+  "camera": 0,
+  "video_width": 640,
+  "video_height": 480,
+  "video_fps": 30
+}
+
+

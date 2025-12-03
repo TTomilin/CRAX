@@ -1,14 +1,14 @@
 {
   "env_name": "ant_velocity_constrained",
   "env": "ant_velocity_constrained",
-  "alg": "ppo_lagrange_v2",
+  "alg": "ppo",
   "out_dir": "runs/experimental_results",
+  "camera": "track",
   "env_kwargs": {
     "config_overrides": {
-      "max_velocity": 3.0
+      "max_velocity": 4.0
     }
   },
-  "camera": "track",
   "num_timesteps": 100000000,
   "episode_length": 1000,
   "num_envs": 2048,
@@ -27,7 +27,7 @@
   "num_eval_envs": 128,
   "deterministic_eval": false,
   "training_metrics_steps": 100000,
-  "safety_bound": 0.2,
+  "safety_bound": 0.1,
   "lagrangian_coef_rate": 0.1,
   "initial_lambda_lagr": 0.0,
   "use_wandb": true,

@@ -16,16 +16,9 @@
 """Function to load MuJoCo mjcf format to Brax model."""
 
 import itertools
-import warnings
 from typing import Dict, Optional, Tuple, Union
+import warnings
 from xml.etree import ElementTree
-
-import jax
-import mujoco
-import numpy as np
-from etils import epath
-from jax import numpy as jp
-
 from brax import math
 from brax.base import (
     Actuator,
@@ -36,7 +29,12 @@ from brax.base import (
     System,
     Transform,
 )
-from brax.mjx.collisions import put_model
+from etils import epath
+import jax
+from jax import numpy as jp
+import mujoco
+from mujoco import mjx
+import numpy as np
 
 
 def _transform_do(
@@ -447,7 +445,7 @@ def load_model(mj: mujoco.MjModel) -> System:
     link.transform.pos[free_idx] = np.zeros(3)
     link.transform.rot[free_idx] = np.array([1.0, 0.0, 0.0, 0.0])
 
-  mjx_model = put_model(mj)
+  mjx_model = mjx.put_model(mj)
 
   sys = System(  # pytype: disable=wrong-arg-types  # jax-ndarray
       gravity=mj.opt.gravity,
