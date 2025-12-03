@@ -225,13 +225,12 @@ def train(
         seed: int = 0,
         # ppo-lagrange specific params
         safety_bound: float = 0.0,
-        lagrangian_coef_rate: float = 0.01,
         initial_lambda_lagr: float = 0.0,
         # PID-Lagrange
-        pid_kp: float = 0.1,
+        pid_kp: float = 10.0,
         pid_ki: float = 0.01,
         pid_kd: float = 0.01,
-        pid_integral_clip: float = 10.0,   # anti-windup cap on the integral term
+        pid_integral_clip: float = 1.0,   # anti-windup cap on the integral term
         pid_lambda_clip: float = 1e6,      # clamp lambda for sanity
         pid_deriv_ema_beta: float = 0.95,  # smoothing for derivative term
         # eval
@@ -298,8 +297,7 @@ def train(
       network_factory: function that generates networks for policy and value
         functions
       seed: random seed
-      safety_bound: the safety constraint bound for PPO-Lagrange
-      lagrangian_coef_rate: learning rate for Lagrange multiplier updates
+      und: the safety constraint bound for PPO-Lagrange
       initial_lambda_lagr: initial value for the Lagrange multiplier
       num_evals: the number of evals to run during the entire training run.
         Set to 0 to disable evaluation (default). Increasing the number of evals 
