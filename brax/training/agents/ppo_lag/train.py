@@ -31,15 +31,14 @@ from absl import logging
 from brax import base
 from brax import envs
 from brax.training import acting
-from brax.training import gradients
 from brax.training import logger as metric_logger
 from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
-from brax.training.agents.ppo import checkpoint
-from brax.training.agents.ppo import losses as ppo_losses
-from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo_lag import checkpoint
+from brax.training.agents.ppo_lag import losses as ppo_losses
+from brax.training.agents.ppo_lag import networks as ppo_networks
 from brax.training.types import PRNGKey
 from brax.training.types import Params
 
@@ -57,6 +56,7 @@ class TrainingState:
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: types.UInt64
+    lambda_lagr: jnp.ndarray  # Added for PPO-Lagrange
 
 
 def _unpmap(v):
@@ -136,13 +136,13 @@ def _random_translate_pixels(
         obs: Mapping[str, jax.Array], key: PRNGKey
 ) -> Mapping[str, jax.Array]:
     """Apply random translations to B x T x ... pixel observations.
-
+  
     The same shift is applied across the unroll_length (T) dimension.
-
+  
     Args:
       obs: a dictionary of observations
       key: a PRNGKey
-
+  
     Returns:
       A dictionary of observations with translated pixels
     """
@@ -225,6 +225,10 @@ def train(
             ppo_networks.PPONetworks
         ] = ppo_networks.make_ppo_networks,
         seed: int = 0,
+        # ppo-lagrange specific params
+        safety_bound: float = 0.0,
+        lagrangian_coef_rate: float = 0.01,
+        initial_lambda_lagr: float = 0.0,
         # eval
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
@@ -243,7 +247,7 @@ def train(
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
 ):
-    """PPO training.
+    """PPO-Lagrange training.
 
     Args:
       environment: the environment to train
@@ -289,8 +293,12 @@ def train(
       network_factory: function that generates networks for policy and value
         functions
       seed: random seed
+      safety_bound: the safety constraint bound for PPO-Lagrange
+      lagrangian_coef_rate: learning rate for Lagrange multiplier updates
+      initial_lambda_lagr: initial value for the Lagrange multiplier
       num_evals: the number of evals to run during the entire training run.
-        Increasing the number of evals increases total training time
+        Set to 0 to disable evaluation (default). Increasing the number of evals 
+        increases total training time
       eval_env: an optional environment for eval only, defaults to `environment`
       num_eval_envs: the number of envs to use for evluation. Each env will run 1
         episode, and all envs run in parallel during eval.
@@ -342,18 +350,25 @@ def train(
     env_step_per_training_step = (
             batch_size * unroll_length * num_minibatches * action_repeat
     )
-    num_evals_after_init = max(num_evals - 1, 1)
-    # The number of training_step calls per training_epoch call.
-    # equals to ceil(num_timesteps / (num_evals * env_step_per_training_step *
-    #                                 num_resets_per_eval))
-    num_training_steps_per_epoch = np.ceil(
-        num_timesteps
-        / (
-                num_evals_after_init
-                * env_step_per_training_step
-                * max(num_resets_per_eval, 1)
-        )
-    ).astype(int)
+
+    # Handle optional evaluation
+    if num_evals == 0:
+        # No evaluation - run all training steps in one go
+        num_evals_after_init = 1
+        num_training_steps_per_epoch = np.ceil(
+            num_timesteps / (env_step_per_training_step * max(num_resets_per_eval, 1))
+        ).astype(int)
+    else:
+        # With evaluation - split training across evaluation intervals
+        num_evals_after_init = max(num_evals - 1, 1)
+        num_training_steps_per_epoch = np.ceil(
+            num_timesteps
+            / (
+                    num_evals_after_init
+                    * env_step_per_training_step
+                    * max(num_resets_per_eval, 1)
+            )
+        ).astype(int)
 
     key = jax.random.PRNGKey(seed)
     global_key, local_key = jax.random.split(key)
@@ -362,7 +377,7 @@ def train(
     local_key, key_env, eval_key = jax.random.split(local_key, 3)
     # key_networks should be global, so that networks are initialized the same
     # way for different processes.
-    key_policy, key_value = jax.random.split(global_key)
+    key_policy, key_value, key_cost_value = jax.random.split(global_key, 3)
     del global_key
 
     assert num_envs % device_count == 0
@@ -406,21 +421,42 @@ def train(
             optax.adam(learning_rate=learning_rate),
         )
 
-    loss_fn = functools.partial(
-        ppo_losses.compute_ppo_loss,
-        ppo_network=ppo_network,
-        entropy_cost=entropy_cost,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-    )
+    safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
 
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-    )
+    def loss_fn(params, normalizer_params, data, rng, lambda_lagr):
+        return ppo_losses.compute_ppo_lagrange_loss(
+            params=params,
+            normalizer_params=normalizer_params,
+            data=data,
+            rng=rng,
+            ppo_network=ppo_network,
+            lambda_lagr=lambda_lagr,
+            safety_bound=safety_bound,
+            entropy_cost=entropy_cost,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+        )
 
+    def gradient_update_fn(params, normalizer_params, data, rng, lambda_lagr, optimizer_state):
+        """Custom gradient update function for PPO-Lagrange."""
+
+        def loss_and_pgrad(params, normalizer_params, data, rng, lambda_lagr):
+            total_loss, metrics = loss_fn(params, normalizer_params, data, rng, lambda_lagr)
+            return total_loss, metrics
+
+        grad_fn = jax.value_and_grad(loss_and_pgrad, has_aux=True)
+        (loss, metrics), grads = grad_fn(params, normalizer_params, data, rng, lambda_lagr)
+
+        # Apply gradient updates
+        updates, new_optimizer_state = optimizer.update(grads, optimizer_state, params)
+        new_params = optax.apply_updates(params, updates)
+
+        return (loss, metrics), new_params, new_optimizer_state
+
+    # Create training metrics aggregator for fine-grained training metrics logging
     metrics_aggregator = metric_logger.MetricsLogger(
         buffer_size=buffer_size,
         steps_between_logging=training_metrics_steps,
@@ -431,6 +467,7 @@ def train(
             carry,
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
+            lambda_lagr: jnp.ndarray,
     ):
         optimizer_state, params, key = carry
         key, key_loss = jax.random.split(key)
@@ -439,7 +476,8 @@ def train(
             normalizer_params,
             data,
             key_loss,
-            optimizer_state=optimizer_state,
+            lambda_lagr,
+            optimizer_state,
         )
 
         return (optimizer_state, params, key), metrics
@@ -449,6 +487,7 @@ def train(
             unused_t,
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
+            lambda_lagr: jnp.ndarray,
     ):
         optimizer_state, params, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -472,7 +511,7 @@ def train(
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(minibatch_step, normalizer_params=normalizer_params),
+            functools.partial(minibatch_step, normalizer_params=normalizer_params, lambda_lagr=lambda_lagr),
             (optimizer_state, params, key_grad),
             shuffled_data,
             length=num_minibatches,
@@ -500,7 +539,7 @@ def train(
                 policy,
                 current_key,
                 unroll_length,
-                extra_fields=('truncation', 'episode_metrics', 'episode_done'),
+                extra_fields=('truncation', 'episode_metrics', 'episode_done', 'cost'),
             )
             return (next_state, next_key), data
 
@@ -521,7 +560,7 @@ def train(
             metrics_aggregator.update_env_metrics,
             data.extras['state_extras']['episode_metrics'],
             data.extras['state_extras']['episode_done'],
-            training_state.env_steps + env_step_per_training_step,
+            training_state.env_steps,
         )
 
         # Update normalization params and normalize observations.
@@ -533,18 +572,29 @@ def train(
 
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(
-                sgd_step, data=data, normalizer_params=normalizer_params
+                sgd_step, data=data, normalizer_params=normalizer_params, lambda_lagr=training_state.lambda_lagr
             ),
             (training_state.optimizer_state, training_state.params, key_sgd),
             (),
             length=num_updates_per_batch,
         )
 
+        # Update Lagrange multiplier once per training step based on final cost
+        avg_cost = jnp.mean(metrics['mean_cost'][-1])
+        cost_violation = avg_cost - safety_bound
+        delta_lambda = cost_violation * lagrangian_coef_rate
+        updated_lambda_lagr = jax.nn.relu(training_state.lambda_lagr + delta_lambda)
+
+        # Add lambda info to metrics
+        metrics['lambda_lagr'] = updated_lambda_lagr
+        metrics['cost_violation'] = cost_violation
+
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
             env_steps=training_state.env_steps + env_step_per_training_step,
+            lambda_lagr=updated_lambda_lagr,
         )
 
         if log_training_metrics:
@@ -581,14 +631,15 @@ def train(
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
-        sps = (
+        fps = (
                       num_training_steps_per_epoch
                       * env_step_per_training_step
                       * max(num_resets_per_eval, 1)
               ) / epoch_training_time
+
         metrics = {
-            'training/sps': sps,
-            'training/walltime': training_walltime,
+            'performance/fps': fps,
+            'performance/walltime': training_walltime,
             **{f'training/{name}': value for name, value in metrics.items()},
         }
         return training_state, env_state, metrics  # pytype: disable=bad-return-type  # py311-upgrade
@@ -597,6 +648,7 @@ def train(
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
+        cost_value=ppo_network.cost_value_network.init(key_cost_value),
     )
 
     obs_shape = jax.tree_util.tree_map(
@@ -609,26 +661,40 @@ def train(
             _remove_pixels(obs_shape)
         ),
         env_steps=types.UInt64(hi=0, lo=0),
+        lambda_lagr=jnp.array([initial_lambda_lagr], dtype=jnp.float32),
     )
 
     if restore_checkpoint_path is not None:
         params = checkpoint.load(restore_checkpoint_path)
-        value_params = params[2] if restore_value_fn else init_params.value
+        # Handle legacy checkpoints that might not have cost_value or lambda_lagr
+        cost_value_params = params[2] if len(params) > 2 else init_params.cost_value
+        value_params = params[1] if restore_value_fn else init_params.value
+        lambda_lagr_value = params[3] if len(params) > 3 else jnp.array([initial_lambda_lagr], dtype=jnp.float32)
         training_state = training_state.replace(
             normalizer_params=params[0],
             params=training_state.params.replace(
-                policy=params[1], value=value_params
+                policy=params[1],
+                value=value_params,
+                cost_value=cost_value_params
             ),
+            lambda_lagr=lambda_lagr_value,
         )
 
     if restore_params is not None:
         logging.info('Restoring TrainingState from `restore_params`.')
-        value_params = restore_params[2] if restore_value_fn else init_params.value
+        # Handle legacy restore_params that might not have cost_value or lambda_lagr
+        cost_value_params = restore_params[2] if len(restore_params) > 2 else init_params.cost_value
+        value_params = restore_params[1] if restore_value_fn else init_params.value
+        lambda_lagr_value = restore_params[3] if len(restore_params) > 3 else jnp.array([initial_lambda_lagr],
+                                                                                        dtype=jnp.float32)
         training_state = training_state.replace(
             normalizer_params=restore_params[0],
             params=training_state.params.replace(
-                policy=restore_params[1], value=value_params
+                policy=restore_params[1],
+                value=value_params,
+                cost_value=cost_value_params
             ),
+            lambda_lagr=lambda_lagr_value,
         )
 
     if num_timesteps == 0:
@@ -638,6 +704,7 @@ def train(
                 training_state.normalizer_params,
                 training_state.params.policy,
                 training_state.params.value,
+                training_state.params.cost_value,
             ),
             {},
         )
@@ -714,6 +781,7 @@ def train(
             training_state.normalizer_params,
             training_state.params.policy,
             training_state.params.value,
+            training_state.params.cost_value,
         ))
 
         policy_params_fn(current_step, make_policy, params)
@@ -725,8 +793,10 @@ def train(
                 normalize_observations=normalize_observations,
                 network_factory=network_factory,
             )
+            # Include cost_value and lambda_lagr in saved params
+            full_params = params + (_unpmap(training_state.params.cost_value), _unpmap(training_state.lambda_lagr))
             checkpoint.save(
-                save_checkpoint_path, current_step, params, ckpt_config
+                save_checkpoint_path, current_step, full_params, ckpt_config
             )
 
         # Only run evaluation if enabled
@@ -752,6 +822,7 @@ def train(
         training_state.normalizer_params,
         training_state.params.policy,
         training_state.params.value,
+        training_state.params.cost_value,
     ))
 
     # Always log final metrics, especially important for "end" frequency mode
