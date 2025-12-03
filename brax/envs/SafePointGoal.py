@@ -102,7 +102,7 @@ class SafePointGoal(PipelineEnv):
     Observation space (62 dimensions):
     - Sensor data: 12 values (3 each for accel, velocity, gyro, magnetometer)
     - Goal lidar: 16 bins
-    - Hazard lidar: 16 bins  
+    - Hazard lidar: 16 bins
     - Goal compass: 2 values
     - Hazard compasses: 16 values (8 hazards × 2 values each)
     """
@@ -382,19 +382,121 @@ class SafePointGoal(PipelineEnv):
         # Calculate distances and rewards
         dist_goal = safe_norm(agent_pos[:2] - goal_pos[:2])
         dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
+        goal_reward = self._reward_goal * num_goals_reached
 
-        # Goal achievement
-        goal_achieved = dist_goal <= self._goal_size
-        goal_reward = jp.where(goal_achieved, self._reward_goal, 0.0)
+        # ============================== GOAL RESPAWN ==============================
 
-        # Control cost
-        ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
+        # Build object arrays used during goal respawn checks:
+        # we treat the agent, all hazards, and all goals as objects with per-object keepouts.
+        hazard_positions_xy = hazard_positions[:, :2]
+        goal_positions_xy = goal_positions[:, :2]
 
-        # Safety cost (hazard collision)
-        cost = self._calculate_safety_cost(agent_pos, hazard_positions)
+        total_objects = 1 + self._num_hazards + self._num_goals
 
-        # Total reward
-        reward = dist_reward + goal_reward - ctrl_cost
+        # Object state buffers (positions + shape for placement)
+        object_positions_xy = jp.zeros((total_objects, 2))
+
+        # Shapes:
+        object_is_rect = jp.zeros((total_objects,), dtype=jp.bool_)
+        object_half_extents = jp.zeros((total_objects, 2))  # only for rects; zeros otherwise
+        object_radii = jp.zeros((total_objects,))  # only for circles; zeros otherwise
+
+        # Agent as object 0 (treat agent as circle with keepout self._agent_keepout)
+        object_positions_xy = object_positions_xy.at[0].set(agent_xy)
+        object_is_rect = object_is_rect.at[0].set(False)
+        object_radii = object_radii.at[0].set(self._agent_keepout)
+
+        # Hazards as objects [1 : 1+H)
+        hazard_span_start = 1
+        hazard_span_end = hazard_span_start + self._num_hazards
+        object_positions_xy = object_positions_xy.at[hazard_span_start:hazard_span_end].set(hazard_positions_xy)
+
+        object_is_rect = object_is_rect.at[hazard_span_start:hazard_span_end].set(self._hazard_is_rect)
+        object_half_extents = object_half_extents.at[hazard_span_start:hazard_span_end].set(self._hazard_half_extents)
+        object_radii = object_radii.at[hazard_span_start:hazard_span_end].set(self._hazard_radii)
+
+        # Goals as objects [hazard_span_end : hazard_span_end + G)
+        goal_span_start = hazard_span_end
+        goal_span_end = goal_span_start + self._num_goals
+        object_positions_xy = object_positions_xy.at[goal_span_start:goal_span_end].set(goal_positions_xy)
+        object_is_rect = object_is_rect.at[goal_span_start:goal_span_end].set(False)
+        object_radii = object_radii.at[goal_span_start:goal_span_end].set(self._goal_keepouts)
+
+        active_object_count = jp.array(total_objects, dtype=jp.int32)
+
+        # Thread persistent RNG through respawns
+        rng_for_goal_respawn = state.info["respawn_rng"]
+
+        def _place_or_keep_goal(carry, goal_index):
+            """
+            If goal `goal_index` was reached, sample a new valid position for it.
+            Otherwise keep its current position. We temporarily disable the goal's
+            own object keepout while sampling, to avoid blocking itself.
+            """
+            rng_key, object_positions_xy, object_is_rect, object_half_extents, object_radii, new_goal_positions_out = carry
+            object_slot = goal_span_start + goal_index  # where this goal sits in the object arrays
+
+            def _place_new(_):
+                # Temporarily disable this goal’s own keepout while sampling
+                keep_is_rect_wo_self = object_is_rect
+                keep_half_extents_wo_self = object_half_extents
+                keep_radii_wo_self = object_radii.at[object_slot].set(0.0)
+
+                goal_keepout_radius = self._goal_keepouts[goal_index]
+
+                # convert [minx, miny, maxx, maxy] -> half-extents [ex, ey]
+                minx, miny, maxx, maxy = self._placement_extents
+                placement_half_extents = jp.array([(maxx - minx) * 0.5, (maxy - miny) * 0.5], dtype=jp.float32)
+
+                new_pos_xyz, next_rng = choose_valid_position_shape_aware(
+                    rng_key,
+                    object_positions_xy,
+                    keep_is_rect_wo_self,
+                    keep_half_extents_wo_self,
+                    keep_radii_wo_self,
+                    active_object_count,
+                    goal_keepout_radius,
+                    self._max_placement_attempts,
+                    placement_half_extents,
+                    self._placement_margin,
+                )
+
+                # Update arrays at this slot and restore the radius
+                updated_positions_xy = object_positions_xy.at[object_slot].set(new_pos_xyz[:2])
+                updated_goal_positions_out = new_goal_positions_out.at[goal_index].set(new_pos_xyz)
+
+                updated_radii = object_radii.at[object_slot].set(goal_keepout_radius)
+
+                return (next_rng, updated_positions_xy, object_is_rect, object_half_extents, updated_radii,
+                        updated_goal_positions_out)
+
+            def _keep_old(_):
+                updated_goal_positions_out = new_goal_positions_out.at[goal_index].set(goal_positions[goal_index])
+                next_rng, _ = jax.random.split(rng_key)
+                return (next_rng, object_positions_xy, object_is_rect, object_half_extents, object_radii,
+                        updated_goal_positions_out)
+
+            return jax.lax.cond(reached_mask[goal_index], _place_new, _keep_old, operand=None)
+
+        # Compute new positions for all goals (only those reached will move)
+        new_goal_positions = jp.zeros_like(goal_positions)
+        (rng_for_goal_respawn,
+         object_positions_xy,
+         object_is_rect,
+         object_half_extents,
+         object_radii,
+         new_goal_positions) = jax.lax.fori_loop(
+            0,
+            self._num_goals,
+            lambda i, carry: _place_or_keep_goal(carry, i),
+            (rng_for_goal_respawn, object_positions_xy, object_is_rect, object_half_extents, object_radii,
+             new_goal_positions),
+        )
+
+        # Scatter updated goal mocaps back into the physics state
+        mocap_pos = data.mocap_pos
+        mocap_pos = mocap_pos.at[jp.array(self._goal_mocap_ids)].set(new_goal_positions)
+        data = data.replace(mocap_pos=mocap_pos)
 
         # Health check
         min_z, max_z = self._healthy_z_range
@@ -409,47 +511,36 @@ class SafePointGoal(PipelineEnv):
             jp.any(jp.isnan(agent_pos))
         )
 
-        # Update goal if achieved
-        rng_goal = jax.random.PRNGKey(state.info['step_count'])
-        new_goal_pos = jax.random.uniform(
-            rng_goal,
-            (3,),
-            minval=jp.array([-2.0, -2.0, 0.09]),
-            maxval=jp.array([2.0, 2.0, 0.09]),
+        # ============================== METRICS AGGREGATION ==============================
+
+        # Update counters
+        updated_goals_reached = state.info['goals_reached_count'] + num_goals_reached
+        updated_goals_per_episode = state.info['goals_per_episode'] + num_goals_reached
+        goals_per_step = num_goals_reached.astype(jp.float32)
+
+        # This is what we actually want to log as an episodic metric:
+        # only non-zero on the terminal step.
+        # Brax's wrapper will sum over steps, so this gives "goals this episode".
+        # (masking with done avoids the cumulative-over-steps nonsense)
+        goals_per_episode = jp.where(
+            done.astype(jp.bool_),
+            updated_goals_per_episode.astype(jp.float32),
+            jp.array(0.0, dtype=jp.float32),
         )
 
-        # Ensure new goal is far enough from agent
-        new_dist_to_agent = safe_norm(new_goal_pos[:2] - agent_pos[:2])
-        new_goal_pos = jp.where(
-            new_dist_to_agent < 1.0,
-            agent_pos[:2] + (new_goal_pos[:2] - agent_pos[:2]) / (new_dist_to_agent + 1e-8) * 1.2,
-            new_goal_pos[:2]
-        )
-        new_goal_pos = jp.array([new_goal_pos[0], new_goal_pos[1], 0.09])
+        # TODO control cost should be a separate cost component, not serve as a reward penalty
+        ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
 
-        updated_goal_pos = jp.where(goal_achieved, new_goal_pos, goal_pos)
-        updated_goals_reached = jp.where(goal_achieved,
-                                        state.info['goals_reached_count'] + 1,
-                                        state.info['goals_reached_count'])
-        updated_goals_per_episode = jp.where(goal_achieved,
-                                            state.info['goals_per_episode'] + 1,
-                                            state.info['goals_per_episode'])
-        goals_per_step = jp.where(goal_achieved, 1.0, 0.0)  # Binary indicator for this step
+        # Safety cost (hazard collision)
+        cost = self._calculate_safety_cost(agent_pos, hazard_positions)
 
-        # Update goal position in simulation
-        if self._goal_mocap_id >= 0:
-            data = data.replace(mocap_pos=data.mocap_pos.at[self._goal_mocap_id].set(updated_goal_pos))
-
-        # Update last distance
-        new_last_dist_goal = jp.where(
-            goal_achieved,
-            safe_norm(agent_pos[:2] - updated_goal_pos[:2]),
-            dist_goal
-        )
+        # Total reward
+        reward = dist_reward + goal_reward
 
         # Get observation and metrics
         obs = self._get_obs(data)
-        metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost, updated_goals_reached, updated_goals_per_episode, goals_per_step)
+        metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost, updated_goals_reached,
+                                    goals_per_episode, goals_per_step)
 
         # Update info
         new_info = state.info.copy()
@@ -536,7 +627,7 @@ class SafePointGoal(PipelineEnv):
 
         Observation structure:
         - accelerometer (3 values)
-        - velocimeter (3 values)  
+        - velocimeter (3 values)
         - gyro (3 values)
         - magnetometer (3 values)
         - goal_lidar_obs (configurable bins, default 16) - lidar detecting the goal
