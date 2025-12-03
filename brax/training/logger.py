@@ -45,30 +45,6 @@ class MetricsLogger:
                 self._metrics_buffer[metric_key].append(done_metrics)
                 self._episodic_metrics_updated.add(metric_key)
 
-        # Also log episodic metrics as step averages
-        for name, metric in metrics.items():
-            arr = np.asarray(metric)
-            if arr.size == 0 or not np.all(np.isfinite(arr)):
-                continue
-            # Compute step average across all environments, divided by episode length
-            if name == 'length':
-                # Don't divide length by itself
-                step_avg = arr.reshape(-1).mean().item()
-            else:
-                # Get episode lengths for normalization
-                if 'length' in metrics:
-                    lengths = np.asarray(metrics['length'])
-                    # Avoid division by zero
-                    lengths = np.maximum(lengths, 1.0)
-                    # Compute step average by dividing metric by episode length
-                    normalized_metric = arr / lengths
-                    step_avg = normalized_metric.reshape(-1).mean().item()
-                else:
-                    # Fallback if length not available
-                    step_avg = arr.reshape(-1).mean().item()
-
-            self._metrics_buffer[f"training/{name}"].append(step_avg)
-
         self.maybe_log_metrics()
 
     def update_train_metrics(self, metrics, env_steps):
