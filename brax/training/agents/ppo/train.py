@@ -744,6 +744,13 @@ def train(
         training_state.params.policy,
         training_state.params.value,
     ))
+
+    # If no evaluation was run, create basic final metrics
+    if not metrics:
+        metrics = {'training/final_step': total_steps}
+        if training_metrics:
+            metrics.update(training_metrics)
+
     logging.info('total steps: %s', total_steps)
     pmap.synchronize_hosts()
     return (make_policy, params, metrics)
