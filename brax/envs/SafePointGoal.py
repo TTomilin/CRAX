@@ -356,14 +356,12 @@ class SafePointGoal(PipelineEnv):
             "hazard_positions": hazard_positions,
             "step_count": 0,
             "last_dist_goal": initial_dist_goal,
-            "goals_reached_count": 0,
-            "goals_per_episode": 0,
             "cost": 0.0,
         }
 
         obs = self._get_obs(data)
-        reward, done = jp.zeros(2)
-        metrics = self._get_metrics(data, reward, 0.0, initial_dist_goal, initial_dist_goal, 0.0, 0.0, 0.0, 0.0)
+        reward, cost, ctrl_cost, goals_reached, goals_per_ep, goals_per_step, done = jp.zeros(7)
+        metrics = self._get_metrics(data, reward, cost, initial_dist_goal, initial_dist_goal, ctrl_cost)
 
         return State(data, obs, reward, done, metrics, info)
 
@@ -513,21 +511,6 @@ class SafePointGoal(PipelineEnv):
 
         # ============================== METRICS AGGREGATION ==============================
 
-        # Update counters
-        updated_goals_reached = state.info['goals_reached_count'] + num_goals_reached
-        updated_goals_per_episode = state.info['goals_per_episode'] + num_goals_reached
-        goals_per_step = num_goals_reached.astype(jp.float32)
-
-        # This is what we actually want to log as an episodic metric:
-        # only non-zero on the terminal step.
-        # Brax's wrapper will sum over steps, so this gives "goals this episode".
-        # (masking with done avoids the cumulative-over-steps nonsense)
-        goals_per_episode = jp.where(
-            done.astype(jp.bool_),
-            updated_goals_per_episode.astype(jp.float32),
-            jp.array(0.0, dtype=jp.float32),
-        )
-
         # TODO control cost should be a separate cost component, not serve as a reward penalty
         ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
 
@@ -539,17 +522,14 @@ class SafePointGoal(PipelineEnv):
 
         # Get observation and metrics
         obs = self._get_obs(data)
-        metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost, updated_goals_reached,
-                                    goals_per_episode, goals_per_step)
+        metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost)
 
         # Update info
         new_info = state.info.copy()
         new_info.update({
             "goal_pos": updated_goal_pos,
             "step_count": state.info['step_count'] + 1,
-            "last_dist_goal": new_last_dist_goal,
-            "goals_reached_count": updated_goals_reached,
-            "goals_per_episode": updated_goals_per_episode,
+            "last_dist_goal": dist_goal,
             "cost": cost,
         })
 
@@ -853,8 +833,7 @@ class SafePointGoal(PipelineEnv):
         return obs
 
     def _get_metrics(self, data: mjx.Data, reward: jp.ndarray, cost: jp.ndarray,
-                    dist_goal: jp.ndarray, last_dist_goal: jp.ndarray, ctrl_cost: jp.ndarray,
-                    goals_reached_count: jp.ndarray, goals_per_episode: jp.ndarray, goals_per_step: jp.ndarray) -> Dict:
+                     dist_goal: jp.ndarray, last_dist_goal: jp.ndarray, ctrl_cost: jp.ndarray) -> Dict:
         """Get metrics dictionary."""
         agent_pos = data.xpos[self._agent_body]
 
@@ -866,9 +845,6 @@ class SafePointGoal(PipelineEnv):
             'distance_to_goal': dist_goal,
             'last_dist_goal': last_dist_goal,
             'ctrl_cost': ctrl_cost,
-            'goals_reached_count': jp.float32(goals_reached_count),
-            'goals_per_episode': jp.float32(goals_per_episode),
-            'goals_per_step': jp.float32(goals_per_step),
         }
 
     @property
