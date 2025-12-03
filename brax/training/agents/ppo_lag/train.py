@@ -825,10 +825,6 @@ def train(
         training_state.params.cost_value,
     ))
 
-    # Always log final metrics, especially important for "end" frequency mode
-    if process_id == 0 and training_metrics:
-        progress_fn(total_steps, training_metrics)
-
     # If no evaluation was run, create basic final metrics
     if not metrics:
         metrics = {'training/final_step': total_steps}
