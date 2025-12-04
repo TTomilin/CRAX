@@ -234,6 +234,20 @@ class SafePointGoal(PipelineEnv):
         self._num_movable_hazards = self._num_hazards - self._num_fixed_hazards
         self._num_goals = self._goal_manager.get_goal_count()
 
+        # Per-hazard: geom ids, collidable mask, "radius" proxy for proximity shaping
+        if self._num_hazards > 0:
+            self._hazard_geom_ids = jp.array([h.geom_id for h in hazards], dtype=jp.int32)
+            self._hazard_collidable = jp.array([1.0 if h.collidable else 0.0 for h in hazards], dtype=jp.float32)
+            # Use size as radius proxy for proximity shaping
+            self._hazard_radii_for_cost = jp.array(
+                [float(h.size if not isinstance(h.size, (tuple, list)) else max(h.size)) for h in hazards],
+                dtype=jp.float32,
+            )
+        else:
+            self._hazard_geom_ids = jp.zeros((0,), dtype=jp.int32)
+            self._hazard_collidable = jp.zeros((0,), dtype=jp.float32)
+            self._hazard_radii_for_cost = jp.zeros((0,), dtype=jp.float32)
+
         # --- Find Sensor Indices, Addresses, and Dimensions ---
         self._sensor_info = {}
         required_sensors = ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
@@ -636,7 +650,18 @@ class SafePointGoal(PipelineEnv):
         return sample_position_in_extents(rng_key, self._placement_extents, keepout)  # Return anyway
 
     def _calculate_safety_cost(self, data: mjx.Data, hazard_positions: jp.ndarray) -> jp.ndarray:
-        """Sum of per-hazard costs. Binary collision for collidables, proximity for others."""
+        """Vectorized safety cost.
+
+        - Cylinders: radial shaping (1 - dist / r), using _hazard_radii.
+        - Cubes/rects: AABB inside-box cost like CubeHazard/RectHazard.
+        - Solid (collidable) hazards: binary contact cost when contacts exist,
+          otherwise fall back to proximity.
+        - Transparent hazards: proximity only.
+        """
+        # No hazards, no cost.
+        if self._num_hazards == 0:
+            return jp.array(0.0)
+
         agent_xy = data.xpos[self._agent_body][:2]
 
         # Contact buffers (valid inside step; at reset we'll pass None)
@@ -645,21 +670,82 @@ class SafePointGoal(PipelineEnv):
         dist = getattr(data.contact, "dist", None)
         ncon = getattr(data, "ncon", None)
 
-        total = jp.array(0.0)
-        # Unrolled small loop; JAX traces a static graph here
-        for i, h in enumerate(self._hazard_manager.hazards):
-            hz_xy = hazard_positions[i, :2]
-            total = total + h.calculate_cost(
-                agent_xy=agent_xy,
-                hazard_xy=hz_xy,
-                cost_scaler=self._cost_scaler,
-                contact_geom1=ids1,
-                contact_geom2=ids2,
-                contact_dist=dist,
-                ncon=ncon,
-                agent_geom_ids=self._agent_geom_ids
-            )
-        return total
+        # ---------------------------------------------------------------------
+        # Proximity-based shaping: respect shape (rect vs circle).
+        # ---------------------------------------------------------------------
+        hazards_xy = hazard_positions[:, :2]  # (H, 2)
+
+        def _rect_prox(hz_xy, half_ext):
+            # AABB inside check, same semantics as CubeHazard/RectHazard.proximity_cost
+            dxdy = jp.abs(agent_xy - hz_xy)
+            inside = jp.logical_and(dxdy[0] <= half_ext[0], dxdy[1] <= half_ext[1])
+            return inside.astype(jp.float32)
+
+        def _circle_prox(hz_xy, radius):
+            diff = agent_xy - hz_xy
+            d = jp.sqrt(jp.sum(diff * diff) + 1e-8)
+            return jp.maximum(0.0, 1.0 - d / (radius + 1e-8))
+
+        # For each hazard, choose rect vs circle
+        rect_mask = self._hazard_is_rect                # (H,)
+        half_ext = self._hazard_half_extents            # (H, 2)
+        radii = self._hazard_radii                      # (H,)
+
+        rect_prox = jax.vmap(_rect_prox)(hazards_xy, half_ext)   # (H,)
+        circle_prox = jax.vmap(_circle_prox)(hazards_xy, radii)  # (H,)
+
+        prox = jp.where(rect_mask, rect_prox, circle_prox)       # (H,)
+
+        # ---------------------------------------------------------------------
+        # Binary collision cost for collidables, using contact buffers.
+        # ---------------------------------------------------------------------
+        def _collision_cost():
+            # If contact buffers missing, return zero; we’ll fall back to prox.
+            if ids1 is None or ids2 is None or dist is None or ncon is None:
+                return jp.zeros_like(prox)
+
+            max_slots = ids1.shape[0]
+
+            # Valid contact entries
+            valid = (jp.arange(max_slots) < ncon)  # (max_slots,)
+
+            # Hazard ↔ contact matching
+            hids = self._hazard_geom_ids[:, None]  # (H, 1)
+
+            haz_is_g1 = (hids == ids1[None, :])  # (H, max_slots)
+            haz_is_g2 = (hids == ids2[None, :])  # (H, max_slots)
+
+            # Agent geoms mask over contacts (same as before but computed once)
+            is_agent1 = (ids1[None, :] == self._agent_geom_ids[:, None]).any(axis=0)  # (max_slots,)
+            is_agent2 = (ids2[None, :] == self._agent_geom_ids[:, None]).any(axis=0)  # (max_slots,)
+
+            # Broadcast to (H, max_slots)
+            is_agent1_b = jp.broadcast_to(is_agent1, haz_is_g1.shape)
+            is_agent2_b = jp.broadcast_to(is_agent2, haz_is_g2.shape)
+            valid_b = jp.broadcast_to(valid, haz_is_g1.shape)
+
+            # Hazard ↔ agent pairs
+            pair = (haz_is_g1 & is_agent2_b) | (haz_is_g2 & is_agent1_b)
+
+            # Touching when dist <= 0
+            touch = (dist <= 0.0)
+            touch_b = jp.broadcast_to(touch, haz_is_g1.shape)
+
+            any_contact_per_hazard = jp.any(valid_b & pair & touch_b, axis=1)  # (H,)
+            return any_contact_per_hazard.astype(jp.float32)
+
+        coll_binary = _collision_cost()  # (H,)
+
+        # ---------------------------------------------------------------------
+        # Combine collision vs proximity depending on collidability and contact availability.
+        # If we had valid contact buffers, solid hazards use binary + transparent use prox.
+        # If we had no contact buffers, coll_binary will be all zeros and everyone uses prox.
+        # ---------------------------------------------------------------------
+        coll_mask = self._hazard_collidable  # (H,) in {0,1}
+        per_hazard_cost = coll_mask * coll_binary + (1.0 - coll_mask) * prox
+
+        # Scale and sum
+        return self._cost_scaler * jp.sum(per_hazard_cost)
 
     def _get_obs(self, data: mjx.Data) -> jp.ndarray:
         """Creates an observation with separate lidars for goals and hazards.
