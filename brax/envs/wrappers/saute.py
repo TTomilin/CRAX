@@ -100,11 +100,11 @@ class SauteWrapper(Wrapper):
         # Sauté update: b̃_{t+1} = (b_t - c_t) / gamma
         b_next = (b_prev - cost) / self._gamma
 
-        # Store a bounded budget so it can't blow up on long safe streaks
-        b_next = jnp.clip(b_next, 0.0, self._b0)
-
         # Budget violation check on the candidate value
         violated = b_next < 0.0
+
+        # Store a bounded budget so it can't blow up on long safe streaks
+        b_next = jnp.clip(b_next, 0.0, self._b0)
 
         # Violation penalty
         reward = jnp.where(
