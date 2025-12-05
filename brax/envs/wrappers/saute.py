@@ -9,7 +9,6 @@ class SauteWrapper(Wrapper):
             env: Env,
             safety_bound: float = 15.0,
             gamma_budget: float = 0.99,
-            max_episode_length: int = 2000,
             violation_penalty: float = -1.0,
             normalize_budget_obs: bool = True,
     ):
@@ -18,12 +17,6 @@ class SauteWrapper(Wrapper):
         self._gamma = gamma_budget
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
-        # self._b0 = (
-        #         safety_bound
-        #         * (1.0 - (gamma_budget ** max_episode_length))
-        #         / (1.0 - gamma_budget)
-        #         / float(max_episode_length)
-        # )
 
     @property
     def observation_size(self) -> ObservationSize:
@@ -64,9 +57,6 @@ class SauteWrapper(Wrapper):
 
         # Cost signal (default 0 if missing)
         cost = info.get('cost', jnp.zeros_like(next_state.reward))
-
-        # Did the *previous* state mark an episode end? (EpisodeWrapper's done)
-        done_prev = state.done.astype(jnp.bool_)
 
         # Previous budget (fallback to full budget if missing)
         b_prev = state.info.get(
