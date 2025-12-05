@@ -1,27 +1,3 @@
-# Copyright 2025 Safe-Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Sauté RL environment wrapper.
-
-This wrapper augments the observation with a running discounted safety budget
-and early-terminates an episode if the (discounted) budget is exceeded.
-It is JAX-friendly and works with vectorized envs.
-
-References:
-- Sootla et al. (2022) Sauté RL: Almost Surely Safe Reinforcement Learning Using State Augmentation
-"""
-
 import jax.numpy as jnp
 
 from brax.envs.base import Env, Wrapper, State, ObservationSize
@@ -37,8 +13,10 @@ class SauteWrapper(Wrapper):
             normalize_budget_obs: bool = True,
     ):
         super().__init__(env)
-        self._b0 = safety_bound
+        T = 2000
+        # self._b0 = safety_bound
         self._gamma = gamma_budget
+        self._b0 = safety_bound * (1.0 - self._gamma ** T) / (1.0 - self._gamma) / T
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
 
@@ -98,13 +76,13 @@ class SauteWrapper(Wrapper):
         )
 
         # Sauté update: b̃_{t+1} = (b_t - c_t) / gamma
-        b_next = (b_prev - cost) / self._gamma
+        b_candidate = (b_prev - cost) / self._gamma
 
         # Budget violation check on the candidate value
-        violated = b_next < 0.0
+        violated = b_candidate < 0.0
 
         # Store a bounded budget so it can't blow up on long safe streaks
-        b_next = jnp.clip(b_next, 0.0, self._b0)
+        b_next = jnp.clip(b_candidate, 0.0, self._b0)
 
         # Violation penalty
         reward = jnp.where(
