@@ -71,7 +71,7 @@ class SauteWrapper(Wrapper):
         violated = b_candidate < 0.0
 
         # Store a bounded budget so it can't blow up on long safe streaks
-        b_next = jnp.clip(b_candidate, 0.0, self._b0 * 100)
+        b_next = jnp.clip(b_candidate, 0.0, self._b0)
 
         # Violation penalty
         reward = jnp.where(
