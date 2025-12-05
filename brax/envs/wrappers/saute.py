@@ -33,9 +33,9 @@ class SauteWrapper(Wrapper):
             env: Env,
             safety_bound: float = 15.0,
             gamma_budget: float = 0.99,
-            violation_penalty: float = -1.0,
+            violation_penalty: float = 0.0,
             normalize_budget_obs: bool = True,
-            max_budget_scale: float = 10.0,
+            max_budget_scale: float = 1.0,
     ):
         super().__init__(env)
         self._b0 = safety_bound
@@ -87,7 +87,9 @@ class SauteWrapper(Wrapper):
         cost = info.get('cost', jnp.zeros_like(next_state.reward))
 
         # Did the *previous* state mark an episode end? (EpisodeWrapper's done)
-        done_prev = state.done.astype(jnp.bool_)
+        base_done = state.done
+        base_dtype = base_done.dtype
+        done_prev = base_done.astype(jnp.bool_)
 
         # Previous budget (fallback to full budget if missing)
         b_prev_raw = state.info.get(
@@ -111,6 +113,13 @@ class SauteWrapper(Wrapper):
         # Clamp budget to [0, b_max) to avoid huge values
         b_next = jnp.clip(b_candidate, 0.0, self._b_max)
 
+        # Terminate on violation:
+        done_bool = jnp.logical_or(
+            done_prev,
+            violated,
+        )
+        done = done_bool.astype(base_dtype)
+
         # Violation penalty
         reward = jnp.where(
             violated,
@@ -132,7 +141,7 @@ class SauteWrapper(Wrapper):
         return next_state.replace(
             obs=obs,
             reward=reward,
-            done=next_state.done,
+            done=done,
             info=info,
             metrics=metrics,
         )
