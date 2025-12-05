@@ -392,4 +392,4 @@ def train(
       (training_state.normalizer_params, training_state.policy_params)
   )
   pmap.synchronize_hosts()
-  return (make_policy, params, metrics)
+  return (make_policy, params, metrics, eval_env)

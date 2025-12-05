@@ -72,7 +72,6 @@ except ImportError:
 from brax.io import model as brax_model
 from brax.io import json as brax_json
 import wandb
-from ml_collections import config_dict
 
 
 # Configure environment for GPU usage
@@ -376,7 +375,7 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
 
     # Train the agent
     print(f"Starting {alg_name} training for {env_name}...")
-    make_inference_fn, params, final_eval_metrics = train_fn(
+    make_inference_fn, params, final_eval_metrics, eval_env = train_fn(
         environment=train_environment,
         eval_env=eval_env,
         progress_fn=bound_progress_fn
@@ -1145,9 +1144,9 @@ def main():
     # --- PPO-Saute ---
     parser.add_argument("--saute-initial-budget", dest="initial_budget", type=float, default=15.0, help="Initial discounted safety budget b0")
     parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None, help="Budget discount factor; defaults to --discounting if None")
-    parser.add_argument("--saute-termination-on-violation", dest="termination_on_violation", type=int, default=1, help="Terminate episode on budget violation (1/0)")
     parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=0.0, help="Optional terminal penalty added only on violation step")
     parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1, help="Normalize budget observation by initial budget")
+    parser.add_argument("--saute-max-budget-scale", dest="max_budget_scale", type=float, default=10.0, help="Max budget scaling for normalization")
 
     # --- PPO-Cost verification ---
     parser.add_argument("--ppoc-verify-log-steps", type=int, default=0,
