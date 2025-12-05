@@ -33,7 +33,7 @@ def train(
     environment: envs.Env,
     num_timesteps: int,
     # Saute parameters:
-    initial_budget: float = 1.0,
+    safety_bound: float = 15.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
     violation_penalty: float = 0.0,
     normalize_budget_obs: bool = True,
@@ -70,7 +70,7 @@ def train(
   # Pre-wrap envs so vectorization happens after Saute
   env_for_training = _apply_saute(
       environment,
-      initial_budget=initial_budget,
+      safety_bound=safety_bound,
       gamma_budget=g_budget,
       violation_penalty=violation_penalty,
       normalize_budget_obs=normalize_budget_obs,
@@ -80,7 +80,7 @@ def train(
   if eval_env is not None and wrap_env:
     eval_env = _apply_saute(
         eval_env,
-        initial_budget=initial_budget,
+        safety_bound=safety_bound,
         gamma_budget=g_budget,
         violation_penalty=violation_penalty,
         normalize_budget_obs=normalize_budget_obs,
