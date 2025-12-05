@@ -813,9 +813,8 @@ def main():
 
     # --- PPO-Saute ---
     parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None, help="Budget discount factor; defaults to --discounting if None")
-    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=0.0, help="Terminal penalty added on violation step")
+    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=-1.0, help="Terminal penalty added on violation step")
     parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1, help="Normalize budget observation by initial budget")
-    parser.add_argument("--saute-max-budget-scale", dest="max_budget_scale", type=float, default=1.0, help="Max budget scaling for normalization")
 
     # --- PPO-Cost verification ---
     parser.add_argument("--ppoc-verify-log-steps", type=int, default=0,

@@ -33,26 +33,21 @@ class SauteWrapper(Wrapper):
             env: Env,
             safety_bound: float = 15.0,
             gamma_budget: float = 0.99,
-            violation_penalty: float = 0.0,
+            violation_penalty: float = -1.0,
             normalize_budget_obs: bool = True,
-            max_budget_scale: float = 1.0,
     ):
         super().__init__(env)
         self._b0 = safety_bound
         self._gamma = gamma_budget
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
-        self._b_max = self._b0 * max_budget_scale
 
     @property
     def observation_size(self) -> ObservationSize:
         return self.env.observation_size + 1
 
     def _augment_obs(self, obs: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-        if self._normalize:
-            b_obs = b / self._b0
-        else:
-            b_obs = b
+        b_obs = b / self._b0 if self._normalize else b
         return jnp.concatenate([obs, jnp.expand_dims(b_obs, -1)], axis=-1)
 
     def reset(self, rng: jnp.ndarray) -> State:
@@ -87,9 +82,7 @@ class SauteWrapper(Wrapper):
         cost = info.get('cost', jnp.zeros_like(next_state.reward))
 
         # Did the *previous* state mark an episode end? (EpisodeWrapper's done)
-        base_done = state.done
-        base_dtype = base_done.dtype
-        done_prev = base_done.astype(jnp.bool_)
+        done_prev = state.done.astype(jnp.bool_)
 
         # Previous budget (fallback to full budget if missing)
         b_prev_raw = state.info.get(
@@ -105,20 +98,10 @@ class SauteWrapper(Wrapper):
         )
 
         # Sauté update: b̃_{t+1} = (b_t - c_t) / gamma
-        b_candidate = (b_prev - cost) / self._gamma
+        b_next = (b_prev - cost) / self._gamma
 
         # Budget violation check on the candidate value
-        violated = b_candidate < 0.0
-
-        # Clamp budget to [0, b_max) to avoid huge values
-        b_next = jnp.clip(b_candidate, 0.0, self._b_max)
-
-        # Terminate on violation:
-        done_bool = jnp.logical_or(
-            done_prev,
-            violated,
-        )
-        done = done_bool.astype(base_dtype)
+        violated = b_next < 0.0
 
         # Violation penalty
         reward = jnp.where(
@@ -141,7 +124,7 @@ class SauteWrapper(Wrapper):
         return next_state.replace(
             obs=obs,
             reward=reward,
-            done=done,
+            done=next_state.done,
             info=info,
             metrics=metrics,
         )
