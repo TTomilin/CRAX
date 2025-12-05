@@ -14,16 +14,16 @@ class SauteWrapper(Wrapper):
             normalize_budget_obs: bool = True,
     ):
         super().__init__(env)
-        # self._b0 = safety_bound
+        self._b0 = safety_bound
         self._gamma = gamma_budget
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
-        self._b0 = (
-                safety_bound
-                * (1.0 - (gamma_budget ** max_episode_length))
-                / (1.0 - gamma_budget)
-                / float(max_episode_length)
-        )
+        # self._b0 = (
+        #         safety_bound
+        #         * (1.0 - (gamma_budget ** max_episode_length))
+        #         / (1.0 - gamma_budget)
+        #         / float(max_episode_length)
+        # )
 
     @property
     def observation_size(self) -> ObservationSize:
