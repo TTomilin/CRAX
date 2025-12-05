@@ -9,17 +9,25 @@ class SauteWrapper(Wrapper):
             env: Env,
             safety_bound: float = 15.0,
             gamma_budget: float = 0.99,
+            max_episode_length: int = 2000,
             violation_penalty: float = -1.0,
             normalize_budget_obs: bool = True,
     ):
         super().__init__(env)
-        self._b0 = safety_bound
+        # self._b0 = safety_bound
         self._gamma = gamma_budget
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
+        self._b0 = (
+                safety_bound
+                * (1.0 - (gamma_budget ** max_episode_length))
+                / (1.0 - gamma_budget)
+                / float(max_episode_length)
+        )
 
     @property
     def observation_size(self) -> ObservationSize:
+        # Original obs + 1 safety dimension
         return self.env.observation_size + 1
 
     def _augment_obs(self, obs: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
@@ -61,16 +69,9 @@ class SauteWrapper(Wrapper):
         done_prev = state.done.astype(jnp.bool_)
 
         # Previous budget (fallback to full budget if missing)
-        b_prev_raw = state.info.get(
+        b_prev = state.info.get(
             'saute_budget',
             jnp.ones_like(next_state.reward) * self._b0,
-        )
-
-        # If previous step was done, start a fresh budget at b0 for the new episode
-        b_prev = jnp.where(
-            done_prev,
-            jnp.ones_like(b_prev_raw) * self._b0,
-            b_prev_raw,
         )
 
         # Sauté update: b̃_{t+1} = (b_t - c_t) / gamma
@@ -87,6 +88,14 @@ class SauteWrapper(Wrapper):
             violated,
             self._viol_pen,
             next_state.reward
+        )
+
+        # Reset safety state when the env episode ends,
+        done = next_state.done.astype(jnp.bool_)
+        b_next = jnp.where(
+            done,
+            jnp.ones_like(b_next) * self._b0,
+            b_next,
         )
 
         info['saute_budget'] = b_next
