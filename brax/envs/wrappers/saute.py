@@ -13,10 +13,8 @@ class SauteWrapper(Wrapper):
             normalize_budget_obs: bool = True,
     ):
         super().__init__(env)
-        T = 2000
-        # self._b0 = safety_bound
+        self._b0 = safety_bound
         self._gamma = gamma_budget
-        self._b0 = safety_bound * (1.0 - self._gamma ** T) / (1.0 - self._gamma) / T
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
 
