@@ -31,14 +31,14 @@ class SauteWrapper(Wrapper):
     def __init__(
             self,
             env: Env,
-            initial_budget: float = 1.0,
+            safety_bound: float = 15.0,
             gamma_budget: float = 0.99,
-            violation_penalty: float = 0.0,
+            violation_penalty: float = -1.0,
             normalize_budget_obs: bool = True,
             max_budget_scale: float = 10.0,
     ):
         super().__init__(env)
-        self._b0 = initial_budget
+        self._b0 = safety_bound
         self._gamma = gamma_budget
         self._viol_pen = violation_penalty
         self._normalize = normalize_budget_obs
@@ -111,10 +111,12 @@ class SauteWrapper(Wrapper):
         # Clamp budget to [0, b_max) to avoid huge values
         b_next = jnp.clip(b_candidate, 0.0, self._b_max)
 
-        # Optional violation penalty
-        reward = next_state.reward
-        if self._viol_pen != 0.0:
-            reward = reward + jnp.where(violated, self._viol_pen, 0.0)
+        # Violation penalty
+        reward = jnp.where(
+            violated,
+            self._viol_pen,
+            next_state.reward
+        )
 
         info['saute_budget'] = b_next
         info['saute_violated'] = violated.astype(jnp.float32)

@@ -1142,9 +1142,8 @@ def main():
     parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
 
     # --- PPO-Saute ---
-    parser.add_argument("--saute-initial-budget", dest="initial_budget", type=float, default=15.0, help="Initial discounted safety budget b0")
     parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None, help="Budget discount factor; defaults to --discounting if None")
-    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=0.0, help="Optional terminal penalty added only on violation step")
+    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=-1.0, help="Optional terminal penalty added only on violation step")
     parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1, help="Normalize budget observation by initial budget")
     parser.add_argument("--saute-max-budget-scale", dest="max_budget_scale", type=float, default=10.0, help="Max budget scaling for normalization")
 
