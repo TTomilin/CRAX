@@ -450,4 +450,5 @@ def train(
       make_policy,
       (training_state.normalizer_params, training_state.params),
       b_metrics,
+      eval_env
   )

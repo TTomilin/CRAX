@@ -24,7 +24,7 @@ References:
 
 import jax.numpy as jnp
 
-from brax.envs.base import Env, Wrapper, State
+from brax.envs.base import Env, Wrapper, State, ObservationSize
 
 
 class SauteWrapper(Wrapper):
@@ -33,19 +33,26 @@ class SauteWrapper(Wrapper):
             env: Env,
             initial_budget: float = 1.0,
             gamma_budget: float = 0.99,
-            termination_on_violation: bool = True,
             violation_penalty: float = 0.0,
             normalize_budget_obs: bool = True,
+            max_budget_scale: float = 10.0,
     ):
         super().__init__(env)
-        self._b0 = float(initial_budget)
-        self._gamma = float(gamma_budget)
-        self._terminate = bool(termination_on_violation)
-        self._viol_pen = float(violation_penalty)
-        self._normalize = bool(normalize_budget_obs)
+        self._b0 = initial_budget
+        self._gamma = gamma_budget
+        self._viol_pen = violation_penalty
+        self._normalize = normalize_budget_obs
+        self._b_max = self._b0 * max_budget_scale
+
+    @property
+    def observation_size(self) -> ObservationSize:
+        return self.env.observation_size + 1
 
     def _augment_obs(self, obs: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-        b_obs = b / self._b0 if self._normalize and self._b0 != 0.0 else b
+        if self._normalize:
+            b_obs = b / self._b0
+        else:
+            b_obs = b
         return jnp.concatenate([obs, jnp.expand_dims(b_obs, -1)], axis=-1)
 
     def reset(self, rng: jnp.ndarray) -> State:
@@ -86,14 +93,14 @@ class SauteWrapper(Wrapper):
         b_prev_raw = state.info.get(
             'saute_budget',
             jnp.ones_like(next_state.reward) * self._b0,
-            )
+        )
 
         # If previous step was done, start a fresh budget at b0 for the new episode
         b_prev = jnp.where(
             done_prev,
             jnp.ones_like(b_prev_raw) * self._b0,
             b_prev_raw,
-            )
+        )
 
         # Sauté update: b̃_{t+1} = (b_t - c_t) / gamma
         b_candidate = (b_prev - cost) / self._gamma
@@ -101,31 +108,14 @@ class SauteWrapper(Wrapper):
         # Budget violation check on the candidate value
         violated = b_candidate < 0.0
 
-        # Clamp budget to [0, +∞) to avoid huge negative values after violation
-        b_next = jnp.where(
-            violated,
-            jnp.zeros_like(b_candidate),
-            b_candidate,
-        )
-
-        # Termination on violation, but keep dtype consistent with env
-        base_done = next_state.done
-        base_dtype = base_done.dtype
-        if self._terminate:
-            done_bool = jnp.logical_or(
-                base_done.astype(jnp.bool_),
-                violated,
-            )
-            done = done_bool.astype(base_dtype)
-        else:
-            done = base_done
+        # Clamp budget to [0, b_max) to avoid huge values
+        b_next = jnp.clip(b_candidate, 0.0, self._b_max)
 
         # Optional violation penalty
         reward = next_state.reward
         if self._viol_pen != 0.0:
             reward = reward + jnp.where(violated, self._viol_pen, 0.0)
 
-        # Update info
         info['saute_budget'] = b_next
         info['saute_violated'] = violated.astype(jnp.float32)
 
@@ -140,7 +130,7 @@ class SauteWrapper(Wrapper):
         return next_state.replace(
             obs=obs,
             reward=reward,
-            done=done,
+            done=next_state.done,
             info=info,
             metrics=metrics,
         )

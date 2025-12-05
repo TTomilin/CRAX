@@ -444,4 +444,4 @@ def train(
 
   logging.info('total steps: %s', total_steps)
   params = training_state.normalizer_params, training_state.policy_params
-  return (make_policy, params, metrics)
+  return (make_policy, params, metrics, eval_env)

@@ -35,9 +35,9 @@ def train(
     # Saute parameters:
     initial_budget: float = 1.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
-    termination_on_violation: bool = True,
     violation_penalty: float = 0.0,
     normalize_budget_obs: bool = True,
+    max_budget_scale: float = 10.0,
     # Standard PPO args:
     wrap_env: bool = True,
     num_envs: int = 1,
@@ -72,9 +72,9 @@ def train(
       environment,
       initial_budget=initial_budget,
       gamma_budget=g_budget,
-      termination_on_violation=termination_on_violation,
       violation_penalty=violation_penalty,
       normalize_budget_obs=normalize_budget_obs,
+      max_budget_scale=max_budget_scale,
   ) if wrap_env else environment
 
   if eval_env is not None and wrap_env:
@@ -82,9 +82,9 @@ def train(
         eval_env,
         initial_budget=initial_budget,
         gamma_budget=g_budget,
-        termination_on_violation=termination_on_violation,
         violation_penalty=violation_penalty,
         normalize_budget_obs=normalize_budget_obs,
+        max_budget_scale=max_budget_scale,
     )
 
   return ppo_train.train(
