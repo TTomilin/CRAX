@@ -282,10 +282,10 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
         wandb_config.update(env_config)
 
         # Initialize wandb
-        run_name = f"{env_name}_{alg_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_seed{seed}"
-        wandb_project = config.get('wandb_project', 'safe_brax')
-        wandb_group = config.get('wandb_group', None)
-        wandb_tags = config.get('wandb_tags', [])
+        run_name = f"{env_name}_{alg_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_seed{seed}"
+        wandb_project = config.wandb_project
+        wandb_group = config.wandb_group if config.wandb_group else env_name
+        wandb_tags = config.wandb_tags
 
         wandb.init(
             project=wandb_project,
