@@ -49,10 +49,11 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     seed = config['seed']
     algo = config['alg']
     env = config['env_name']
+    safety_bound = config['safety_bound']
 
     # Construct folder path for each configuration
     root_dir = Path(__file__).parent.resolve()
-    folder_path = root_dir / args.output / env / algo
+    folder_path = root_dir / args.output / env / algo / f"bound_{safety_bound}"
     os.makedirs(folder_path, exist_ok=True)  # Ensure the directory exists
 
     file_path = folder_path / f"seed_{seed}.parquet"
