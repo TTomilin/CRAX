@@ -21,8 +21,9 @@ TRANSLATIONS = {
     "reward": "Reward",
     "cost": "Cost",
     "ppo": "PPO",
-    "ppo_lag": "PPO_Lag",
-    "ppo_pid": "PPO_PID",
+    "ppo_cost": "PPOCost",
+    "ppo_lag": "PPOLag",
+    "ppo_pid": "PPOPID",
 }
 
 # Optional safety thresholds per env for the cost plot (None disables line)
@@ -188,8 +189,8 @@ def build_args() -> argparse.ArgumentParser:
                    help="Base directory with <env>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+",
                    default=["safe_point_goal_12_cylinders", "safe_point_goal_mixed_hazards"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_lag", "ppo_pid"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
+    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid"])
+    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],
                    choices=list(METRIC_COLS.keys()))
     p.add_argument("--x_max", type=int, default=3e8)
