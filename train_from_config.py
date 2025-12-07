@@ -819,7 +819,7 @@ def main():
     # --- PPO-Cost verification ---
     parser.add_argument("--ppoc-verify-log-steps", type=int, default=0,
                         help="If >0 and alg is ppo_cost, run verify rollout and log shaping")
-    parser.add_argument("--ppoc-cost-weight", type=float, default=1.0,
+    parser.add_argument("--cost-weight", type=float, default=1.0,
                         help="Cost weight used for PPO-C verify logging")
 
     # --- WandB ---
