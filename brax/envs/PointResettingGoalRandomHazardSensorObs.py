@@ -18,7 +18,7 @@ def default_config() -> config_dict.ConfigDict:
   """Returns the default config for PointHazardGoal environment."""
   config = config_dict.create(
       # New safety-gymnasium reward parameters
-      reward_distance=2,  # Dense reward scale for distance moved to the goal
+      reward_distance=1,  # Dense reward scale for distance moved to the goal
       reward_goal=10.0,      # Sparse reward for reaching the goal
       goal_size=0.7,        # Distance threshold for achieving the goal
       reward_orientation=False, # Optional: Reward for maintaining upright orientation

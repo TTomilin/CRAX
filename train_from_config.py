@@ -6,6 +6,7 @@ Based on mourad_lag.ipynb training approach.
 import argparse
 import csv
 import functools
+import inspect
 import json
 import os
 import time
@@ -18,9 +19,8 @@ import jax
 import jax.numpy as jnp
 import mujoco
 import numpy as np
-from jax import lax
-from matplotlib import pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
+from matplotlib import pyplot as plt
 
 from brax import envs
 from brax.envs import Env
@@ -50,25 +50,13 @@ except ImportError:
         train_ppo_cost = None
         RewardMinusCostWrapper = None  # type: ignore
 
-# Import PPO-Lagrange V3 (explicit - no fallbacks)
 try:
-    from brax.training.agents.ppo_lagrange_v3 import train as ppo_lagrange_v3_train
+    from brax.training.agents.ppo_saute import train as ppo_saute
 except ImportError:
-    try:
-        from brax.training.agents import ppo_lagrange_v3
-        ppo_lagrange_v3_train = ppo_lagrange_v3.train
-    except (ImportError, AttributeError):
-        ppo_lagrange_v3_train = None
+    ppo_saute = None
 
-# Import PPO-Lagrange V2 (explicit - separate from v3)
-try:
-    from brax.training.agents.ppo_lagrange_v2 import train as ppo_lagrange_v2_train
-except ImportError:
-    try:
-        from brax.training.agents import ppo_lagrange_v2
-        ppo_lagrange_v2_train = ppo_lagrange_v2.train
-    except (ImportError, AttributeError):
-        ppo_lagrange_v2_train = None
+from brax.training.agents.ppo_lag import train as ppo_lag
+from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.io import model as brax_model
 from brax.io import json as brax_json
 import wandb
@@ -95,29 +83,6 @@ def setup_gpu_environment():
             'Something went wrong during installation. Check the error message above '
             'for more information.'
         ) from e
-
-
-def get_default_env_config() -> config_dict.ConfigDict:
-    """Returns the default config for PointHazardGoal environment."""
-    config = config_dict.create(
-        # New safety-gymnasium reward parameters
-        reward_distance=3,
-        reward_goal=10.0,
-        goal_size=0.7,
-        reward_orientation=False,
-        reward_orientation_scale=0.002,
-        reward_orientation_body='agent',
-        ctrl_cost_weight=0.001,
-        hazard_size=0.7,
-        # Other parameters
-        terminate_when_unhealthy=True,
-        healthy_z_range=(0.05, 0.3),
-        reset_noise_scale=0.005,
-        exclude_current_positions_from_observation=True,
-        max_velocity=5.0,
-        debug=False,
-    )
-    return config
 
 
 class CostExtraWrapper(Wrapper):
@@ -197,51 +162,30 @@ def merge_configs(base_config: Dict[str, Any], override_config: Dict[str, Any]) 
 
 
 def get_algorithm_train_fn(alg_name: str):
-    """Get the appropriate training function based on algorithm name.
-    
-    Note: Both PPO-Lagrange V2 and V3 are supported.
-    - Use explicit version names ('ppo_lagrange_v2', 'ppo_lagrange_v3') to be clear
-    - Generic names ('ppo_lagrange', 'ppol') default to V3 for best performance
-    
-    Returns:
-        The training function for the specified algorithm
-    """
-    # Algorithm map with EXPLICIT versions
+    """Get the appropriate training function based on algorithm name."""
     alg_map = {
         'ppo': ppo_train,
         'ppo_cost': train_ppo_cost,
-        'ppoc': train_ppo_cost,  # Alias
-        
-        # PPO-Lagrange - generic names default to V3 (recommended)
-        'ppo_lagrange': ppo_lagrange_v3_train,
-        'ppol': ppo_lagrange_v3_train,
-        
-        # PPO-Lagrange - EXPLICIT versions (recommended for reproducibility)
-        'ppo_lagrange_v2': ppo_lagrange_v2_train,
-        'ppol_v2': ppo_lagrange_v2_train,
-        'ppo_lagrange_v3': ppo_lagrange_v3_train,
-        'ppol_v3': ppo_lagrange_v3_train,
+        'ppo_lag': ppo_lag,
+        'ppo_pid': ppo_pid,
+        'ppo_saute': ppo_saute,
     }
 
     train_fn = alg_map.get(alg_name)
     if train_fn is None:
         available = [k for k, v in alg_map.items() if v is not None]
         raise ValueError(f"Algorithm '{alg_name}' not available or not installed. Available: {available}")
-    
-    # Log which version is being used for Lagrange algorithms
-    if 'lagrange' in alg_name.lower() or 'ppol' in alg_name.lower():
-        if train_fn == ppo_lagrange_v3_train:
-            version = "V3"
-        elif train_fn == ppo_lagrange_v2_train:
-            version = "V2"
-        else:
-            version = "UNKNOWN"
-        print(f"Using PPO-Lagrange {version} for algorithm '{alg_name}'")
 
     return train_fn
 
 
-def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
+def filter_kwargs_for_fn(fn, cfg):
+    sig = inspect.signature(fn)
+    valid_keys = set(sig.parameters.keys())
+    return {k: v for k, v in cfg.items() if k in valid_keys}
+
+
+def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = True,
                       verbose: bool = True) -> tuple[Any, Any, Any, Env]:
     """
     Train an agent using the provided configuration.
@@ -249,37 +193,23 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
     Returns:
         Tuple of (make_inference_fn, params, final_eval_metrics)
     """
-    # Extract config values with notebook defaults
-    # Prefer 'env_name' if provided, fallback to 'env' for backward compatibility
-    env_name = config.get('env_name', config.get('env'))
-    if env_name is None:
-        raise ValueError("Config must include 'env' or 'env_name'.")
-    alg_name = config.get('alg', 'ppo')
+    env_name = config.env_name
+    alg_name = config.alg
 
-    num_timesteps = config.get('num_timesteps', 100_000_000)
-
-    # Create environments (pass through env_kwargs if provided)
-    env_kwargs = config.get('env_kwargs', {})
-    train_environment = envs.get_environment(env_name, **env_kwargs)
-    eval_env = envs.get_environment(env_name, **env_kwargs)
+    # Create environments
+    train_environment = envs.get_environment(env_name, **config.env_kwargs)
+    eval_env = envs.get_environment(env_name, **config.env_kwargs)
 
     print(f"Training environment '{env_name}' instantiated.")
     print(f"Evaluation environment '{env_name}' instantiated.")
 
     # Setup wandb if requested
+    cfg = vars(config)
+    cfg['seed'] = seed
     if use_wandb:
         # Prepare wandb config
-        wandb_config = config.copy()
+        wandb_config = cfg.copy()
         wandb_config['seed'] = seed
-
-        # Add environment config if available
-        env_config = get_default_env_config().to_dict()
-        # Merge any environment overrides provided via config
-        if isinstance(env_kwargs, dict):
-            cfg_over = env_kwargs.get('config_overrides', {})
-            if isinstance(cfg_over, dict):
-                env_config.update(cfg_over)
-        wandb_config.update(env_config)
 
         # Initialize wandb
         run_name = f"{env_name}_{alg_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_seed{seed}"
@@ -290,85 +220,19 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
         wandb.init(
             project=wandb_project,
             name=run_name,
+            id=run_name,
             config=wandb_config,
             group=wandb_group,
+            job_type=alg_name,
             tags=wandb_tags,
         )
 
     # Setup metrics collection
-    bound_progress_fn = functools.partial(
-        custom_progress_fn,
-        use_wandb=use_wandb,
-        verbose=verbose,
-    )
+    progress_fn = functools.partial(custom_progress_fn, use_wandb=use_wandb, verbose=verbose,)
 
     # Get the appropriate training function
     train_fn_base = get_algorithm_train_fn(alg_name)
-
-    # Prepare training function arguments
-    train_kwargs = {
-        # core
-        'num_timesteps': num_timesteps,
-        'max_devices_per_host': config.get('max_devices_per_host', None),
-        'seed': seed,
-
-        # high-level control
-        'wrap_env': config.get('wrap_env', True),
-        'madrona_backend': config.get('madrona_backend', False),
-        'augment_pixels': config.get('augment_pixels', False),
-
-        # env wrapper
-        'num_envs': config.get('num_envs', 2048),
-        'episode_length': config.get('episode_length', 2000),
-        'action_repeat': config.get('action_repeat', 1),
-        'wrap_env_fn': None,  # keep default
-        'randomization_fn': None,  # keep default
-
-        # algo params
-        'learning_rate': config.get('learning_rate', 5e-4),
-        'entropy_cost': config.get('entropy_cost', 5e-3),
-        'discounting': config.get('discounting', 0.99),
-        'unroll_length': config.get('unroll_length', 8),
-        'batch_size': config.get('batch_size', 1024),
-        'num_minibatches': config.get('num_minibatches', 32),
-        'num_updates_per_batch': config.get('num_updates_per_batch', 6),
-        'num_resets_per_eval': config.get('num_resets_per_eval', 0),
-        'normalize_observations': config.get('normalize_observations', True),
-        'reward_scaling': config.get('reward_scaling', 0.1),
-        'max_grad_norm': config.get('max_grad_norm', None),
-        'normalize_advantage': config.get('normalize_advantage', True),
-
-        # eval
-        'num_evals': config.get('num_evals', 5),
-        'eval_env': eval_env,
-        'num_eval_envs': config.get('num_eval_envs', 128),
-        'deterministic_eval': config.get('deterministic_eval', False),
-
-        # training metrics
-        'log_training_metrics': True,
-        'training_metrics_steps': int(config.get('training_metrics_steps', 1_000_000)),
-
-        # callbacks
-        'progress_fn': bound_progress_fn,
-        'policy_params_fn': (lambda *args, **kwargs: None),
-
-        # checkpointing
-        'save_checkpoint_path': config.get('save_checkpoint_path', None),
-        'restore_checkpoint_path': config.get('restore_checkpoint_path', None),
-        'restore_params': None,  # programmatic only
-        'restore_value_fn': config.get('restore_value_fn', True),
-    }
-
-    # Add algorithm-specific parameters
-    if 'ppo' in alg_name:
-        train_kwargs['gae_lambda'] = config.get('gae_lambda', 0.95)
-        train_kwargs['clipping_epsilon'] = config.get('clipping_epsilon', 0.3)
-
-    # PPO-Lagrange specific parameters
-    if 'lagrange' in alg_name:
-        train_kwargs['safety_bound'] = config.get('safety_bound', 0.2)
-        train_kwargs['lagrangian_coef_rate'] = config.get('lagrangian_coef_rate', 0.01)
-        train_kwargs['initial_lambda_lagr'] = config.get('initial_lambda_lagr', 0.0)
+    train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
 
     # Create the training function
     train_fn = functools.partial(train_fn_base, **train_kwargs)
@@ -378,7 +242,7 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
     make_inference_fn, params, final_eval_metrics, eval_env = train_fn(
         environment=train_environment,
         eval_env=eval_env,
-        progress_fn=bound_progress_fn
+        progress_fn=progress_fn
     )
     print("Training finished.")
 
@@ -389,11 +253,11 @@ def train_from_config(config: Dict[str, Any], seed: int, use_wandb: bool = True,
             if value is not None:
                 final_log_data[key] = value
         if final_log_data:
-            wandb.log(final_log_data, step=int(float(np.asarray(num_timesteps).reshape(()))))
+            wandb.log(final_log_data, step=int(float(np.asarray(config.num_timesteps).reshape(()))))
 
     # Save model
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = config.get('model_dir', 'models')
+    model_dir = config.model_dir
     os.makedirs(model_dir, exist_ok=True)
     model_path = f'{model_dir}/{env_name.lower()}_{alg_name}_seed{seed}_{timestamp}'
     brax_model.save_params(model_path, params)
@@ -428,52 +292,25 @@ def collect_rollout_metrics(env_name: str, make_inference_fn, params,
 
     # Initialize data collection
     rollout_frames = []
-    
-    # Initialize environment-specific metrics
     rollout_metrics_data = {
+        'distance_to_goal': [],
+        'last_dist_goal': [],
         'reward': [],
-        'cost': [],
+        'dist_reward': [],
+        'goal_reward': [],
+        'orientation_reward': [],
+        'ctrl_cost': [],
         'x_position': [],
         'y_position': [],
+        'agent_pos_x': [],
+        'agent_pos_y': [],
+        'goal_pos_x': [],
+        'goal_pos_y': [],
         'x_velocity': [],
         'y_velocity': [],
+        'goals_reached_count': [],
+        'cost': []
     }
-    
-    # Add safe_point_goal specific metrics
-    if 'point_goal' in env_name.lower() or 'safe_point_goal' in env_name.lower():
-        rollout_metrics_data.update({
-            'distance_to_goal': [],
-            'last_dist_goal': [],
-            'dist_reward': [],
-            'goal_reward': [],
-            'orientation_reward': [],
-            'ctrl_cost': [],
-            'agent_pos_x': [],
-            'agent_pos_y': [],
-            'goal_pos_x': [],
-            'goal_pos_y': [],
-            'goals_reached_count': [],
-        })
-    # Add humanoid_hop specific metrics
-    elif 'humanoid_hop' in env_name.lower():
-        rollout_metrics_data.update({
-            'forward_reward': [],
-            'reward_linvel': [],
-            'reward_quadctrl': [],
-            'reward_alive': [],
-            'distance_from_origin': [],
-            'ctrl_cost': [],
-            'left_foot_contact_force': [],
-            'right_foot_contact_force': [],
-            'contact_violation': [],
-            'contact_cost': [],
-        })
-    # Fallback: add common metrics that might exist
-    else:
-        rollout_metrics_data.update({
-            'ctrl_cost': [],
-        })
-    
     actions = []
 
     # Initialize rollout
@@ -491,53 +328,32 @@ def collect_rollout_metrics(env_name: str, make_inference_fn, params,
         eval_state = jit_eval_step(eval_state, action)
         rollout_frames.append(eval_state.pipeline_state)
 
-        # Collect common metrics
+        # Collect metrics from eval_state.metrics
+        rollout_metrics_data['distance_to_goal'].append(eval_state.metrics.get('distance_to_goal', np.nan))
         rollout_metrics_data['reward'].append(eval_state.metrics.get('reward', np.nan))
-        rollout_metrics_data['cost'].append(eval_state.info.get('cost', eval_state.metrics.get('cost', np.nan)))
+        rollout_metrics_data['cost'].append(eval_state.metrics.get('cost', np.nan))
+        rollout_metrics_data['dist_reward'].append(eval_state.metrics.get('dist_reward', np.nan))
+        rollout_metrics_data['goal_reward'].append(eval_state.metrics.get('goal_reward', np.nan))
+        rollout_metrics_data['orientation_reward'].append(eval_state.metrics.get('orientation_reward', np.nan))
+        rollout_metrics_data['ctrl_cost'].append(eval_state.metrics.get('ctrl_cost', np.nan))
         rollout_metrics_data['x_position'].append(eval_state.metrics.get('x_position', np.nan))
         rollout_metrics_data['y_position'].append(eval_state.metrics.get('y_position', np.nan))
         rollout_metrics_data['x_velocity'].append(eval_state.metrics.get('x_velocity', np.nan))
         rollout_metrics_data['y_velocity'].append(eval_state.metrics.get('y_velocity', np.nan))
+        rollout_metrics_data['goals_reached_count'].append(eval_state.metrics.get('goals_reached_count', np.nan))
 
-        # Collect environment-specific metrics
-        if 'point_goal' in env_name.lower() or 'safe_point_goal' in env_name.lower():
-            # safe_point_goal specific metrics
-            rollout_metrics_data['distance_to_goal'].append(eval_state.metrics.get('distance_to_goal', np.nan))
-            rollout_metrics_data['dist_reward'].append(eval_state.metrics.get('dist_reward', np.nan))
-            rollout_metrics_data['goal_reward'].append(eval_state.metrics.get('goal_reward', np.nan))
-            rollout_metrics_data['orientation_reward'].append(eval_state.metrics.get('orientation_reward', np.nan))
-            rollout_metrics_data['ctrl_cost'].append(eval_state.metrics.get('ctrl_cost', np.nan))
-            rollout_metrics_data['goals_reached_count'].append(eval_state.metrics.get('goals_reached_count', np.nan))
-            rollout_metrics_data['last_dist_goal'].append(eval_state.info.get('last_dist_goal', np.nan))
-            current_agent_pos = eval_state.info.get('agent_pos', np.array([np.nan, np.nan, np.nan]))
-            current_goal_pos = eval_state.info.get('goal_pos', np.array([np.nan, np.nan, np.nan]))
-            rollout_metrics_data['agent_pos_x'].append(current_agent_pos[0])
-            rollout_metrics_data['agent_pos_y'].append(current_agent_pos[1])
-            rollout_metrics_data['goal_pos_x'].append(current_goal_pos[0])
-            rollout_metrics_data['goal_pos_y'].append(current_goal_pos[1])
-        elif 'humanoid_hop' in env_name.lower():
-            # humanoid_hop specific metrics
-            rollout_metrics_data['forward_reward'].append(eval_state.metrics.get('forward_reward', np.nan))
-            rollout_metrics_data['reward_linvel'].append(eval_state.metrics.get('reward_linvel', np.nan))
-            rollout_metrics_data['reward_quadctrl'].append(eval_state.metrics.get('reward_quadctrl', np.nan))
-            rollout_metrics_data['reward_alive'].append(eval_state.metrics.get('reward_alive', np.nan))
-            rollout_metrics_data['distance_from_origin'].append(eval_state.metrics.get('distance_from_origin', np.nan))
-            rollout_metrics_data['ctrl_cost'].append(eval_state.metrics.get('reward_quadctrl', np.nan))
-            # Debug metrics (may not be available if debug=False)
-            rollout_metrics_data['left_foot_contact_force'].append(eval_state.metrics.get('left_foot_contact_force', np.nan))
-            rollout_metrics_data['right_foot_contact_force'].append(eval_state.metrics.get('right_foot_contact_force', np.nan))
-            rollout_metrics_data['contact_violation'].append(eval_state.metrics.get('contact_violation', np.nan))
-            rollout_metrics_data['contact_cost'].append(eval_state.metrics.get('contact_cost', np.nan))
-        else:
-            # Fallback: collect ctrl_cost if available
-            rollout_metrics_data['ctrl_cost'].append(eval_state.metrics.get('ctrl_cost', np.nan))
+        # Collect metrics from eval_state.info
+        rollout_metrics_data['last_dist_goal'].append(eval_state.info.get('last_dist_goal', np.nan))
+        current_agent_pos = eval_state.info.get('agent_pos', np.array([np.nan, np.nan, np.nan]))
+        current_goal_pos = eval_state.info.get('goal_pos', np.array([np.nan, np.nan, np.nan]))
+        rollout_metrics_data['agent_pos_x'].append(current_agent_pos[0])
+        rollout_metrics_data['agent_pos_y'].append(current_agent_pos[1])
+        rollout_metrics_data['goal_pos_x'].append(current_goal_pos[0])
+        rollout_metrics_data['goal_pos_y'].append(current_goal_pos[1])
 
         if i % 100 == 0 or i == num_steps - 1:
-            if 'point_goal' in env_name.lower() or 'safe_point_goal' in env_name.lower():
-                print(
-                    f"Rollout step {i + 1}/{num_steps} completed. Goals reached: {eval_state.metrics.get('goals_reached_count', 0)}")
-            else:
-                print(f"Rollout step {i + 1}/{num_steps} completed.")
+            print(
+                f"Rollout step {i + 1}/{num_steps} completed. Goals reached: {eval_state.metrics.get('goals_reached_count', 0)}")
 
         if eval_state.done:
             print(f"Rollout terminated early at step {i + 1} due to done signal.")
@@ -644,27 +460,34 @@ def verify_ppoc_shaping(env_name: str, make_inference_fn, params,
 
 
 def create_rollout_plots(rollout_metrics_data: Dict[str, List], env_name: str) -> None:
-    """Create and save plots from rollout metrics (environment-specific)."""
+    """Create and save plots from rollout metrics."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     plot_dir = 'plots'
     os.makedirs(plot_dir, exist_ok=True)
     plot_path_base = f'{plot_dir}/{env_name}_rollout_{timestamp}'
 
-    # Determine number of steps from common metrics
-    num_steps = len(rollout_metrics_data.get('reward', rollout_metrics_data.get('cost', [])))
-    if num_steps == 0:
-        print("Warning: No metrics data available for plotting.")
-        return
+    num_steps = len(rollout_metrics_data['distance_to_goal'])
     time_steps = np.arange(num_steps)
 
     plt.style.use('seaborn-v0_8-darkgrid')
 
-    # Common plots for all environments
-    # Plot 1: Cost Plot
+    # Plot 1: Distance and Last Distance to Goal
     plt.figure(figsize=(12, 7))
-    cost_data = rollout_metrics_data.get('cost', [])
-    if cost_data and len(cost_data) > 0:
-        plt.plot(time_steps, cost_data, label='Cost', linestyle='-', color='red')
+    plt.plot(time_steps, rollout_metrics_data['distance_to_goal'], label='Current Distance to Goal', linestyle='-')
+    plt.plot(time_steps, rollout_metrics_data['last_dist_goal'], label='Last Distance to Goal', linestyle='--')
+    plt.xlabel("Time Step")
+    plt.ylabel("Distance")
+    plt.title(f"{env_name} - Rollout: Goal Tracking")
+    plt.legend()
+    plt.tight_layout()
+    goal_tracking_plot_path = f'{plot_path_base}_goal_distances.png'
+    plt.savefig(goal_tracking_plot_path)
+    plt.close()
+    print(f"Goal tracking plot saved to: {goal_tracking_plot_path}")
+
+    # Plot 2: Cost Plot
+    plt.figure(figsize=(12, 7))
+    plt.plot(time_steps, rollout_metrics_data['cost'], label='Cost', linestyle='-')
     plt.xlabel("Time Step")
     plt.ylabel("Cost")
     plt.title(f"{env_name} - Rollout: Cost")
@@ -675,275 +498,94 @@ def create_rollout_plots(rollout_metrics_data: Dict[str, List], env_name: str) -
     plt.close()
     print(f"Cost plot saved to: {cost_plot_path}")
 
-    # Plot 2: Cumulative Cost
-    if cost_data and len(cost_data) > 0:
-        cumulative_cost = np.cumsum(np.nan_to_num(cost_data))
-        plt.figure(figsize=(12, 7))
-        plt.plot(time_steps, cumulative_cost, label='Cumulative Cost', color='red')
-        plt.xlabel("Time Step")
-        plt.ylabel("Cumulative Cost")
-        plt.title(f"{env_name} - Rollout: Cumulative Cost Over Time")
+    # Plot 3: Cumulative Cost
+    cumulative_cost = np.cumsum(rollout_metrics_data['cost'])
+    plt.figure(figsize=(12, 7))
+    plt.plot(time_steps, cumulative_cost, label='Cumulative Cost', color='red')
+    plt.xlabel("Time Step")
+    plt.ylabel("Cumulative Cost")
+    plt.title(f"{env_name} - Rollout: Cumulative Cost Over Time")
+    plt.legend()
+    plt.tight_layout()
+    cumulative_cost_plot_path = f'{plot_path_base}_cumulative_cost.png'
+    plt.savefig(cumulative_cost_plot_path)
+    plt.close()
+    print(f"Cumulative cost plot saved to: {cumulative_cost_plot_path}")
+
+    # Plot 4: Reward Component Breakdown
+    plt.figure(figsize=(12, 7))
+    plt.plot(time_steps, rollout_metrics_data['dist_reward'], label='Distance Reward', alpha=0.7)
+    plt.plot(time_steps, rollout_metrics_data['goal_reward'], label='Goal Reward', alpha=0.7)
+    plt.plot(time_steps, rollout_metrics_data['orientation_reward'], label='Orientation Reward', alpha=0.7)
+    plt.plot(time_steps, -np.array(rollout_metrics_data['ctrl_cost']), label='Negative Control Cost', alpha=0.7)
+    plt.plot(time_steps, rollout_metrics_data['reward'], label='Total Reward', linestyle='--', color='black',
+             linewidth=2)
+    plt.xlabel("Time Step")
+    plt.ylabel("Reward Value")
+    plt.title(f"{env_name} - Rollout: Reward Component Breakdown")
+    plt.legend()
+    plt.tight_layout()
+    reward_breakdown_plot_path = f'{plot_path_base}_reward_breakdown.png'
+    plt.savefig(reward_breakdown_plot_path)
+    plt.close()
+    print(f"Reward breakdown plot saved to: {reward_breakdown_plot_path}")
+
+    # Plot 5: X-Y Trajectory
+    plt.figure(figsize=(10, 8))
+    valid_x = np.array(rollout_metrics_data['x_position'])
+    valid_y = np.array(rollout_metrics_data['y_position'])
+    goal_x_series = np.array(rollout_metrics_data['goal_pos_x'])
+    goal_y_series = np.array(rollout_metrics_data['goal_pos_y'])
+
+    # Filter out NaNs
+    valid_indices_agent = ~(np.isnan(valid_x) | np.isnan(valid_y))
+    valid_x_agent = valid_x[valid_indices_agent]
+    valid_y_agent = valid_y[valid_indices_agent]
+
+    valid_indices_goal = ~(np.isnan(goal_x_series) | np.isnan(goal_y_series))
+    valid_x_goal = goal_x_series[valid_indices_goal]
+    valid_y_goal = goal_y_series[valid_indices_goal]
+
+    if len(valid_x_agent) > 0 and len(valid_y_agent) > 0:
+        plt.plot(valid_x_agent, valid_y_agent, 'k-', alpha=0.7, label='Agent Path')
+        plt.scatter(valid_x_agent[0], valid_y_agent[0], c='green', s=100, label='Agent Start', zorder=5, marker='o')
+        plt.scatter(valid_x_agent[-1], valid_y_agent[-1], c='red', s=100, label='Agent End', zorder=5, marker='x')
+
+        if len(valid_x_goal) > 0 and len(valid_y_goal) > 0:
+            plt.scatter(valid_x_goal[0], valid_y_goal[0], c='blue', s=150, label='Initial Goal', zorder=4, marker='*')
+            if any(g_x != valid_x_goal[0] for g_x in valid_x_goal) or any(
+                    g_y != valid_y_goal[0] for g_y in valid_y_goal):
+                plt.plot(valid_x_goal, valid_y_goal, 'b--', alpha=0.5, label='Goal Path')
+                plt.scatter(valid_x_goal[-1], valid_y_goal[-1], c='purple', s=150, label='Final Goal', zorder=4,
+                            marker='*')
+
+        plt.xlabel("X Position")
+        plt.ylabel("Y Position")
+        plt.title(f"{env_name} - Rollout: X-Y Trajectory")
         plt.legend()
-        plt.tight_layout()
-        cumulative_cost_plot_path = f'{plot_path_base}_cumulative_cost.png'
-        plt.savefig(cumulative_cost_plot_path)
-        plt.close()
-        print(f"Cumulative cost plot saved to: {cumulative_cost_plot_path}")
-
-    # Environment-specific plots
-    if 'point_goal' in env_name.lower() or 'safe_point_goal' in env_name.lower():
-        # safe_point_goal specific plots
-        # Plot 3: Distance and Last Distance to Goal
-        if 'distance_to_goal' in rollout_metrics_data:
-            plt.figure(figsize=(12, 7))
-            plt.plot(time_steps, rollout_metrics_data['distance_to_goal'], label='Current Distance to Goal', linestyle='-')
-            if 'last_dist_goal' in rollout_metrics_data:
-                plt.plot(time_steps, rollout_metrics_data['last_dist_goal'], label='Last Distance to Goal', linestyle='--')
-            plt.xlabel("Time Step")
-            plt.ylabel("Distance")
-            plt.title(f"{env_name} - Rollout: Goal Tracking")
-            plt.legend()
-            plt.tight_layout()
-            goal_tracking_plot_path = f'{plot_path_base}_goal_distances.png'
-            plt.savefig(goal_tracking_plot_path)
-            plt.close()
-            print(f"Goal tracking plot saved to: {goal_tracking_plot_path}")
-
-        # Plot 4: Reward Component Breakdown
-        plt.figure(figsize=(12, 7))
-        if 'dist_reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['dist_reward'], label='Distance Reward', alpha=0.7)
-        if 'goal_reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['goal_reward'], label='Goal Reward', alpha=0.7)
-        if 'orientation_reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['orientation_reward'], label='Orientation Reward', alpha=0.7)
-        if 'ctrl_cost' in rollout_metrics_data:
-            plt.plot(time_steps, -np.array(rollout_metrics_data['ctrl_cost']), label='Negative Control Cost', alpha=0.7)
-        if 'reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['reward'], label='Total Reward', linestyle='--', color='black',
-                     linewidth=2)
-        plt.xlabel("Time Step")
-        plt.ylabel("Reward Value")
-        plt.title(f"{env_name} - Rollout: Reward Component Breakdown")
-        plt.legend()
-        plt.tight_layout()
-        reward_breakdown_plot_path = f'{plot_path_base}_reward_breakdown.png'
-        plt.savefig(reward_breakdown_plot_path)
-        plt.close()
-        print(f"Reward breakdown plot saved to: {reward_breakdown_plot_path}")
-
-        # Plot 5: X-Y Trajectory with goals
-        plt.figure(figsize=(10, 8))
-        valid_x = np.array(rollout_metrics_data.get('x_position', []))
-        valid_y = np.array(rollout_metrics_data.get('y_position', []))
-        goal_x_series = np.array(rollout_metrics_data.get('goal_pos_x', []))
-        goal_y_series = np.array(rollout_metrics_data.get('goal_pos_y', []))
-
-        # Filter out NaNs
-        valid_indices_agent = ~(np.isnan(valid_x) | np.isnan(valid_y))
-        valid_x_agent = valid_x[valid_indices_agent]
-        valid_y_agent = valid_y[valid_indices_agent]
-
-        valid_indices_goal = ~(np.isnan(goal_x_series) | np.isnan(goal_y_series))
-        valid_x_goal = goal_x_series[valid_indices_goal]
-        valid_y_goal = goal_y_series[valid_indices_goal]
-
-        if len(valid_x_agent) > 0 and len(valid_y_agent) > 0:
-            plt.plot(valid_x_agent, valid_y_agent, 'k-', alpha=0.7, label='Agent Path')
-            plt.scatter(valid_x_agent[0], valid_y_agent[0], c='green', s=100, label='Agent Start', zorder=5, marker='o')
-            plt.scatter(valid_x_agent[-1], valid_y_agent[-1], c='red', s=100, label='Agent End', zorder=5, marker='x')
-
-            if len(valid_x_goal) > 0 and len(valid_y_goal) > 0:
-                plt.scatter(valid_x_goal[0], valid_y_goal[0], c='blue', s=150, label='Initial Goal', zorder=4, marker='*')
-                if any(g_x != valid_x_goal[0] for g_x in valid_x_goal) or any(
-                        g_y != valid_y_goal[0] for g_y in valid_y_goal):
-                    plt.plot(valid_x_goal, valid_y_goal, 'b--', alpha=0.5, label='Goal Path')
-                    plt.scatter(valid_x_goal[-1], valid_y_goal[-1], c='purple', s=150, label='Final Goal', zorder=4,
-                                marker='*')
-
-            plt.xlabel("X Position")
-            plt.ylabel("Y Position")
-            plt.title(f"{env_name} - Rollout: X-Y Trajectory")
-            plt.legend()
-            plt.axis('equal')
-            plt.grid(True)
-        else:
-            plt.text(0.5, 0.5, "No valid position data for trajectory plot", ha='center', va='center')
-
-        plt.tight_layout()
-        trajectory_plot_path = f'{plot_path_base}_xy_trajectory.png'
-        plt.savefig(trajectory_plot_path)
-        plt.close()
-        print(f"X-Y trajectory plot saved to: {trajectory_plot_path}")
-
-    elif 'humanoid_hop' in env_name.lower():
-        # humanoid_hop specific plots
-        # Plot 3: Reward Component Breakdown
-        plt.figure(figsize=(12, 7))
-        if 'airtime_reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['airtime_reward'], label='Airtime Reward', alpha=0.7)
-        if 'forward_reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['forward_reward'], label='Forward Reward', alpha=0.7)
-        if 'reward_alive' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['reward_alive'], label='Alive Reward', alpha=0.7)
-        if 'reward_quadctrl' in rollout_metrics_data:
-            # reward_quadctrl is already -ctrl_cost, so plot it directly
-            plt.plot(time_steps, rollout_metrics_data['reward_quadctrl'], label='Control Cost (negative)', alpha=0.7)
-        elif 'ctrl_cost' in rollout_metrics_data:
-            ctrl_cost_data = np.array(rollout_metrics_data['ctrl_cost'])
-            plt.plot(time_steps, -np.abs(ctrl_cost_data), label='Negative Control Cost', alpha=0.7)
-        if 'reward' in rollout_metrics_data:
-            plt.plot(time_steps, rollout_metrics_data['reward'], label='Total Reward', linestyle='--', color='black',
-                     linewidth=2)
-        plt.xlabel("Time Step")
-        plt.ylabel("Reward Value")
-        plt.title(f"{env_name} - Rollout: Reward Component Breakdown")
-        plt.legend()
-        plt.tight_layout()
-        reward_breakdown_plot_path = f'{plot_path_base}_reward_breakdown.png'
-        plt.savefig(reward_breakdown_plot_path)
-        plt.close()
-        print(f"Reward breakdown plot saved to: {reward_breakdown_plot_path}")
-
-        # Plot 4: Distance from Origin
-        if 'distance_from_origin' in rollout_metrics_data:
-            plt.figure(figsize=(12, 7))
-            plt.plot(time_steps, rollout_metrics_data['distance_from_origin'], label='Distance from Origin', linestyle='-')
-            plt.xlabel("Time Step")
-            plt.ylabel("Distance")
-            plt.title(f"{env_name} - Rollout: Distance from Origin")
-            plt.legend()
-            plt.tight_layout()
-            distance_plot_path = f'{plot_path_base}_distance_from_origin.png'
-            plt.savefig(distance_plot_path)
-            plt.close()
-            print(f"Distance from origin plot saved to: {distance_plot_path}")
-
-        # Plot 5: Foot Contact Forces
-        if 'left_foot_contact_force' in rollout_metrics_data and 'right_foot_contact_force' in rollout_metrics_data:
-            plt.figure(figsize=(12, 7))
-            left_foot_data = np.array(rollout_metrics_data['left_foot_contact_force'])
-            right_foot_data = np.array(rollout_metrics_data['right_foot_contact_force'])
-            # Filter out NaNs
-            valid_left = ~np.isnan(left_foot_data)
-            valid_right = ~np.isnan(right_foot_data)
-            if np.any(valid_left):
-                plt.plot(time_steps[valid_left], left_foot_data[valid_left], label='Left Foot Contact Force', alpha=0.7, color='blue')
-            if np.any(valid_right):
-                plt.plot(time_steps[valid_right], right_foot_data[valid_right], label='Right Foot Contact Force', alpha=0.7, color='orange')
-            plt.xlabel("Time Step")
-            plt.ylabel("Contact Force")
-            plt.title(f"{env_name} - Rollout: Foot Contact Forces")
-            plt.legend()
-            plt.tight_layout()
-            contact_plot_path = f'{plot_path_base}_foot_contact_forces.png'
-            plt.savefig(contact_plot_path)
-            plt.close()
-            print(f"Foot contact forces plot saved to: {contact_plot_path}")
-
-        # Plot 6: Contact Violation and Cost
-        if 'contact_violation' in rollout_metrics_data:
-            plt.figure(figsize=(12, 7))
-            violation_data = np.array(rollout_metrics_data['contact_violation'])
-            valid_violation = ~np.isnan(violation_data)
-            if np.any(valid_violation):
-                plt.plot(time_steps[valid_violation], violation_data[valid_violation], label='Contact Violation', alpha=0.7, color='red')
-            if 'contact_cost' in rollout_metrics_data:
-                cost_data = np.array(rollout_metrics_data['contact_cost'])
-                valid_cost = ~np.isnan(cost_data)
-                if np.any(valid_cost):
-                    plt.plot(time_steps[valid_cost], cost_data[valid_cost], label='Contact Cost', alpha=0.7, color='purple')
-            plt.xlabel("Time Step")
-            plt.ylabel("Violation / Cost")
-            plt.title(f"{env_name} - Rollout: Contact Violation and Cost")
-            plt.legend()
-            plt.tight_layout()
-            violation_plot_path = f'{plot_path_base}_contact_violation.png'
-            plt.savefig(violation_plot_path)
-            plt.close()
-            print(f"Contact violation plot saved to: {violation_plot_path}")
-
-        # Plot 7: X-Y Trajectory (without goals)
-        plt.figure(figsize=(10, 8))
-        valid_x = np.array(rollout_metrics_data.get('x_position', []))
-        valid_y = np.array(rollout_metrics_data.get('y_position', []))
-
-        # Filter out NaNs
-        valid_indices = ~(np.isnan(valid_x) | np.isnan(valid_y))
-        valid_x_agent = valid_x[valid_indices]
-        valid_y_agent = valid_y[valid_indices]
-
-        if len(valid_x_agent) > 0 and len(valid_y_agent) > 0:
-            plt.plot(valid_x_agent, valid_y_agent, 'k-', alpha=0.7, label='Agent Path')
-            plt.scatter(valid_x_agent[0], valid_y_agent[0], c='green', s=100, label='Agent Start', zorder=5, marker='o')
-            plt.scatter(valid_x_agent[-1], valid_y_agent[-1], c='red', s=100, label='Agent End', zorder=5, marker='x')
-            plt.xlabel("X Position")
-            plt.ylabel("Y Position")
-            plt.title(f"{env_name} - Rollout: X-Y Trajectory")
-            plt.legend()
-            plt.axis('equal')
-            plt.grid(True)
-        else:
-            plt.text(0.5, 0.5, "No valid position data for trajectory plot", ha='center', va='center')
-
-        plt.tight_layout()
-        trajectory_plot_path = f'{plot_path_base}_xy_trajectory.png'
-        plt.savefig(trajectory_plot_path)
-        plt.close()
-        print(f"X-Y trajectory plot saved to: {trajectory_plot_path}")
-
+        plt.axis('equal')
+        plt.grid(True)
     else:
-        # Generic fallback plots
-        # Plot 3: Reward
-        if 'reward' in rollout_metrics_data:
-            plt.figure(figsize=(12, 7))
-            plt.plot(time_steps, rollout_metrics_data['reward'], label='Reward', linestyle='-', color='green')
-            plt.xlabel("Time Step")
-            plt.ylabel("Reward")
-            plt.title(f"{env_name} - Rollout: Reward")
-            plt.legend()
-            plt.tight_layout()
-            reward_plot_path = f'{plot_path_base}_reward.png'
-            plt.savefig(reward_plot_path)
-            plt.close()
-            print(f"Reward plot saved to: {reward_plot_path}")
+        plt.text(0.5, 0.5, "No valid position data for trajectory plot", ha='center', va='center')
 
-        # Plot 4: X-Y Trajectory (generic)
-        if 'x_position' in rollout_metrics_data and 'y_position' in rollout_metrics_data:
-            plt.figure(figsize=(10, 8))
-            valid_x = np.array(rollout_metrics_data['x_position'])
-            valid_y = np.array(rollout_metrics_data['y_position'])
-            valid_indices = ~(np.isnan(valid_x) | np.isnan(valid_y))
-            valid_x_agent = valid_x[valid_indices]
-            valid_y_agent = valid_y[valid_indices]
-
-            if len(valid_x_agent) > 0 and len(valid_y_agent) > 0:
-                plt.plot(valid_x_agent, valid_y_agent, 'k-', alpha=0.7, label='Agent Path')
-                plt.scatter(valid_x_agent[0], valid_y_agent[0], c='green', s=100, label='Agent Start', zorder=5, marker='o')
-                plt.scatter(valid_x_agent[-1], valid_y_agent[-1], c='red', s=100, label='Agent End', zorder=5, marker='x')
-                plt.xlabel("X Position")
-                plt.ylabel("Y Position")
-                plt.title(f"{env_name} - Rollout: X-Y Trajectory")
-                plt.legend()
-                plt.axis('equal')
-                plt.grid(True)
-                plt.tight_layout()
-                trajectory_plot_path = f'{plot_path_base}_xy_trajectory.png'
-                plt.savefig(trajectory_plot_path)
-                plt.close()
-                print(f"X-Y trajectory plot saved to: {trajectory_plot_path}")
+    plt.tight_layout()
+    trajectory_plot_path = f'{plot_path_base}_xy_trajectory.png'
+    plt.savefig(trajectory_plot_path)
+    plt.close()
+    print(f"X-Y trajectory plot saved to: {trajectory_plot_path}")
 
 
 def record_episode_video(
-        env,  # a Brax env (same as for eval)
+        env,
         make_inference_fn,
         params,
         steps: int = 2500,
-        camera: str | int = 0,
+        cameras: List[str] | List[int] = (0,),  # camera names or ids
         width: int = 320,
         height: int = 240,
         fps: int = 100,
-        out_name: str = "rollout.mp4",
+        frame_stride=1,
+        out_name: str = "rollout",
         log_to_wandb: bool = True,
         seed: int = 0,
         show_metrics: bool = True,  # Print the cost on the screen
@@ -957,101 +599,126 @@ def record_episode_video(
     # 1) Ensure headless GPU rendering (you might need to do this before importing mujoco)
     os.environ.setdefault("MUJOCO_GL", "egl")
 
+    start_time = os.times()
+
     # 2) JIT policy
-    infer = make_inference_fn(params)
+    infer = jax.jit(make_inference_fn(params))
+    reset_fn = env.reset
+    step_fn = env.step
 
     @jax.jit
     def rollout(key):
-        state = env.reset(key)
+        state = reset_fn(key)
 
-        def step_fn(carry, _):
+        def step_body(carry, _):
             state, key = carry
             key, sk = jax.random.split(key)
             action, _ = infer(state.obs, sk)
-            next_state = env.step(state, action)
-            # Return both pipeline state and full state for cost access
-            return (next_state, key), (next_state.pipeline_state, next_state)
+            next_state = step_fn(state, action)
 
-        (final_state, _), (frames, states) = lax.scan(step_fn, (state, key), xs=None, length=steps)
-        return frames, states, final_state
+            frame = next_state.pipeline_state  # for render
+            reward = next_state.reward  # scalar
+            cost = next_state.info["cost"]  # scalar
+
+            return (next_state, key), (frame, reward, cost)
+
+        (final_state, _), (frames, rewards, costs) = jax.lax.scan(
+            step_body, (state, key), xs=None, length=steps
+        )
+        return frames, rewards, costs, final_state
 
     # 3) Run rollout to collect frames
     key = jax.random.PRNGKey(seed)
-    frames_batched, states_batched, final_state = rollout(key)  # PyTree with leading T
+    frames_batched, rewards_batched, costs_batched, final_state = rollout(key)  # PyTree with leading T
+
+    print("Rollout took %.2f seconds." % (os.times()[4] - start_time[4]))
+    start_time = os.times()
+
     frames_batched = jax.device_get(frames_batched)
-    states_batched = jax.device_get(states_batched)
 
-    # Unstack to a Python list of per-step pipeline states
-    leaves = jax.tree_util.tree_leaves(frames_batched)
+    T = int(frames_batched.qpos.shape[0])
+    frames = [jax.tree.map(lambda x: x[i], frames_batched) for i in range(T)]
 
-    def index_t(t):
-        return jax.tree.map(lambda x: x[t], frames_batched)
+    # Build indices of frames we keep
+    keep_idx = np.arange(0, T, frame_stride, dtype=int)
 
-    def index_state_t(t):
-        return jax.tree.map(lambda x: x[t], states_batched)
+    # Downsample frames
+    frames = [frames[i] for i in keep_idx]
 
-    frames = [index_t(t) for t in range(int(leaves[0].shape[0]))]
-    states = [index_state_t(t) for t in range(int(leaves[0].shape[0]))] if show_metrics else None
+    # Keep full-resolution rewards/costs for exact cumulative values
+    rewards_full = np.asarray(jax.device_get(rewards_batched))
+    costs_full = np.asarray(jax.device_get(costs_batched))
+
+    # Exact cumulative totals at the exact original step indices that we render
+    cum_rewards_full = np.cumsum(rewards_full)
+    cum_costs_full = np.cumsum(costs_full)
+
+    cum_rewards_at_frames = cum_rewards_full[keep_idx]
+    cum_costs_at_frames = cum_costs_full[keep_idx]
+
+    # If you still want per-frame (downsampled) instantaneous values for something else:
+    rewards = rewards_full[keep_idx]
+    costs = costs_full[keep_idx]
 
     # 4) Render the episode
-    rendering = env.render(frames, width=width, height=height, camera=camera)
+    for camera in cameras:
+        rendering = env.render(frames, width=width, height=height, camera=camera)
+        print("Rendering took %.2f seconds." % (os.times()[4] - start_time[4]))
 
-    # 5) Add reward/cost overlay if requested
-    if show_metrics and states is not None:
-        rendering_with_metrics = []
-        try:
-            # Try to load a font, fallback to default if not available
-            font_obj = ImageFont.truetype(f"{font}.ttf", 20)
-        except (OSError, IOError):
-            font_obj = ImageFont.load_default()
+        # 5) Add reward/cost overlay
+        if show_metrics:
+            start_time = os.times()
+            rendering_with_metrics = []
+            try:
+                # Try to load a font, fallback to default if not available
+                font = ImageFont.truetype(f"{font}.ttf", 20)
+            except (OSError, IOError):
+                font = ImageFont.load_default()
 
-        reward = 0.0
-        cost = 0.0
+            for i, (frame, reward, cost) in enumerate(zip(rendering, rewards, costs)):
+                # Convert frame to PIL Image
+                img = Image.fromarray(frame.astype(np.uint8))
+                draw = ImageDraw.Draw(img)
 
-        for i, (frame, state) in enumerate(zip(rendering, states)):
-            # Convert frame to PIL Image
-            img = Image.fromarray(frame.astype(np.uint8))
-            draw = ImageDraw.Draw(img)
+                # Extract metrics from the state info
+                total_reward = float(cum_rewards_at_frames[i])
+                total_cost = float(cum_costs_at_frames[i])
 
-            # Extract metrics from the state info
-            reward += state.reward.item()
-            cost += state.info['cost'].item()
+                # Add cost text overlay
+                reward_text = f"Reward: {total_reward:.2f}"
+                cost_text = f"Cost: {total_cost:.2f}"
 
-            # Add cost text overlay
-            reward_text = f"Reward: {reward:.2f}"
-            cost_text = f"Cost: {cost:.2f}"
+                # Color
+                text_color_reward = (50, 220, 50)  # Green text
+                text_color_cost = (230, 60, 60)  # Red text
+                outline_color = (0, 0, 0)  # Black outline
 
-            # Color
-            text_color_reward = (50, 220, 50)  # Green text
-            text_color_cost = (230, 60, 60)  # Red text
-            outline_color = (0, 0, 0)    # Black outline
+                # Position text in top-left corner
+                x_rew, y_rew = 10, 10
+                x_cost, y_cost = 10, 40
 
-            # Position text in top-left corner
-            x_rew, y_rew = 10, 10
-            x_cost, y_cost = 10, 40
+                # Draw text with outline for better visibility
+                draw.text((x_rew, y_rew), reward_text, font=font, fill=text_color_reward, stroke_width=2,
+                          stroke_fill=outline_color)
+                draw.text((x_cost, y_cost), cost_text, font=font, fill=text_color_cost, stroke_width=2,
+                          stroke_fill=outline_color)
 
-            # Draw text with outline for better visibility
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    if dx != 0 or dy != 0:
-                        draw.text((x_rew + dx, y_rew + dy), reward_text, font=font_obj, fill=outline_color)
-                        draw.text((x_cost + dx, y_cost + dy), cost_text, font=font_obj, fill=outline_color)
-            draw.text((x_rew, y_rew), reward_text, font=font_obj, fill=text_color_reward)
-            draw.text((x_cost, y_cost), cost_text, font=font_obj, fill=text_color_cost)
+                # Convert back to numpy array
+                rendering_with_metrics.append(np.array(img))
 
-            # Convert back to numpy array
-            rendering_with_metrics.append(np.array(img))
+            rendering = rendering_with_metrics
+            print("Overlay text took %.2f seconds." % (os.times()[4] - start_time[4]))
 
-        rendering = rendering_with_metrics
+        # 6) Save mp4 (and log)
+        file_name = f"{out_name}_{camera}.mp4"
+        os.makedirs("videos", exist_ok=True)
+        mp4_path = os.path.join("videos", file_name)
+        iio.imwrite(mp4_path, np.stack(rendering), fps=fps)
 
-    # 6) Save mp4 (and log)
-    os.makedirs("videos", exist_ok=True)
-    mp4_path = os.path.join("videos", out_name)
-    iio.imwrite(mp4_path, np.stack(rendering), fps=fps)
+        if log_to_wandb and wandb.run is not None:
+            wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")})
 
-    if log_to_wandb and wandb.run is not None:
-        wandb.log({"rollout/video": wandb.Video(mp4_path, fps=fps, format="mp4")})
-    return mp4_path
+        print("Saved video:", mp4_path)
 
 
 def _json_type(s):
@@ -1068,36 +735,39 @@ def main():
     parser = argparse.ArgumentParser(description='Train Safe-Brax agents from config files')
 
     # --- Core ---
-    parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
     parser.add_argument("--seeds", type=int, nargs="+", default=[0], help="Random seeds")
 
     # --- Experiment Control ---
     parser.add_argument("--quiet", action="store_true", help="Reduce verbosity")
-    parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--skip-rollout", action="store_true", help="Skip rollout evaluation after training")
     parser.add_argument("--skip-video", action="store_true", help="Skip video recording after training")
-    parser.add_argument("--out_dir", type=str, default="runs/experimental_results",
-                        help="Directory for metrics/outputs")
+    parser.add_argument("--out_dir", type=str, default="runs/experimental_results", help="Directory for metrics/outputs")
     parser.add_argument("--model_dir", type=str, default="models", help="Directory to save model parameters")
 
     # --- Environment ---
-    parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name (preferred)")
-    parser.add_argument("--env", type=str, default="point_resetting_goal_random_hazard_lidar_sensor_obs",
-                        help="Alternate env key (legacy)")
-    parser.add_argument("--env_kwargs", type=_json_type, default={
-        "config_overrides": {
-            "ctrl_cost_weight": 0.001,
-            "goal_size": 0.7,
-            "reward_goal": 10.0,
-            "reward_distance": 3,
-            "reward_orientation": False,
-            "reward_orientation_scale": 0.002,
+    parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name")
+    parser.add_argument(
+        "--env_kwargs",
+        type=_json_type,
+        default={
+            "physics": {
+                "timestep": 0.02,
+                "n_frames": 4
+            },
+            "cost": {
+                "scaler": 1.0,
+                "ctrl_cost_weight": 0.001
+            },
+            "reward": {
+                "reward_goal": 1.0,
+                "dense_scale": 0.0
+            }
         },
-        # "num_hazards": 8,
-    }, help="JSON string or path for env_kwargs")
+        help="JSON for env kwargs"
+    )
 
     # --- Algorithm ---
-    parser.add_argument("--alg", type=str, default="ppo_lagrange", help="Algorithm name (e.g., ppo, ppo_lagrange)")
+    parser.add_argument("--alg", type=str, default="ppo_lag", help="Algorithm name (e.g., ppo, ppo_lag)")
     parser.add_argument("--max_devices_per_host", type=int, default=None, help="Limit devices per host")
 
     # --- Training Scale / Rollout ---
@@ -1129,8 +799,8 @@ def main():
                         help="Env steps between training metrics logs")
 
     # --- PPO-Lagrange ---
-    parser.add_argument("--safety_bound", type=float, default=0.2, help="Safety constraint bound")
-    parser.add_argument("--lagrangian_coef_rate", type=float, default=0.001, help="Lagrange multiplier LR")
+    parser.add_argument("--safety_bound", type=float, default=25.0, help="Episodic safety constraint bound")
+    parser.add_argument("--lagrangian_coef_rate", type=float, default=10.0, help="Lagrange multiplier LR")
     parser.add_argument("--initial_lambda_lagr", type=float, default=0.0, help="Initial lambda value")
 
     # --- PPO-PID Lagrange ---
@@ -1155,47 +825,24 @@ def main():
     # --- WandB ---
     parser.add_argument("--use_wandb", type=bool, default=True, help="Enable wandb logging")
     parser.add_argument("--wandb_project", type=str, default="safe-brax-experimental-results", help="W&B project")
-    parser.add_argument("--wandb_group", type=str, default="pointgoal-baselines", help="W&B group")
+    parser.add_argument("--wandb_group", type=str, default=None, help="W&B group")
     parser.add_argument("--wandb_tags", type=str, nargs='+', help="JSON list or path of tags")
-    parser.add_argument("--wandb_log_interval", type=int, default=50000,
-                        help="Steps between wandb logs (keeps fine-grained local metrics but reduces wandb frequency)")
 
     # --- Video Recording ---
-    parser.add_argument("--camera", type=str, default="fixedfar",
-                        help="Camera name or id (string name or numeric string index)")
+    parser.add_argument("--cameras", type=str, nargs="+", default=["fixedfar", "vision"], help="Camera names or ids")
     parser.add_argument("--video_width", type=int, default=320, help="Output video width")
     parser.add_argument("--video_height", type=int, default=240, help="Output video height")
-    parser.add_argument("--video_fps", type=int, default=30, help="Output video FPS")
-    parser.add_argument("--video_length", type=int, default=2500, help="Number of frames in the video")
+    parser.add_argument("--video_length", type=int, default=None, help="Number of frames in the video")
+    parser.add_argument("--video_fps", type=int, default=100, help="Output video FPS")
+    parser.add_argument("--video_frame_stride", type=int, default=1, help="Output video frame stride")
 
-    args = parser.parse_args()
+    config = parser.parse_args()
 
     # Setup GPU environment
     setup_gpu_environment()
 
-    # Load config
-    config = load_config(args.config)
-
-    # Override config with command line args ONLY if explicitly provided
-    # Detect which args were explicitly provided on command line
-    import sys
-    provided_args = set()
-    for i, arg in enumerate(sys.argv):
-        if arg.startswith('--'):
-            arg_name = arg[2:].replace('-', '_')  # Convert --foo-bar to foo_bar
-            provided_args.add(arg_name)
-    
-    for key, value in vars(args).items():
-        # Override if:
-        # 1. Key doesn't exist in config (new parameter), OR
-        # 2. Argument was explicitly provided on command line
-        if key not in config or key in provided_args:
-            # Special case: don't override with 'config' argument itself
-            if key != 'config':
-                config[key] = value
-
     # Run training for each seed
-    for seed in args.seeds:
+    for seed in config.seeds:
         print(f"\n{'=' * 50}")
         print(f"Running experiment with seed {seed}")
         print(f"{'=' * 50}\n")
@@ -1204,58 +851,58 @@ def main():
         make_inference_fn, params, final_metrics, eval_env = train_from_config(
             config=config,
             seed=seed,
-            use_wandb=not args.no_wandb,
-            verbose=not args.quiet
+            use_wandb=config.use_wandb,
+            verbose=not config.quiet
         )
 
         # Perform rollout evaluation if not skipped
-        if not args.skip_rollout:
+        if not config.skip_rollout:
             print(f"\nPerforming rollout evaluation...")
-            rollout_env_name = config.get('env_name', config.get('env'))
+            rollout_env_name = config.env_name
             rollout_metrics = collect_rollout_metrics(
                 env_name=rollout_env_name,
                 make_inference_fn=make_inference_fn,
                 params=params,
-                num_steps=args.rollout_steps,
+                num_steps=config.rollout_steps,
                 seed=seed,
                 save_trajectory=True,
                 save_plots=True,
-                env_kwargs=config.get('env_kwargs', {})
+                env_kwargs=config.env_kwargs
             )
 
-        if not args.skip_video:
-            vid = record_episode_video(
+        if not config.skip_video:
+            video_length = config.video_length if config.video_length else config.episode_length
+            record_episode_video(
                 env=eval_env,
                 make_inference_fn=make_inference_fn,
                 params=params,
-                steps=args.video_length,
-                camera=config.get("camera", 0),
-                width=config.get("video_width", 320),
-                height=config.get("video_height", 240),
-                fps=int(config.get("video_fps", 30)),
-                out_name=f"{config.get('env_name', 'env')}_{config.get('alg', 'algo')}_seed{seed}.mp4",
-                log_to_wandb=not args.no_wandb,
+                steps=video_length,
+                cameras=config.cameras,
+                width=config.video_width,
+                height=config.video_height,
+                fps=config.video_fps,
+                frame_stride=config.video_frame_stride,
+                out_name=f"{config.env_name}_{config.alg}_seed{seed}",
+                log_to_wandb=config.use_wandb,
                 seed=seed,
             )
-            print("Saved video:", vid)
 
         # PPO-C verify shaping log if requested
-        if config.get('alg') in ('ppo_cost', 'ppoc') and args.ppoc_verify_log_steps > 0:
+        if config.alg in ('ppo_cost', 'ppoc') and config.ppoc_verify_log_steps > 0:
             print("\nRunning PPO-C shaping verification rollout...")
-            rollout_env_name = config.get('env_name', config.get('env'))
+            rollout_env_name = config.env_name
             _ = verify_ppoc_shaping(
                 env_name=rollout_env_name,
                 make_inference_fn=make_inference_fn,
                 params=params,
-                num_steps=args.ppoc_verify_log_steps,
+                num_steps=config.ppoc_verify_log_steps,
                 seed=seed,
-                cost_weight=float(config.get('cost_weight', args.ppoc_cost_weight)),
-                env_kwargs=config.get('env_kwargs', {}),
-                out_dir=config.get('out_dir', 'runs/smoke')
+                cost_weight=config.cost_weight,
+                out_dir=config.out_dir
             )
 
         # Finish wandb run if active
-        if not args.no_wandb and wandb.run is not None:
+        if config.use_wandb and wandb.run is not None:
             wandb.finish()
 
     print("\nAll experiments completed!")

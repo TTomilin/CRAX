@@ -226,13 +226,13 @@ def train(
         ] = ppo_networks.make_ppo_networks,
         seed: int = 0,
         # eval
-        num_evals: int = 1,
+        num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
         num_eval_envs: int = 128,
         deterministic_eval: bool = False,
         # training metrics
         buffer_size: int = 1000,
-        log_training_metrics: bool = False,
+        log_training_metrics: bool = True,
         training_metrics_steps: Optional[int] = None,
         # callbacks
         progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
@@ -423,8 +423,7 @@ def train(
 
     metrics_aggregator = metric_logger.MetricsLogger(
         buffer_size=buffer_size,
-        steps_between_logging=training_metrics_steps
-                              or env_step_per_training_step,
+        steps_between_logging=training_metrics_steps,
         progress_fn=progress_fn,
     )
 
@@ -547,6 +546,14 @@ def train(
             normalizer_params=normalizer_params,
             env_steps=training_state.env_steps + env_step_per_training_step,
         )
+
+        if log_training_metrics:
+            jax.debug.callback(
+                metrics_aggregator.update_train_metrics,
+                metrics,
+                new_training_state.env_steps,
+            )
+
         return (new_training_state, state, new_key), metrics
 
     def training_epoch(
@@ -558,7 +565,6 @@ def train(
             (),
             length=num_training_steps_per_epoch,
         )
-        loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
     training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
@@ -572,9 +578,6 @@ def train(
         training_state, env_state = _strip_weak_type((training_state, env_state))
         result = training_epoch(training_state, env_state, key)
         training_state, env_state, metrics = _strip_weak_type(result)
-
-        metrics = jax.tree_util.tree_map(jnp.mean, metrics)
-        jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
@@ -643,29 +646,32 @@ def train(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
 
-    eval_env = _maybe_wrap_env(
-        eval_env or environment,
-        wrap_env,
-        num_eval_envs,
-        episode_length,
-        action_repeat,
-        device_count=1,  # eval on the host only
-        key_env=eval_key,
-        wrap_env_fn=wrap_env_fn,
-        randomization_fn=randomization_fn,
-    )
-    evaluator = acting.Evaluator(
-        eval_env,
-        functools.partial(make_policy, deterministic=deterministic_eval),
-        num_eval_envs=num_eval_envs,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        key=eval_key,
-    )
+    # Only create evaluator if evaluation is enabled
+    evaluator = None
+    if num_evals > 0:
+        eval_env = _maybe_wrap_env(
+            eval_env or environment,
+            wrap_env,
+            num_eval_envs,
+            episode_length,
+            action_repeat,
+            device_count=1,  # eval on the host only
+            key_env=eval_key,
+            wrap_env_fn=wrap_env_fn,
+            randomization_fn=randomization_fn,
+        )
+        evaluator = acting.Evaluator(
+            eval_env,
+            functools.partial(make_policy, deterministic=deterministic_eval),
+            num_eval_envs=num_eval_envs,
+            episode_length=episode_length,
+            action_repeat=action_repeat,
+            key=eval_key,
+        )
 
     # Run initial eval
     metrics = {}
-    if process_id == 0 and num_evals > 1:
+    if process_id == 0 and num_evals > 1 and evaluator is not None:
         metrics = evaluator.run_evaluation(
             _unpmap((
                 training_state.normalizer_params,
@@ -680,6 +686,7 @@ def train(
     training_metrics = {}
     training_walltime = 0
     current_step = 0
+
     for it in range(num_evals_after_init):
         logging.info('starting iteration %s %s', it, time.time() - xt)
 
@@ -691,6 +698,7 @@ def train(
                 training_epoch_with_timing(training_state, env_state, epoch_keys)
             )
             current_step = int(_unpmap(training_state.env_steps))
+            progress_fn(current_step, training_metrics)
 
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
@@ -721,7 +729,8 @@ def train(
                 save_checkpoint_path, current_step, params, ckpt_config
             )
 
-        if num_evals > 0:
+        # Only run evaluation if enabled
+        if num_evals > 0 and evaluator is not None:
             metrics = evaluator.run_evaluation(
                 params,
                 training_metrics,

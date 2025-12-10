@@ -55,7 +55,7 @@ def default_config(num_hazards: int = 8) -> config_dict.ConfigDict:
         # Goal settings
         goal_size=0.7,
         reward_goal=10.0,
-        reward_distance=3.0,
+        reward_distance=1.0,
 
         # Control settings
         ctrl_cost_weight=0.001,

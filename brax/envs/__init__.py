@@ -25,8 +25,6 @@ from brax.envs import half_cheetah
 from brax.envs import hopper
 from brax.envs import humanoid
 from brax.envs import humanoid_height_constrained
-from brax.envs import humanoid_hop
-from brax.envs import humanoid_hop_airtime
 from brax.envs import humanoidstandup
 from brax.envs import inverted_double_pendulum
 from brax.envs import inverted_pendulum
@@ -36,7 +34,8 @@ from brax.envs import swimmer
 from brax.envs import walker2d
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
-from brax.envs.SafePointGoal import SafePointGoal
+from brax.envs.SafePointGoal import SafePointGoal, SafePointGoal_12Cubes, SafePointGoal_12Cylinders, \
+    SafePointGoal_MixedHazards
 from brax.envs.SafePointGoalWeighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
@@ -49,8 +48,6 @@ _envs = {
     'hopper': hopper.Hopper,
     'humanoid': humanoid.Humanoid,
     'humanoid_height_constrained': humanoid_height_constrained.HumanoidHeightConstrained,
-    'humanoid_hop': humanoid_hop.HumanoidHop,
-    'humanoid_hop_airtime': humanoid_hop_airtime.HumanoidHopAirtime,
     'humanoidstandup': humanoidstandup.HumanoidStandup,
     'inverted_pendulum': inverted_pendulum.InvertedPendulum,
     'inverted_double_pendulum': inverted_double_pendulum.InvertedDoublePendulum,
@@ -62,6 +59,9 @@ _envs = {
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,
     'safe_point_goal_weighted': SafePointGoalWeighted,
+    'safe_point_goal_12_cubes': SafePointGoal_12Cubes,
+    'safe_point_goal_12_cylinders': SafePointGoal_12Cylinders,
+    'safe_point_goal_mixed_hazards': SafePointGoal_MixedHazards,
 }
 
 
