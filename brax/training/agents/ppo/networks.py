@@ -14,7 +14,7 @@
 
 """PPO networks."""
 
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from brax.training import distribution
 from brax.training import networks
@@ -29,6 +29,7 @@ class PPONetworks:
   policy_network: networks.FeedForwardNetwork
   value_network: networks.FeedForwardNetwork
   parametric_action_distribution: distribution.ParametricDistribution
+  cost_value_network: Optional[networks.FeedForwardNetwork] = None
 
 
 def make_inference_fn(ppo_networks: PPONetworks):
@@ -70,11 +71,29 @@ def make_ppo_networks(
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     policy_hidden_layer_sizes: Sequence[int] = (32,) * 4,
     value_hidden_layer_sizes: Sequence[int] = (256,) * 5,
+    cost_value_hidden_layer_sizes: Optional[Sequence[int]] = None,
     activation: networks.ActivationFn = linen.swish,
     policy_obs_key: str = 'state',
     value_obs_key: str = 'state',
 ) -> PPONetworks:
-  """Make PPO networks with preprocessor."""
+  """Make PPO networks with preprocessor.
+
+  Args:
+    observation_size: Size of observations.
+    action_size: Size of actions.
+    preprocess_observations_fn: Function to preprocess observations.
+    policy_hidden_layer_sizes: Hidden layer sizes for policy network.
+    value_hidden_layer_sizes: Hidden layer sizes for value network.
+    cost_value_hidden_layer_sizes: Hidden layer sizes for cost value network.
+      If None, no cost value network is created (standard PPO).
+      If provided, creates a cost value network for constrained RL variants.
+    activation: Activation function for networks.
+    policy_obs_key: Key for policy observations.
+    value_obs_key: Key for value observations.
+
+  Returns:
+    PPONetworks with policy, value, and optionally cost_value networks.
+  """
   parametric_action_distribution = distribution.NormalTanhDistribution(
       event_size=action_size
   )
@@ -94,8 +113,19 @@ def make_ppo_networks(
       obs_key=value_obs_key,
   )
 
+  cost_value_network = None
+  if cost_value_hidden_layer_sizes is not None:
+    cost_value_network = networks.make_value_network(
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=cost_value_hidden_layer_sizes,
+        activation=activation,
+        obs_key=value_obs_key,
+    )
+
   return PPONetworks(
       policy_network=policy_network,
       value_network=value_network,
       parametric_action_distribution=parametric_action_distribution,
+      cost_value_network=cost_value_network,
   )

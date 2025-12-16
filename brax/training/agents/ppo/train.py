@@ -48,6 +48,9 @@ Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = 'i'
 
+# Type alias for the post-step hook function
+PostStepFn = Callable[['TrainingState', Metrics], Tuple['TrainingState', Metrics]]
+
 
 @flax.struct.dataclass
 class TrainingState:
@@ -57,6 +60,7 @@ class TrainingState:
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: types.UInt64
+    aux_state: Optional[Any] = None  # For Lagrange multipliers, PID state, etc.
 
 
 def _unpmap(v):
@@ -242,6 +246,11 @@ def train(
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
+        # customization hooks for constrained RL variants
+        loss_fn: Optional[Callable] = None,
+        post_step_fn: Optional[PostStepFn] = None,
+        extra_fields: Tuple[str, ...] = ('truncation', 'episode_metrics', 'episode_done'),
+        init_aux_state_fn: Optional[Callable[[], Any]] = None,
 ):
     """PPO training.
 
@@ -310,6 +319,16 @@ def train(
         from the return values of ppo.train().
       restore_value_fn: whether to restore the value function from the checkpoint
         or use a random initialization
+      loss_fn: Optional custom loss function. If None, uses compute_ppo_loss.
+        For constrained RL variants, pass compute_ppo_lagrange_loss.
+      post_step_fn: Optional function called after each training step.
+        Signature: (TrainingState, Metrics) -> (TrainingState, Metrics).
+        Used for Lagrange multiplier updates in constrained RL.
+      extra_fields: Extra fields to collect from env state during rollout.
+        Default is ('truncation', 'episode_metrics', 'episode_done').
+        For constrained RL, add 'cost'.
+      init_aux_state_fn: Optional function to initialize aux_state in TrainingState.
+        Returns initial aux_state value. Used for Lagrange multipliers, PID state, etc.
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -362,7 +381,7 @@ def train(
     local_key, key_env, eval_key = jax.random.split(local_key, 3)
     # key_networks should be global, so that networks are initialized the same
     # way for different processes.
-    key_policy, key_value = jax.random.split(global_key)
+    key_policy, key_value, key_cost_value = jax.random.split(global_key, 3)
     del global_key
 
     assert num_envs % device_count == 0
@@ -406,20 +425,51 @@ def train(
             optax.adam(learning_rate=learning_rate),
         )
 
-    loss_fn = functools.partial(
-        ppo_losses.compute_ppo_loss,
-        ppo_network=ppo_network,
-        entropy_cost=entropy_cost,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-    )
+    # Use custom loss function if provided, otherwise default to standard PPO loss
+    use_aux_in_loss = loss_fn is not None
+    if loss_fn is None:
+        loss_fn_to_use = functools.partial(
+            ppo_losses.compute_ppo_loss,
+            ppo_network=ppo_network,
+            entropy_cost=entropy_cost,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+        )
+    else:
+        # Custom loss functions may need aux_state (e.g., Lagrange multiplier)
+        loss_fn_to_use = functools.partial(
+            loss_fn,
+            ppo_network=ppo_network,
+            entropy_cost=entropy_cost,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+        )
 
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-    )
+    # Create gradient update function
+    # For standard PPO, we use the standard gradient_update_fn
+    # For constrained RL with aux_state, we use a custom gradient update
+    if not use_aux_in_loss:
+        gradient_update_fn = gradients.gradient_update_fn(
+            loss_fn_to_use, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        )
+    else:
+        # Custom gradient update for loss functions that need aux_state
+        def gradient_update_fn(params, normalizer_params, data, rng, optimizer_state, aux_state=None):
+            def loss_wrapper(params):
+                return loss_fn_to_use(params, normalizer_params, data, rng, aux_state=aux_state)
+            
+            grad_fn = jax.value_and_grad(loss_wrapper, has_aux=True)
+            (loss, metrics), grads = grad_fn(params)
+            grads = jax.lax.pmean(grads, axis_name=_PMAP_AXIS_NAME)
+            updates, new_optimizer_state = optimizer.update(grads, optimizer_state, params)
+            new_params = optax.apply_updates(params, updates)
+            return (loss, metrics), new_params, new_optimizer_state
 
     metrics_aggregator = metric_logger.MetricsLogger(
         buffer_size=buffer_size,
@@ -431,16 +481,30 @@ def train(
             carry,
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
+            aux_state: Optional[Any] = None,
     ):
         optimizer_state, params, key = carry
         key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
-            params,
-            normalizer_params,
-            data,
-            key_loss,
-            optimizer_state=optimizer_state,
-        )
+        
+        if use_aux_in_loss:
+            # Custom loss function with aux_state support
+            (_, metrics), params, optimizer_state = gradient_update_fn(
+                params,
+                normalizer_params,
+                data,
+                key_loss,
+                optimizer_state,
+                aux_state,
+            )
+        else:
+            # Standard PPO loss
+            (_, metrics), params, optimizer_state = gradient_update_fn(
+                params,
+                normalizer_params,
+                data,
+                key_loss,
+                optimizer_state=optimizer_state,
+            )
 
         return (optimizer_state, params, key), metrics
 
@@ -449,6 +513,7 @@ def train(
             unused_t,
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
+            aux_state: Optional[Any] = None,
     ):
         optimizer_state, params, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -472,7 +537,7 @@ def train(
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(minibatch_step, normalizer_params=normalizer_params),
+            functools.partial(minibatch_step, normalizer_params=normalizer_params, aux_state=aux_state),
             (optimizer_state, params, key_grad),
             shuffled_data,
             length=num_minibatches,
@@ -500,7 +565,7 @@ def train(
                 policy,
                 current_key,
                 unroll_length,
-                extra_fields=('truncation', 'episode_metrics', 'episode_done'),
+                extra_fields=extra_fields,
             )
             return (next_state, next_key), data
 
@@ -533,7 +598,7 @@ def train(
 
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(
-                sgd_step, data=data, normalizer_params=normalizer_params
+                sgd_step, data=data, normalizer_params=normalizer_params, aux_state=training_state.aux_state
             ),
             (training_state.optimizer_state, training_state.params, key_sgd),
             (),
@@ -545,7 +610,13 @@ def train(
             params=params,
             normalizer_params=normalizer_params,
             env_steps=training_state.env_steps + env_step_per_training_step,
+            aux_state=training_state.aux_state,
         )
+
+        # Apply post-step hook if provided (for Lagrange multiplier updates, etc.)
+        if post_step_fn is not None:
+            new_training_state, extra_metrics = post_step_fn(new_training_state, metrics)
+            metrics = {**metrics, **extra_metrics}
 
         if log_training_metrics:
             jax.debug.callback(
@@ -594,10 +665,21 @@ def train(
         return training_state, env_state, metrics  # pytype: disable=bad-return-type  # py311-upgrade
 
     # Initialize model params and training state.
+    # Handle optional cost_value network for constrained RL variants
+    cost_value_params = None
+    if ppo_network.cost_value_network is not None:
+        cost_value_params = ppo_network.cost_value_network.init(key_value)
+
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
+        cost_value=cost_value_params,
     )
+
+    # Initialize aux_state if init function provided (for Lagrange multipliers, PID state, etc.)
+    initial_aux_state = None
+    if init_aux_state_fn is not None:
+        initial_aux_state = init_aux_state_fn()
 
     obs_shape = jax.tree_util.tree_map(
         lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
@@ -609,6 +691,7 @@ def train(
             _remove_pixels(obs_shape)
         ),
         env_steps=types.UInt64(hi=0, lo=0),
+        aux_state=initial_aux_state,
     )
 
     if restore_checkpoint_path is not None:

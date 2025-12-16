@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PPO-Lagrange training algorithm."""
+"""PPO-PID Lagrange training algorithm."""
 
-from brax.training.agents.ppo_pid.train import train
+from brax.training.agents.ppo_pid import train
 from brax.training.agents.ppo_pid import losses
-

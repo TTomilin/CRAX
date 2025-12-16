@@ -12,191 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Proximal policy optimization training.
+"""PPO-PID Lagrange training.
 
-See: https://arxiv.org/pdf/1707.06347.pdf
+Thin wrapper around the base PPO trainer with PID-based Lagrangian constraint handling.
 """
 
-import functools
-import time
-from typing import Any, Callable, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple
 
-import flax
 import jax
 import jax.numpy as jnp
-import numpy as np
-import optax
-from absl import logging
 
 from brax import base
 from brax import envs
-from brax.training import acting
-from brax.training import logger as metric_logger
-from brax.training import pmap
 from brax.training import types
-from brax.training.acme import running_statistics
-from brax.training.acme import specs
-from brax.training.agents.ppo_lag import checkpoint
-from brax.training.agents.ppo_lag import losses as ppo_losses
-from brax.training.agents.ppo_lag import networks as ppo_networks
-from brax.training.agents.ppo_lag.train import TrainingState
-from brax.training.types import PRNGKey
-from brax.training.types import Params
+from brax.training.agents.ppo import train as ppo_train
+from brax.training.agents.ppo import losses as ppo_losses
+from brax.training.agents.ppo import networks as ppo_networks
 
-InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
-
-_PMAP_AXIS_NAME = 'i'
-
-
-@flax.struct.dataclass
-class PIDTrainingState(TrainingState):
-    """Contains training state for the PID learner."""
-    pid_integral: jnp.ndarray         # shape [1], accumulated violation
-    pid_prev_violation: jnp.ndarray   # shape [1], previous violation
-    pid_deriv_ema: jnp.ndarray        # shape [1], EMA of violation difference
-
-
-def _unpmap(v):
-    return jax.tree_util.tree_map(lambda x: x[0], v)
-
-
-def _strip_weak_type(tree):
-    # brax user code is sometimes ambiguous about weak_type.  in order to
-    # avoid extra jit recompilations we strip all weak types from user input
-    def f(leaf):
-        leaf = jnp.asarray(leaf)
-        return leaf.astype(leaf.dtype)
-
-    return jax.tree_util.tree_map(f, tree)
-
-
-def _validate_madrona_args(
-        madrona_backend: bool,
-        num_envs: int,
-        num_eval_envs: int,
-        action_repeat: int,
-        eval_env: Optional[envs.Env] = None,
-):
-    """Validates arguments for Madrona-MJX."""
-    if madrona_backend:
-        if eval_env:
-            raise ValueError("Madrona-MJX doesn't support multiple env instances")
-        if num_eval_envs != num_envs:
-            raise ValueError('Madrona-MJX requires a fixed batch size')
-        if action_repeat != 1:
-            raise ValueError(
-                "Implement action_repeat using PipelineEnv's _n_frames to avoid"
-                ' unnecessary rendering!'
-            )
-
-
-def _maybe_wrap_env(
-        env: envs.Env,
-        wrap_env: bool,
-        num_envs: int,
-        episode_length: Optional[int],
-        action_repeat: int,
-        device_count: int,
-        key_env: PRNGKey,
-        wrap_env_fn: Optional[Callable[[Any], Any]] = None,
-        randomization_fn: Optional[
-            Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
-        ] = None,
-):
-    """Wraps the environment for training/eval if wrap_env is True."""
-    if not wrap_env:
-        return env
-    if episode_length is None:
-        raise ValueError('episode_length must be specified in ppo.train')
-    v_randomization_fn = None
-    if randomization_fn is not None:
-        randomization_batch_size = num_envs // device_count
-        # all devices gets the same randomization rng
-        randomization_rng = jax.random.split(key_env, randomization_batch_size)
-        v_randomization_fn = functools.partial(
-            randomization_fn, rng=randomization_rng
-        )
-    if wrap_env_fn is not None:
-        wrap_for_training = wrap_env_fn
-    else:
-        wrap_for_training = envs.training.wrap
-    env = wrap_for_training(
-        env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn,
-    )  # pytype: disable=wrong-keyword-args
-    return env
-
-
-def _random_translate_pixels(
-        obs: Mapping[str, jax.Array], key: PRNGKey
-) -> Mapping[str, jax.Array]:
-    """Apply random translations to B x T x ... pixel observations.
-  
-    The same shift is applied across the unroll_length (T) dimension.
-  
-    Args:
-      obs: a dictionary of observations
-      key: a PRNGKey
-  
-    Returns:
-      A dictionary of observations with translated pixels
-    """
-
-    @jax.vmap
-    def rt_all_views(
-            ub_obs: Mapping[str, jax.Array], key: PRNGKey
-    ) -> Mapping[str, jax.Array]:
-        # Expects dictionary of unbatched observations.
-        def rt_view(
-                img: jax.Array, padding: int, key: PRNGKey
-        ) -> jax.Array:  # TxHxWxC
-            # Randomly translates a set of pixel inputs.
-            # Adapted from
-            # https://github.com/ikostrikov/jaxrl/blob/main/jaxrl/agents/drq/augmentations.py
-            crop_from = jax.random.randint(key, (2,), 0, 2 * padding + 1)
-            zero = jnp.zeros((1,), dtype=jnp.int32)
-            crop_from = jnp.concatenate([zero, crop_from, zero])
-            padded_img = jnp.pad(
-                img,
-                ((0, 0), (padding, padding), (padding, padding), (0, 0)),
-                mode='edge',
-            )
-            return jax.lax.dynamic_slice(padded_img, crop_from, img.shape)
-
-        out = {}
-        for k_view, v_view in ub_obs.items():
-            if k_view.startswith('pixels/'):
-                key, key_shift = jax.random.split(key)
-                out[k_view] = rt_view(v_view, 4, key_shift)
-        return {**ub_obs, **out}
-
-    bdim = next(iter(obs.items()), None)[1].shape[0]
-    keys = jax.random.split(key, bdim)
-    obs = rt_all_views(obs, keys)
-    return obs
-
-
-def _remove_pixels(
-        obs: Union[jnp.ndarray, Mapping[str, jax.Array]],
-) -> Union[jnp.ndarray, Mapping[str, jax.Array]]:
-    """Removes pixel observations from the observation dict."""
-    if not isinstance(obs, Mapping):
-        return obs
-    return {k: v for k, v in obs.items() if not k.startswith('pixels/')}
+TrainingState = ppo_train.TrainingState
 
 
 def train(
         environment: envs.Env,
         num_timesteps: int,
         max_devices_per_host: Optional[int] = None,
-        # high-level control flow
         wrap_env: bool = True,
         madrona_backend: bool = False,
         augment_pixels: bool = False,
-        # environment wrapper
         num_envs: int = 1,
         episode_length: Optional[int] = None,
         action_repeat: int = 1,
@@ -204,7 +47,6 @@ def train(
         randomization_fn: Optional[
             Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
         ] = None,
-        # ppo params
         learning_rate: float = 1e-4,
         entropy_cost: float = 1e-4,
         discounting: float = 0.9,
@@ -219,656 +61,78 @@ def train(
         gae_lambda: float = 0.95,
         max_grad_norm: Optional[float] = None,
         normalize_advantage: bool = True,
-        network_factory: types.NetworkFactory[
-            ppo_networks.PPONetworks
-        ] = ppo_networks.make_ppo_networks,
+        network_factory: types.NetworkFactory[ppo_networks.PPONetworks] = None,
         seed: int = 0,
-        # ppo-lagrange specific params
         safety_bound: float = 0.0,
         initial_lambda_lagr: float = 0.0,
-        # PID-Lagrange
         pid_kp: float = 10.0,
         pid_ki: float = 0.01,
         pid_kd: float = 0.01,
-        pid_integral_clip: float = 1.0,   # anti-windup cap on the integral term
-        pid_lambda_clip: float = 1e6,      # clamp lambda for sanity
-        pid_deriv_ema_beta: float = 0.95,  # smoothing for derivative term
-        # eval
+        pid_integral_clip: float = 1.0,
+        pid_lambda_clip: float = 1e6,
+        pid_deriv_ema_beta: float = 0.95,
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
         num_eval_envs: int = 128,
         deterministic_eval: bool = False,
-        # training metrics
         buffer_size: int = 1000,
         log_training_metrics: bool = True,
         training_metrics_steps: Optional[int] = None,
-        # callbacks
         progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
         policy_params_fn: Callable[..., None] = lambda *args: None,
-        # checkpointing
         save_checkpoint_path: Optional[str] = None,
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
 ):
-    """PPO-Lagrange training.
+    """PPO-PID Lagrange training."""
+    per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
 
-    Args:
-      environment: the environment to train
-      num_timesteps: the total number of environment steps to use during training
-      max_devices_per_host: maximum number of chips to use per host process
-      wrap_env: If True, wrap the environment for training. Otherwise use the
-        environment as is.
-      madrona_backend: whether to use Madrona backend for training
-      augment_pixels: whether to add image augmentation to pixel inputs
-      num_envs: the number of parallel environments to use for rollouts
-        NOTE: `num_envs` must be divisible by the total number of chips since each
-          chip gets `num_envs // total_number_of_chips` environments to roll out
-        NOTE: `batch_size * num_minibatches` must be divisible by `num_envs` since
-          data generated by `num_envs` parallel envs gets used for gradient
-          updates over `num_minibatches` of data, where each minibatch has a
-          leading dimension of `batch_size`
-      episode_length: the length of an environment episode
-      action_repeat: the number of timesteps to repeat an action
-      wrap_env_fn: a custom function that wraps the environment for training. If
-        not specified, the environment is wrapped with the default training
-        wrapper.
-      randomization_fn: a user-defined callback function that generates randomized
-        environments
-      learning_rate: learning rate for ppo loss
-      entropy_cost: entropy reward for ppo loss, higher values increase entropy of
-        the policy
-      discounting: discounting rate
-      unroll_length: the number of timesteps to unroll in each environment. The
-        PPO loss is computed over `unroll_length` timesteps
-      batch_size: the batch size for each minibatch SGD step
-      num_minibatches: the number of times to run the SGD step, each with a
-        different minibatch with leading dimension of `batch_size`
-      num_updates_per_batch: the number of times to run the gradient update over
-        all minibatches before doing a new environment rollout
-      num_resets_per_eval: the number of environment resets to run between each
-        eval. The environment resets occur on the host
-      normalize_observations: whether to normalize observations
-      reward_scaling: float scaling for reward
-      clipping_epsilon: clipping epsilon for PPO loss
-      gae_lambda: General advantage estimation lambda
-      max_grad_norm: gradient clipping norm value. If None, no clipping is done
-      normalize_advantage: whether to normalize advantage estimate
-      network_factory: function that generates networks for policy and value
-        functions
-      seed: random seed
-      und: the safety constraint bound for PPO-Lagrange
-      initial_lambda_lagr: initial value for the Lagrange multiplier
-      num_evals: the number of evals to run during the entire training run.
-        Set to 0 to disable evaluation (default). Increasing the number of evals 
-        increases total training time
-      eval_env: an optional environment for eval only, defaults to `environment`
-      num_eval_envs: the number of envs to use for evluation. Each env will run 1
-        episode, and all envs run in parallel during eval.
-      deterministic_eval: whether to run the eval with a deterministic policy
-      log_training_metrics: whether to log training metrics and callback to
-        progress_fn
-      training_metrics_steps: the number of environment steps between logging
-        training metrics
-      progress_fn: a user-defined callback function for reporting/plotting metrics
-      policy_params_fn: a user-defined callback function that can be used for
-        saving custom policy checkpoints or creating policy rollouts and videos
-      save_checkpoint_path: the path used to save checkpoints. If None, no
-        checkpoints are saved.
-      restore_checkpoint_path: the path used to restore previous model params
-      restore_params: raw network parameters to restore the TrainingState from.
-        These override `restore_checkpoint_path`. These paramaters can be obtained
-        from the return values of ppo.train().
-      restore_value_fn: whether to restore the value function from the checkpoint
-        or use a random initialization
+    if network_factory is None:
+        def network_factory(obs_size, action_size, **kwargs):
+            return ppo_networks.make_ppo_networks(
+                obs_size, action_size, cost_value_hidden_layer_sizes=(256,) * 5, **kwargs)
 
-    Returns:
-      Tuple of (make_policy function, network params, metrics)
-    """
-    assert batch_size * num_minibatches % num_envs == 0
-    _validate_madrona_args(
-        madrona_backend, num_envs, num_eval_envs, action_repeat, eval_env
-    )
+    def post_step_fn(training_state, metrics):
+        lambda_lagr, integral, prev_v, deriv_ema = training_state.aux_state
+        avg_cost = jnp.mean(metrics["mean_cost"][-1])
+        v = (avg_cost - per_step_safety_bound).reshape((1,))
+        new_integral = jnp.clip(integral + v, -pid_integral_clip, pid_integral_clip)
+        new_deriv_ema = pid_deriv_ema_beta * deriv_ema + (1.0 - pid_deriv_ema_beta) * (v - prev_v)
+        pid_output = pid_kp * v + pid_ki * new_integral + pid_kd * new_deriv_ema
+        updated_lambda = jnp.clip(jax.nn.relu(lambda_lagr + pid_output), 0.0, pid_lambda_clip)
+        new_state = training_state.replace(aux_state=(updated_lambda, new_integral, v, new_deriv_ema))
+        return new_state, {"lambda_lagr": updated_lambda, "pid/violation": v}
 
-    xt = time.time()
-
-    process_count = jax.process_count()
-    process_id = jax.process_index()
-    local_device_count = jax.local_device_count()
-    local_devices_to_use = local_device_count
-    if max_devices_per_host:
-        local_devices_to_use = min(local_devices_to_use, max_devices_per_host)
-    logging.info(
-        'Device count: %d, process count: %d (id %d), local device count: %d, '
-        'devices to be used count: %d',
-        jax.device_count(),
-        process_count,
-        process_id,
-        local_device_count,
-        local_devices_to_use,
-    )
-    device_count = local_devices_to_use * process_count
-
-    # The number of environment steps executed for every training step.
-    env_step_per_training_step = (
-            batch_size * unroll_length * num_minibatches * action_repeat
-    )
-
-    # Handle optional evaluation
-    if num_evals == 0:
-        # No evaluation - run all training steps in one go
-        num_evals_after_init = 1
-        num_training_steps_per_epoch = np.ceil(
-            num_timesteps / (env_step_per_training_step * max(num_resets_per_eval, 1))
-        ).astype(int)
-    else:
-        # With evaluation - split training across evaluation intervals
-        num_evals_after_init = max(num_evals - 1, 1)
-        num_training_steps_per_epoch = np.ceil(
-            num_timesteps
-            / (
-                    num_evals_after_init
-                    * env_step_per_training_step
-                    * max(num_resets_per_eval, 1)
-            )
-        ).astype(int)
-
-    key = jax.random.PRNGKey(seed)
-    global_key, local_key = jax.random.split(key)
-    del key
-    local_key = jax.random.fold_in(local_key, process_id)
-    local_key, key_env, eval_key = jax.random.split(local_key, 3)
-    # key_networks should be global, so that networks are initialized the same
-    # way for different processes.
-    key_policy, key_value, key_cost_value = jax.random.split(global_key, 3)
-    del global_key
-
-    assert num_envs % device_count == 0
-
-    env = _maybe_wrap_env(
-        environment,
-        wrap_env,
-        num_envs,
-        episode_length,
-        action_repeat,
-        device_count,
-        key_env,
-        wrap_env_fn,
-        randomization_fn,
-    )
-    if local_devices_to_use > 1:
-        reset_fn = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
-    else:
-        reset_fn = jax.jit(jax.vmap(env.reset))
-    key_envs = jax.random.split(key_env, num_envs // process_count)
-    key_envs = jnp.reshape(
-        key_envs, (local_devices_to_use, -1) + key_envs.shape[1:]
-    )
-    env_state = reset_fn(key_envs)
-    # Discard the batch axes over devices and envs.
-    obs_shape = jax.tree_util.tree_map(lambda x: x.shape[2:], env_state.obs)
-
-    normalize = lambda x, y: x
-    if normalize_observations:
-        normalize = running_statistics.normalize
-    ppo_network = network_factory(
-        obs_shape, env.action_size, preprocess_observations_fn=normalize
-    )
-    make_policy = ppo_networks.make_inference_fn(ppo_network)
-
-    optimizer = optax.adam(learning_rate=learning_rate)
-    if max_grad_norm is not None:
-        # TODO: Move gradient clipping to `training/gradients.py`.
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(max_grad_norm),
-            optax.adam(learning_rate=learning_rate),
-        )
-
-    safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
-
-    def loss_fn(params, normalizer_params, data, rng, lambda_lagr):
+    def lagrange_loss_fn(params, normalizer_params, data, rng, aux_state=None,
+                         ppo_network=None, entropy_cost=1e-4, discounting=0.9,
+                         reward_scaling=1.0, gae_lambda=0.95, clipping_epsilon=0.3,
+                         normalize_advantage=True):
+        lambda_lagr = aux_state[0] if aux_state else jnp.array([0.0])
         return ppo_losses.compute_ppo_lagrange_loss(
-            params=params,
-            normalizer_params=normalizer_params,
-            data=data,
-            rng=rng,
-            ppo_network=ppo_network,
-            lambda_lagr=lambda_lagr,
-            safety_bound=safety_bound,
-            entropy_cost=entropy_cost,
-            discounting=discounting,
-            reward_scaling=reward_scaling,
-            gae_lambda=gae_lambda,
-            clipping_epsilon=clipping_epsilon,
-            normalize_advantage=normalize_advantage,
-        )
+            params=params, normalizer_params=normalizer_params, data=data, rng=rng,
+            ppo_network=ppo_network, lambda_lagr=lambda_lagr, safety_bound=per_step_safety_bound,
+            entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
 
-    def gradient_update_fn(params, normalizer_params, data, rng, lambda_lagr, optimizer_state):
-        """Custom gradient update function for PPO-Lagrange."""
+    def init_aux_state_fn():
+        return (jnp.array([initial_lambda_lagr]), jnp.zeros((1,)), jnp.zeros((1,)), jnp.zeros((1,)))
 
-        def loss_and_pgrad(params, normalizer_params, data, rng, lambda_lagr):
-            total_loss, metrics = loss_fn(params, normalizer_params, data, rng, lambda_lagr)
-            return total_loss, metrics
-
-        grad_fn = jax.value_and_grad(loss_and_pgrad, has_aux=True)
-        (loss, metrics), grads = grad_fn(params, normalizer_params, data, rng, lambda_lagr)
-
-        # Apply gradient updates
-        updates, new_optimizer_state = optimizer.update(grads, optimizer_state, params)
-        new_params = optax.apply_updates(params, updates)
-
-        return (loss, metrics), new_params, new_optimizer_state
-
-    # Create training metrics aggregator for fine-grained training metrics logging
-    metrics_aggregator = metric_logger.MetricsLogger(
-        buffer_size=buffer_size,
-        steps_between_logging=training_metrics_steps,
-        progress_fn=progress_fn,
-    )
-
-    def minibatch_step(
-            carry,
-            data: types.Transition,
-            normalizer_params: running_statistics.RunningStatisticsState,
-            lambda_lagr: jnp.ndarray,
-    ):
-        optimizer_state, params, key = carry
-        key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
-            params,
-            normalizer_params,
-            data,
-            key_loss,
-            lambda_lagr,
-            optimizer_state,
-        )
-
-        return (optimizer_state, params, key), metrics
-
-    def sgd_step(
-            carry,
-            unused_t,
-            data: types.Transition,
-            normalizer_params: running_statistics.RunningStatisticsState,
-            lambda_lagr: jnp.ndarray,
-    ):
-        optimizer_state, params, key = carry
-        key, key_perm, key_grad = jax.random.split(key, 3)
-
-        if augment_pixels:
-            key, key_rt = jax.random.split(key)
-            r_translate = functools.partial(_random_translate_pixels, key=key_rt)
-            data = types.Transition(
-                observation=r_translate(data.observation),
-                action=data.action,
-                reward=data.reward,
-                discount=data.discount,
-                next_observation=r_translate(data.next_observation),
-                extras=data.extras,
-            )
-
-        def convert_data(x: jnp.ndarray):
-            x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
-            return x
-
-        shuffled_data = jax.tree_util.tree_map(convert_data, data)
-        (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(minibatch_step, normalizer_params=normalizer_params, lambda_lagr=lambda_lagr),
-            (optimizer_state, params, key_grad),
-            shuffled_data,
-            length=num_minibatches,
-        )
-        return (optimizer_state, params, key), metrics
-
-    def training_step(
-            carry: Tuple[PIDTrainingState, envs.State, PRNGKey], unused_t
-    ) -> Tuple[Tuple[PIDTrainingState, envs.State, PRNGKey], Metrics]:
-        training_state, state, key = carry
-        key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
-
-        policy = make_policy((
-            training_state.normalizer_params,
-            training_state.params.policy,
-            training_state.params.value,
-        ))
-
-        def f(carry, unused_t):
-            current_state, current_key = carry
-            current_key, next_key = jax.random.split(current_key)
-            next_state, data = acting.generate_unroll(
-                env,
-                current_state,
-                policy,
-                current_key,
-                unroll_length,
-                extra_fields=('truncation', 'episode_metrics', 'episode_done', 'cost'),
-            )
-            return (next_state, next_key), data
-
-        (state, _), data = jax.lax.scan(
-            f,
-            (state, key_generate_unroll),
-            (),
-            length=batch_size * num_minibatches // num_envs,
-        )
-        # Have leading dimensions (batch_size * num_minibatches, unroll_length)
-        data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-        )
-        assert data.discount.shape[1:] == (unroll_length,)
-
-        jax.debug.callback(
-            metrics_aggregator.update_env_metrics,
-            data.extras['state_extras']['episode_metrics'],
-            data.extras['state_extras']['episode_done'],
-            training_state.env_steps,
-        )
-
-        # Update normalization params and normalize observations.
-        normalizer_params = running_statistics.update(
-            training_state.normalizer_params,
-            _remove_pixels(data.observation),
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
-
-        (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(
-                sgd_step, data=data, normalizer_params=normalizer_params, lambda_lagr=training_state.lambda_lagr
-            ),
-            (training_state.optimizer_state, training_state.params, key_sgd),
-            (),
-            length=num_updates_per_batch,
-        )
-
-        # --- PID Lagrange update ---
-        # avg cost over this training step
-        avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        violation = avg_cost - safety_bound                     # shape []
-
-        # match shapes [1] everywhere to play nice with pmap
-        v = jnp.asarray(violation).reshape((1,))
-
-        # Integral with simple anti-windup
-        new_integral = training_state.pid_integral + v
-        int_cap = jnp.asarray(pid_integral_clip, dtype=jnp.float32)
-        new_integral = jnp.clip(new_integral, -int_cap, int_cap)
-
-        # Derivative term: EMA of (v - v_prev)
-        dv = v - training_state.pid_prev_violation
-        beta = jnp.asarray(pid_deriv_ema_beta, dtype=jnp.float32)
-        new_deriv_ema = beta * training_state.pid_deriv_ema + (1.0 - beta) * dv
-
-        # PID control law
-        kp = jnp.asarray(pid_kp, dtype=jnp.float32)
-        ki = jnp.asarray(pid_ki, dtype=jnp.float32)
-        kd = jnp.asarray(pid_kd, dtype=jnp.float32)
-
-        pid_output = kp * v + ki * new_integral + kd * new_deriv_ema
-        lambda_raw = training_state.lambda_lagr + pid_output
-
-        # Non-negativity and clamp
-        lambda_cap = jnp.asarray(pid_lambda_clip, dtype=jnp.float32)
-        updated_lambda_lagr = jnp.clip(jax.nn.relu(lambda_raw), 0.0, lambda_cap)
-
-        # Emit metrics
-        metrics = {
-            **metrics,
-            'lambda_lagr': updated_lambda_lagr,
-            'pid/violation': v,
-            'pid/integral': new_integral,
-            'pid/deriv_ema': new_deriv_ema,
-            'pid/output': pid_output,
-        }
-
-        # Roll PID state forward
-        new_training_state = PIDTrainingState(
-            optimizer_state=optimizer_state,
-            params=params,
-            normalizer_params=normalizer_params,
-            env_steps=training_state.env_steps + env_step_per_training_step,
-            lambda_lagr=updated_lambda_lagr,
-            pid_integral=new_integral,
-            pid_prev_violation=v,
-            pid_deriv_ema=new_deriv_ema,
-        )
-
-        if log_training_metrics:
-            jax.debug.callback(
-                metrics_aggregator.update_train_metrics,
-                metrics,
-                new_training_state.env_steps,
-            )
-
-        return (new_training_state, state, new_key), metrics
-
-    def training_epoch(
-            training_state: TrainingState, state: envs.State, key: PRNGKey
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
-        (training_state, state, _), loss_metrics = jax.lax.scan(
-            training_step,
-            (training_state, state, key),
-            (),
-            length=num_training_steps_per_epoch,
-        )
-        return training_state, state, loss_metrics
-
-    training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
-
-    # Note that this is NOT a pure jittable method.
-    def training_epoch_with_timing(
-            training_state: TrainingState, env_state: envs.State, key: PRNGKey
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
-        nonlocal training_walltime
-        t = time.time()
-        training_state, env_state = _strip_weak_type((training_state, env_state))
-        result = training_epoch(training_state, env_state, key)
-        training_state, env_state, metrics = _strip_weak_type(result)
-
-        epoch_training_time = time.time() - t
-        training_walltime += epoch_training_time
-        fps = (
-                      num_training_steps_per_epoch
-                      * env_step_per_training_step
-                      * max(num_resets_per_eval, 1)
-              ) / epoch_training_time
-
-        metrics = {
-            'performance/fps': fps,
-            'performance/walltime': training_walltime,
-            **{f'training/{name}': value for name, value in metrics.items()},
-        }
-        return training_state, env_state, metrics  # pytype: disable=bad-return-type  # py311-upgrade
-
-    # Initialize model params and training state.
-    init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-        cost_value=ppo_network.cost_value_network.init(key_cost_value),
-    )
-
-    obs_shape = jax.tree_util.tree_map(
-        lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
-    )
-    training_state = PIDTrainingState(  # pytype: disable=wrong-arg-types
-        optimizer_state=optimizer.init(init_params),
-        params=init_params,
-        normalizer_params=running_statistics.init_state(_remove_pixels(obs_shape)),
-        env_steps=types.UInt64(hi=0, lo=0),
-        lambda_lagr=jnp.array([initial_lambda_lagr], dtype=jnp.float32),
-        pid_integral=jnp.zeros((1,), dtype=jnp.float32),
-        pid_prev_violation=jnp.zeros((1,), dtype=jnp.float32),
-        pid_deriv_ema=jnp.zeros((1,), dtype=jnp.float32),
-    )
-
-    if restore_checkpoint_path is not None:
-        params = checkpoint.load(restore_checkpoint_path)
-        # Handle legacy checkpoints that might not have cost_value or lambda_lagr
-        cost_value_params = params[2] if len(params) > 2 else init_params.cost_value
-        value_params = params[1] if restore_value_fn else init_params.value
-        lambda_lagr_value = params[3] if len(params) > 3 else jnp.array([initial_lambda_lagr], dtype=jnp.float32)
-        training_state = training_state.replace(
-            normalizer_params=params[0],
-            params=training_state.params.replace(
-                policy=params[1],
-                value=value_params,
-                cost_value=cost_value_params
-            ),
-            lambda_lagr=lambda_lagr_value,
-        )
-
-    if restore_params is not None:
-        logging.info('Restoring TrainingState from `restore_params`.')
-        # Handle legacy restore_params that might not have cost_value or lambda_lagr
-        cost_value_params = restore_params[2] if len(restore_params) > 2 else init_params.cost_value
-        value_params = restore_params[1] if restore_value_fn else init_params.value
-        lambda_lagr_value = restore_params[3] if len(restore_params) > 3 else jnp.array([initial_lambda_lagr],
-                                                                                        dtype=jnp.float32)
-        training_state = training_state.replace(
-            normalizer_params=restore_params[0],
-            params=training_state.params.replace(
-                policy=restore_params[1],
-                value=value_params,
-                cost_value=cost_value_params
-            ),
-            lambda_lagr=lambda_lagr_value,
-        )
-
-    if num_timesteps == 0:
-        return (
-            make_policy,
-            (
-                training_state.normalizer_params,
-                training_state.params.policy,
-                training_state.params.value,
-                training_state.params.cost_value,
-            ),
-            {},
-        )
-
-    training_state = jax.device_put_replicated(
-        training_state, jax.local_devices()[:local_devices_to_use]
-    )
-
-    # Only create evaluator if evaluation is enabled
-    evaluator = None
-    if num_evals > 0:
-        eval_env = _maybe_wrap_env(
-            eval_env or environment,
-            wrap_env,
-            num_eval_envs,
-            episode_length,
-            action_repeat,
-            device_count=1,  # eval on the host only
-            key_env=eval_key,
-            wrap_env_fn=wrap_env_fn,
-            randomization_fn=randomization_fn,
-        )
-        evaluator = acting.Evaluator(
-            eval_env,
-            functools.partial(make_policy, deterministic=deterministic_eval),
-            num_eval_envs=num_eval_envs,
-            episode_length=episode_length,
-            action_repeat=action_repeat,
-            key=eval_key,
-        )
-
-    # Run initial eval
-    metrics = {}
-    if process_id == 0 and num_evals > 1 and evaluator is not None:
-        metrics = evaluator.run_evaluation(
-            _unpmap((
-                training_state.normalizer_params,
-                training_state.params.policy,
-                training_state.params.value,
-            )),
-            training_metrics={},
-        )
-        logging.info(metrics)
-        progress_fn(0, metrics)
-
-    training_metrics = {}
-    training_walltime = 0
-    current_step = 0
-
-    for it in range(num_evals_after_init):
-        logging.info('starting iteration %s %s', it, time.time() - xt)
-
-        for _ in range(max(num_resets_per_eval, 1)):
-            # optimization
-            epoch_key, local_key = jax.random.split(local_key)
-            epoch_keys = jax.random.split(epoch_key, local_devices_to_use)
-            (training_state, env_state, training_metrics) = (
-                training_epoch_with_timing(training_state, env_state, epoch_keys)
-            )
-            current_step = int(_unpmap(training_state.env_steps))
-            progress_fn(current_step, training_metrics)
-
-            key_envs = jax.vmap(
-                lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
-            )(key_envs, key_envs.shape[1])
-            # TODO: move extra reset logic to the AutoResetWrapper.
-            env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
-
-        if process_id != 0:
-            continue
-
-        # Process id == 0.
-        params = _unpmap((
-            training_state.normalizer_params,
-            training_state.params.policy,
-            training_state.params.value,
-            training_state.params.cost_value,
-        ))
-
-        policy_params_fn(current_step, make_policy, params)
-
-        if save_checkpoint_path is not None:
-            ckpt_config = checkpoint.network_config(
-                observation_size=obs_shape,
-                action_size=env.action_size,
-                normalize_observations=normalize_observations,
-                network_factory=network_factory,
-            )
-            # Include cost_value and lambda_lagr in saved params
-            full_params = params + (_unpmap(training_state.params.cost_value), _unpmap(training_state.lambda_lagr))
-            checkpoint.save(
-                save_checkpoint_path, current_step, full_params, ckpt_config
-            )
-
-        # Only run evaluation if enabled
-        if num_evals > 0 and evaluator is not None:
-            metrics = evaluator.run_evaluation(
-                params,
-                training_metrics,
-            )
-            logging.info(metrics)
-            progress_fn(current_step, metrics)
-
-    total_steps = current_step
-    if not total_steps >= num_timesteps:
-        raise AssertionError(
-            f'Total steps {total_steps} is less than `num_timesteps`='
-            f' {num_timesteps}.'
-        )
-
-    # If there was no mistakes the training_state should still be identical on all
-    # devices.
-    pmap.assert_is_replicated(training_state)
-    params = _unpmap((
-        training_state.normalizer_params,
-        training_state.params.policy,
-        training_state.params.value,
-        training_state.params.cost_value,
-    ))
-
-    # If no evaluation was run, create basic final metrics
-    if not metrics:
-        metrics = {'training/final_step': total_steps}
-        if training_metrics:
-            metrics.update(training_metrics)
-
-    logging.info('total steps: %s', total_steps)
-    pmap.synchronize_hosts()
-    return (make_policy, params, metrics, eval_env)
+    return ppo_train.train(
+        environment=environment, num_timesteps=num_timesteps, max_devices_per_host=max_devices_per_host,
+        wrap_env=wrap_env, madrona_backend=madrona_backend, augment_pixels=augment_pixels,
+        num_envs=num_envs, episode_length=episode_length, action_repeat=action_repeat,
+        wrap_env_fn=wrap_env_fn, randomization_fn=randomization_fn, learning_rate=learning_rate,
+        entropy_cost=entropy_cost, discounting=discounting, unroll_length=unroll_length,
+        batch_size=batch_size, num_minibatches=num_minibatches, num_updates_per_batch=num_updates_per_batch,
+        num_resets_per_eval=num_resets_per_eval, normalize_observations=normalize_observations,
+        reward_scaling=reward_scaling, clipping_epsilon=clipping_epsilon, gae_lambda=gae_lambda,
+        max_grad_norm=max_grad_norm, normalize_advantage=normalize_advantage, network_factory=network_factory,
+        seed=seed, num_evals=num_evals, eval_env=eval_env, num_eval_envs=num_eval_envs,
+        deterministic_eval=deterministic_eval, buffer_size=buffer_size, log_training_metrics=log_training_metrics,
+        training_metrics_steps=training_metrics_steps, progress_fn=progress_fn, policy_params_fn=policy_params_fn,
+        save_checkpoint_path=save_checkpoint_path, restore_checkpoint_path=restore_checkpoint_path,
+        restore_params=restore_params, restore_value_fn=restore_value_fn,
+        loss_fn=lagrange_loss_fn, post_step_fn=post_step_fn,
+        extra_fields=("truncation", "episode_metrics", "episode_done", "cost"),
+        init_aux_state_fn=init_aux_state_fn)
