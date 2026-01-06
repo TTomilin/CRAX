@@ -635,8 +635,10 @@ def record_episode_video(
     start_time = os.times()
 
     frames_batched = jax.device_get(frames_batched)
+    rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
 
-    T = int(frames_batched.qpos.shape[0])
+    # Determine T robustly without assuming mjx fields like 'qpos' exist
+    T = int(rewards_batched_np.shape[0])
     frames = [jax.tree.map(lambda x: x[i], frames_batched) for i in range(T)]
 
     # Build indices of frames we keep
@@ -646,7 +648,7 @@ def record_episode_video(
     frames = [frames[i] for i in keep_idx]
 
     # Keep full-resolution rewards/costs for exact cumulative values
-    rewards_full = np.asarray(jax.device_get(rewards_batched))
+    rewards_full = rewards_batched_np
     costs_full = np.asarray(jax.device_get(costs_batched))
 
     # Exact cumulative totals at the exact original step indices that we render
