@@ -622,13 +622,17 @@ def record_episode_video(
             reward = next_state.reward  # scalar
             # Be robust to envs without a 'cost' signal
             cost = next_state.info.get("cost", jnp.zeros_like(next_state.reward))  # scalar
+            # Also mark termination if env signals done OR NaNs appear in obs/reward
+            nan_done = jnp.isnan(reward) | jnp.any(jnp.isnan(next_state.obs))
+            done_base = jnp.asarray(next_state.done, dtype=bool)
+            done_flag = jnp.logical_or(done_base, nan_done)
 
-            return (next_state, key), (frame, reward, cost)
+            return (next_state, key), (frame, reward, cost, done_flag)
 
-        (final_state, _), (frames, rewards, costs) = jax.lax.scan(
+        (final_state, _), (frames, rewards, costs, dones) = jax.lax.scan(
             step_body, (state, key), xs=None, length=steps
         )
-        return frames, rewards, costs
+        return frames, rewards, costs, dones
 
     # 3) Run N episodes to collect frames
     key = jax.random.PRNGKey(seed)
@@ -639,14 +643,21 @@ def record_episode_video(
 
     for ep in range(max(1, int(num_episodes))):
         key, ep_key = jax.random.split(key)
-        frames_batched, rewards_batched, costs_batched = rollout_one(ep_key)
+        frames_batched, rewards_batched, costs_batched, dones_batched = rollout_one(ep_key)
 
         frames_batched = jax.device_get(frames_batched)
         rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
         costs_batched_np = np.asarray(jax.device_get(costs_batched))
+        dones_batched_np = np.asarray(jax.device_get(dones_batched)).astype(bool)
 
-        # Determine T robustly without assuming mjx fields like 'qpos' exist
-        T = int(rewards_batched_np.shape[0])
+        # Trim to first termination if any
+        if dones_batched_np.ndim == 0:
+            done_index = int(dones_batched_np)
+        else:
+            done_hits = np.where(dones_batched_np)[0]
+            done_index = int(done_hits[0] + 1) if done_hits.size > 0 else int(rewards_batched_np.shape[0])
+
+        T = int(done_index)
         frames = [jax.tree.map(lambda x, i=i: x[i], frames_batched) for i in range(T)]
 
         # Downsample per episode
@@ -654,12 +665,12 @@ def record_episode_video(
         frames = [frames[i] for i in keep_idx]
 
         # Compute per-episode cumulative (reset each episode)
-        cum_rewards = np.cumsum(rewards_batched_np)
-        cum_costs = np.cumsum(costs_batched_np)
+        cum_rewards = np.cumsum(rewards_batched_np[:T])
+        cum_costs = np.cumsum(costs_batched_np[:T])
 
         # Keep values aligned with kept frames
-        rewards_kept = rewards_batched_np[keep_idx]
-        costs_kept = costs_batched_np[keep_idx]
+        rewards_kept = rewards_batched_np[:T][keep_idx]
+        costs_kept = costs_batched_np[:T][keep_idx]
         cum_rewards_kept = cum_rewards[keep_idx]
         cum_costs_kept = cum_costs[keep_idx]
 
@@ -842,7 +853,7 @@ def main():
     parser.add_argument("--video_length", type=int, default=None, help="Number of frames in the video")
     parser.add_argument("--video_fps", type=int, default=100, help="Output video FPS")
     parser.add_argument("--video_frame_stride", type=int, default=1, help="Output video frame stride")
-    parser.add_argument("--num_video_episodes", type=int, default=3, help="Number of episodes to record and concatenate into a single video")
+    parser.add_argument("--num_video_episodes", type=int, default=5, help="Number of episodes to record and concatenate into a single video")
 
     config = parser.parse_args()
 
