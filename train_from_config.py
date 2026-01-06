@@ -589,12 +589,14 @@ def record_episode_video(
         log_to_wandb: bool = True,
         seed: int = 0,
         show_metrics: bool = True,  # Print the cost on the screen
-        font: str = "DejaVuSans-Bold"  # Font for overlay text, if available
+        font: str = "DejaVuSans-Bold",  # Font for overlay text, if available
+        num_episodes: int = 1,
 ):
     """
-    Renders a fresh eval rollout controlled by your trained policy.
-    We step the *env* for observations/actions, and in parallel step a MuJoCo
-    simulator for pretty pixels.
+    Render one or more fresh eval episodes controlled by your trained policy.
+    Steps the env for observations/actions, and in parallel steps a MuJoCo
+    simulator for pretty pixels. All recorded episodes are concatenated in
+    sequence into a single video per camera.
     """
     # 1) Ensure headless GPU rendering (you might need to do this before importing mujoco)
     os.environ.setdefault("MUJOCO_GL", "egl")
@@ -607,7 +609,7 @@ def record_episode_video(
     step_fn = env.step
 
     @jax.jit
-    def rollout(key):
+    def rollout_one(key):
         state = reset_fn(key)
 
         def step_body(carry, _):
@@ -618,53 +620,61 @@ def record_episode_video(
 
             frame = next_state.pipeline_state  # for render
             reward = next_state.reward  # scalar
-            cost = next_state.info["cost"]  # scalar
+            # Be robust to envs without a 'cost' signal
+            cost = next_state.info.get("cost", jnp.zeros_like(next_state.reward))  # scalar
 
             return (next_state, key), (frame, reward, cost)
 
         (final_state, _), (frames, rewards, costs) = jax.lax.scan(
             step_body, (state, key), xs=None, length=steps
         )
-        return frames, rewards, costs, final_state
+        return frames, rewards, costs
 
-    # 3) Run rollout to collect frames
+    # 3) Run N episodes to collect frames
     key = jax.random.PRNGKey(seed)
-    frames_batched, rewards_batched, costs_batched, final_state = rollout(key)  # PyTree with leading T
 
-    print("Rollout took %.2f seconds." % (os.times()[4] - start_time[4]))
+    all_frames = []  # list of pipeline_state lists (concatenated later)
+    all_rewards = []  # list of np arrays after downsampling per episode
+    all_costs = []  # list of np arrays after downsampling per episode
+
+    for ep in range(max(1, int(num_episodes))):
+        key, ep_key = jax.random.split(key)
+        frames_batched, rewards_batched, costs_batched = rollout_one(ep_key)
+
+        frames_batched = jax.device_get(frames_batched)
+        rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
+        costs_batched_np = np.asarray(jax.device_get(costs_batched))
+
+        # Determine T robustly without assuming mjx fields like 'qpos' exist
+        T = int(rewards_batched_np.shape[0])
+        frames = [jax.tree.map(lambda x, i=i: x[i], frames_batched) for i in range(T)]
+
+        # Downsample per episode
+        keep_idx = np.arange(0, T, frame_stride, dtype=int)
+        frames = [frames[i] for i in keep_idx]
+
+        # Compute per-episode cumulative (reset each episode)
+        cum_rewards = np.cumsum(rewards_batched_np)
+        cum_costs = np.cumsum(costs_batched_np)
+
+        # Keep values aligned with kept frames
+        rewards_kept = rewards_batched_np[keep_idx]
+        costs_kept = costs_batched_np[keep_idx]
+        cum_rewards_kept = cum_rewards[keep_idx]
+        cum_costs_kept = cum_costs[keep_idx]
+
+        # Stash
+        all_frames.extend(frames)
+        # Store tuples so we can overlay later without recomputing
+        all_rewards.extend(list(zip(rewards_kept, cum_rewards_kept)))
+        all_costs.extend(list(zip(costs_kept, cum_costs_kept)))
+
+    print("Rollouts took %.2f seconds." % (os.times()[4] - start_time[4]))
     start_time = os.times()
 
-    frames_batched = jax.device_get(frames_batched)
-    rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
-
-    # Determine T robustly without assuming mjx fields like 'qpos' exist
-    T = int(rewards_batched_np.shape[0])
-    frames = [jax.tree.map(lambda x: x[i], frames_batched) for i in range(T)]
-
-    # Build indices of frames we keep
-    keep_idx = np.arange(0, T, frame_stride, dtype=int)
-
-    # Downsample frames
-    frames = [frames[i] for i in keep_idx]
-
-    # Keep full-resolution rewards/costs for exact cumulative values
-    rewards_full = rewards_batched_np
-    costs_full = np.asarray(jax.device_get(costs_batched))
-
-    # Exact cumulative totals at the exact original step indices that we render
-    cum_rewards_full = np.cumsum(rewards_full)
-    cum_costs_full = np.cumsum(costs_full)
-
-    cum_rewards_at_frames = cum_rewards_full[keep_idx]
-    cum_costs_at_frames = cum_costs_full[keep_idx]
-
-    # If you still want per-frame (downsampled) instantaneous values for something else:
-    rewards = rewards_full[keep_idx]
-    costs = costs_full[keep_idx]
-
-    # 4) Render the episode
+    # 4) Render the concatenated episodes
     for camera in cameras:
-        rendering = env.render(frames, width=width, height=height, camera=camera)
+        rendering = env.render(all_frames, width=width, height=height, camera=camera)
         print("Rendering took %.2f seconds." % (os.times()[4] - start_time[4]))
 
         # 5) Add reward/cost overlay
@@ -673,39 +683,34 @@ def record_episode_video(
             rendering_with_metrics = []
             try:
                 # Try to load a font, fallback to default if not available
-                font = ImageFont.truetype(f"{font}.ttf", 20)
+                font_obj = ImageFont.truetype(f"{font}.ttf", 20)
             except (OSError, IOError):
-                font = ImageFont.load_default()
+                font_obj = ImageFont.load_default()
 
-            for i, (frame, reward, cost) in enumerate(zip(rendering, rewards, costs)):
-                # Convert frame to PIL Image
+            # Flatten stored rewards/costs tuples for overlay
+            # all_rewards[i] = (inst_reward, cum_reward); all_costs[i] likewise
+            for i, frame in enumerate(rendering):
+                r_inst, r_cum = all_rewards[i]
+                c_inst, c_cum = all_costs[i]
+
                 img = Image.fromarray(frame.astype(np.uint8))
                 draw = ImageDraw.Draw(img)
 
-                # Extract metrics from the state info
-                total_reward = float(cum_rewards_at_frames[i])
-                total_cost = float(cum_costs_at_frames[i])
+                reward_text = f"Reward: {float(r_cum):.2f}"
+                cost_text = f"Cost: {float(c_cum):.2f}"
 
-                # Add cost text overlay
-                reward_text = f"Reward: {total_reward:.2f}"
-                cost_text = f"Cost: {total_cost:.2f}"
-
-                # Color
                 text_color_reward = (50, 220, 50)  # Green text
                 text_color_cost = (230, 60, 60)  # Red text
                 outline_color = (0, 0, 0)  # Black outline
 
-                # Position text in top-left corner
                 x_rew, y_rew = 10, 10
                 x_cost, y_cost = 10, 40
 
-                # Draw text with outline for better visibility
-                draw.text((x_rew, y_rew), reward_text, font=font, fill=text_color_reward, stroke_width=2,
+                draw.text((x_rew, y_rew), reward_text, font=font_obj, fill=text_color_reward, stroke_width=2,
                           stroke_fill=outline_color)
-                draw.text((x_cost, y_cost), cost_text, font=font, fill=text_color_cost, stroke_width=2,
+                draw.text((x_cost, y_cost), cost_text, font=font_obj, fill=text_color_cost, stroke_width=2,
                           stroke_fill=outline_color)
 
-                # Convert back to numpy array
                 rendering_with_metrics.append(np.array(img))
 
             rendering = rendering_with_metrics
@@ -780,7 +785,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=1024, help="Batch size")
     parser.add_argument("--num_minibatches", type=int, default=32, help="Number of minibatches")
     parser.add_argument("--num_updates_per_batch", type=int, default=6, help="SGD updates per batch")
-    parser.add_argument("--rollout-steps", dest="rollout_steps", type=int, default=5000,
+    parser.add_argument("--rollout-steps", dest="rollout_steps", type=int, default=2000,
                         help="Steps for post-training rollout evaluation")
 
     # --- Optimization / PPO Core ---
@@ -837,6 +842,7 @@ def main():
     parser.add_argument("--video_length", type=int, default=None, help="Number of frames in the video")
     parser.add_argument("--video_fps", type=int, default=100, help="Output video FPS")
     parser.add_argument("--video_frame_stride", type=int, default=1, help="Output video frame stride")
+    parser.add_argument("--num_video_episodes", type=int, default=3, help="Number of episodes to record and concatenate into a single video")
 
     config = parser.parse_args()
 
@@ -887,6 +893,7 @@ def main():
                 out_name=f"{config.env_name}_{config.alg}_seed{seed}",
                 log_to_wandb=config.use_wandb,
                 seed=seed,
+                num_episodes=config.num_video_episodes,
             )
 
         # PPO-C verify shaping log if requested
