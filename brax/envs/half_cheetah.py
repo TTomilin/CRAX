@@ -131,7 +131,7 @@ class Halfcheetah(PipelineEnv):
       backend='generalized',
       **kwargs
   ):
-    path = epath.resource_path('brax') / 'envs/assets/half_cheetah.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/half_cheetah.xml'
     sys = mjcf.load(path)
 
     n_frames = 5

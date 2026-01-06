@@ -189,7 +189,7 @@ class Humanoid(PipelineEnv):
       backend='generalized',
       **kwargs,
   ):
-    path = epath.resource_path('brax') / 'envs/assets/humanoid.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/humanoid.xml'
     sys = mjcf.load(path)
 
     n_frames = 5

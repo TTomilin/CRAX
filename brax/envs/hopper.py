@@ -175,7 +175,7 @@ class Hopper(PipelineEnv):
       backend: str, the physics backend to use
       **kwargs: Arguments that are passed to the base class.
     """
-    path = epath.resource_path('brax') / 'envs/assets/hopper.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/hopper.xml'
     sys = mjcf.load(path)
 
     n_frames = 4
