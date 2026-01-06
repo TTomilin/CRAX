@@ -17,6 +17,8 @@
 
 import functools
 from typing import Optional, Type
+import jax
+from jax import numpy as jp
 
 from brax.envs import ant
 from brax.envs import ant_velocity_constrained
@@ -65,6 +67,53 @@ _envs = {
 }
 
 
+class UnifiedEnvAdapter(Wrapper):
+  """A wrapper that provides a unified safety-compatible interface.
+
+  - Ensures a 'cost' signal is present in state.info and state.metrics.
+  - Preserves original reward as 'raw_reward' in state.info and metrics.
+  - Adds 'shaped_reward' (identical to reward unless inner env sets it).
+  - Stores any arbitrary kwargs for future use; does not change inner env.
+  """
+
+  def __init__(self, env: Env, **unified_kwargs):
+    super().__init__(env)
+    # Store unified kwargs for forward compatibility (e.g., physics/cost/reward specs)
+    self._unified_kwargs = unified_kwargs or {}
+
+  def _ensure_unified_fields(self, state: State) -> State:
+    # Ensure cost exists in info and metrics
+    cost = state.info.get('cost', state.metrics.get('cost', None))
+    if cost is None:
+      cost = jp.zeros_like(state.reward)
+    # mutate copies of dicts
+    info = dict(state.info)
+    metrics = dict(state.metrics)
+    info.setdefault('cost', cost)
+    metrics.setdefault('cost', cost)
+
+    # Preserve rewards metadata
+    info.setdefault('raw_reward', state.reward)
+    info.setdefault('shaped_reward', state.reward)
+
+    # Recreate a new State with updated dicts
+    return State(
+        pipeline_state=state.pipeline_state,
+        obs=state.obs,
+        reward=state.reward,
+        done=state.done,
+        metrics=metrics,
+        info=info,
+    )
+
+  def reset(self, rng: jax.Array) -> State:
+    state = self.env.reset(rng)
+    return self._ensure_unified_fields(state)
+
+  def step(self, state: State, action: jax.Array) -> State:
+    next_state = self.env.step(state, action)
+    return self._ensure_unified_fields(next_state)
+
 
 def get_environment(env_name: str, **kwargs) -> Env:
   """Returns an environment from the environment registry.
@@ -76,7 +125,14 @@ def get_environment(env_name: str, **kwargs) -> Env:
   Returns:
     env: an environment
   """
-  return _envs[env_name](**kwargs)
+  env_cls = _envs[env_name]
+  try:
+    base_env = env_cls(**kwargs)
+  except TypeError:
+    # Fallback for standard Brax envs that don't accept SafePointGoal-like kwargs
+    base_env = env_cls()
+  # Always wrap with unified adapter so downstream code can rely on cost/info fields
+  return UnifiedEnvAdapter(base_env, **kwargs)
 
 
 def register_environment(env_name: str, env_class: Type[Env]):
@@ -110,7 +166,13 @@ def create(
   Returns:
     env: an environment
   """
-  env = _envs[env_name](**kwargs)
+  env_cls = _envs[env_name]
+  try:
+    base_env = env_cls(**kwargs)
+  except TypeError:
+    base_env = env_cls()
+
+  env = UnifiedEnvAdapter(base_env, **kwargs)
 
   if episode_length is not None:
     env = training.EpisodeWrapper(env, episode_length, action_repeat)
