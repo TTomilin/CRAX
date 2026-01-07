@@ -32,8 +32,8 @@ class SafeReacher(PipelineEnv):
             rect_half_extent: float = 0.03,
             hazard_height: float = 0.01,
             reach_radius: float = 0.27,
-            cost_scale: float = 0.1,
-            success_bonus: float = 1.0,        # extra reward when touching goal
+            cost_scale: float = 1.0,
+            reward_scale: float = 10.0,
             samples_per_link: int = 5,
             lidar_bins: int = 16,
             lidar_max_dist: float = 0.30,
@@ -48,7 +48,7 @@ class SafeReacher(PipelineEnv):
         self._hazard_height = hazard_height
         self._reach_radius = reach_radius
         self._cost_scale = cost_scale
-        self._success_bonus = success_bonus
+        self._reward_scale = reward_scale
         self._samples_per_link = samples_per_link
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
@@ -265,8 +265,8 @@ class SafeReacher(PipelineEnv):
         _, ok, goal_xy = jax.lax.fori_loop(0, 500, body, (rng_t, ok0, goal_xy))
 
         # --- 3) now set target joints, init pipeline, then apply hazard mocaps ---
-        q = q.at[2:].set(goal_xy)
-        qd = qd.at[2:].set(0.0)
+        q = q.at[2:4].set(goal_xy)
+        qd = qd.at[2:4].set(0.0)
 
         pipeline_state = self.pipeline_init(q, qd)
 
@@ -276,7 +276,7 @@ class SafeReacher(PipelineEnv):
 
         # compute initial distance-to-goal and store for progress reward
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
-        dist = math.safe_norm(tip_pos - target_pos)
+        dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
 
         obs = self._get_obs(pipeline_state, hazards_pos)
         reward, done, zero = jp.zeros(3)
@@ -304,17 +304,16 @@ class SafeReacher(PipelineEnv):
 
         # --- distance to goal ---
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
-        dist = math.safe_norm(tip_pos - target_pos)
+        dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
 
         min_dist = jp.asarray(state.info['min_dist'], dtype=jp.float32)
 
         # proportional reward for getting closer to the goal
         progress = min_dist - dist
-        reward = jp.maximum(progress, 0.0)
+        reward = jp.maximum(progress, 0.0) * jp.asarray(self._reward_scale, jp.float32)
 
         # terminate + bonus if touching goal
         success = dist <= jp.asarray(self._goal_radius, dtype=jp.float32)
-        reward += jp.where(success, jp.asarray(self._success_bonus, jp.float32), jp.array(0.0, jp.float32))
         done = success.astype(jp.float32)
 
         # --- safety cost ---
@@ -370,7 +369,7 @@ class SafeReacher(PipelineEnv):
             hx, hy = hazards_xy[i, 0], hazards_xy[i, 1]
 
             # agent-centric rotation (heading = theta1)
-            ax =  hx * c + hy * s
+            ax = hx * c + hy * s
             ay = -hx * s + hy * c
 
             dist = jp.sqrt(ax * ax + ay * ay + 1e-8)
@@ -404,10 +403,10 @@ class SafeReacher(PipelineEnv):
         return jp.concatenate([
             jp.cos(theta),
             jp.sin(theta),
-            pipeline_state.q[2:],   # target x, y
+            pipeline_state.q[2:],  # target x, y
             tip_vel[:2],
             tip_to_target,
-            lidar,                  # (lidar_bins,)
+            lidar,  # (lidar_bins,)
         ])
 
     def _tip_target(self, pipeline_state: base.State) -> tuple[jax.Array, jax.Array, jax.Array]:
