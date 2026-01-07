@@ -290,7 +290,8 @@ class SafeReacher(PipelineEnv):
         # Base reacher reward: distance + control
         reward_dist = -math.safe_norm(obs[-3:])
         reward_ctrl = -jp.square(action).sum()
-        reward = reward_dist + reward_ctrl
+        # reward = reward_dist + reward_ctrl
+        reward = reward_dist
 
         # Safety cost: sum over hazards, aggregating overlaps of arm sample points
         hazard_positions = state.info.get('hazard_positions', None)
