@@ -33,6 +33,7 @@ class SafeReacher(PipelineEnv):
             hazard_height: float = 0.01,
             reach_radius: float = 0.27,
             cost_scale: float = 0.1,
+            success_bonus: float = 1.0,        # extra reward when touching goal
             samples_per_link: int = 5,
             lidar_bins: int = 16,
             lidar_max_dist: float = 0.30,
@@ -47,10 +48,11 @@ class SafeReacher(PipelineEnv):
         self._hazard_height = hazard_height
         self._reach_radius = reach_radius
         self._cost_scale = cost_scale
+        self._success_bonus = success_bonus
         self._samples_per_link = samples_per_link
-        self._lidar_bins = int(lidar_bins)
-        self._lidar_max_dist = float(lidar_max_dist)
-        self._lidar_alias = bool(lidar_alias)
+        self._lidar_bins = lidar_bins
+        self._lidar_max_dist = lidar_max_dist
+        self._lidar_alias = lidar_alias
 
         # Build hazards as MJCF geoms/bodies (mocap)
         cyl_r = self._hazard_radius
@@ -86,11 +88,18 @@ class SafeReacher(PipelineEnv):
                 os.unlink(xml_path)
 
         self._target_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "target"))
-        if self._target_body_id < 0:
+        target_geom_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, "target"))
+        if self._target_body_id < 0 or target_geom_id < 0:
             raise RuntimeError("Could not find body named 'target' in MJCF")
 
+        self._tip_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "body1"))
+        if self._tip_body_id < 0:
+            raise RuntimeError("Could not find body named 'body1' in MJCF")
+
+        self._tip_offset = jp.array([0.11, 0.0, 0.0], dtype=jp.float32)
+
         # sphere geom: geom_size[0] is the radius
-        self._goal_radius = float(mj_model.geom_size[self._target_body_id][0])
+        self._goal_radius = float(mj_model.geom_size[target_geom_id][0])
 
         # Load into Brax system
         sys = mjcf.load_model(mj_model)
@@ -261,10 +270,13 @@ class SafeReacher(PipelineEnv):
 
         pipeline_state = self.pipeline_init(q, qd)
 
-        if n_h > 0:
-            ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
-            mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
-            pipeline_state = pipeline_state.replace(mocap_pos=mpos)
+        ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
+        mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
+        pipeline_state = pipeline_state.replace(mocap_pos=mpos)
+
+        # compute initial distance-to-goal and store for progress reward
+        tip_pos, _, target_pos = self._tip_target(pipeline_state)
+        dist = math.safe_norm(tip_pos - target_pos)
 
         obs = self._get_obs(pipeline_state, hazards_pos)
         reward, done, zero = jp.zeros(3)
@@ -274,9 +286,12 @@ class SafeReacher(PipelineEnv):
             'reward_dist': zero,
             'reward_ctrl': zero,
             'cost': zero,
+            'dist': dist,
+            'progress': zero,
         }
         info = {
             'hazard_positions': hazards_pos,
+            'min_dist': dist,
             'cost': zero,
         }
 
@@ -287,33 +302,42 @@ class SafeReacher(PipelineEnv):
         hazard_positions = state.info['hazard_positions']
         obs = self._get_obs(pipeline_state, hazard_positions)
 
-        # Base reacher reward: tip-to-target distance
-        target_pos = pipeline_state.x.pos[self._target_body_id]
-        tip_pos = (
-            pipeline_state.x.take(1)
-            .do(base.Transform.create(pos=jp.array([0.11, 0, 0])))
-            .pos
-        )
-        tip_to_target = tip_pos - target_pos
+        # --- distance to goal ---
+        tip_pos, _, target_pos = self._tip_target(pipeline_state)
+        dist = math.safe_norm(tip_pos - target_pos)
 
-        reward_dist = -math.safe_norm(tip_to_target)  # 3D distance
-        reward_ctrl = -jp.square(action).sum()
-        # reward = reward_dist + reward_ctrl
-        reward = reward_dist
+        min_dist = jp.asarray(state.info['min_dist'], dtype=jp.float32)
 
-        # Safety cost: sum over hazards, aggregating overlaps of arm sample points
-        hazard_positions = state.info.get('hazard_positions', None)
+        # proportional reward for getting closer to the goal
+        progress = min_dist - dist
+        reward = jp.maximum(progress, 0.0)
+
+        # terminate + bonus if touching goal
+        success = dist <= jp.asarray(self._goal_radius, dtype=jp.float32)
+        reward += jp.where(success, jp.asarray(self._success_bonus, jp.float32), jp.array(0.0, jp.float32))
+        done = success.astype(jp.float32)
+
+        # --- safety cost ---
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
 
+        # metrics/info
         state.metrics.update(
-            reward_dist=reward_dist,
-            reward_ctrl=reward_ctrl,
+            dist=dist,
+            progress=progress,
             cost=cost,
         )
+        new_min_dist = jp.minimum(min_dist, dist)
         info = dict(state.info)
         info['cost'] = cost
+        info['min_dist'] = new_min_dist  # update for next step
 
-        return state.replace(pipeline_state=pipeline_state, obs=obs, reward=reward, info=info)
+        return state.replace(
+            pipeline_state=pipeline_state,
+            obs=obs,
+            reward=reward,
+            done=done,
+            info=info,
+        )
 
     # --------------------------- Observations ---------------------------
 
@@ -325,17 +349,7 @@ class SafeReacher(PipelineEnv):
         theta = pipeline_state.q[:2]
         theta1 = theta[0]
 
-        target_pos = pipeline_state.x.pos[self._target_body_id]
-        tip_pos = (
-            pipeline_state.x.take(1)
-            .do(base.Transform.create(pos=jp.array([0.11, 0, 0])))
-            .pos
-        )
-        tip_vel = (
-            base.Transform.create(pos=jp.array([0.11, 0, 0]))
-            .do(pipeline_state.xd.take(1))
-            .vel
-        )
+        tip_pos, tip_vel, target_pos = self._tip_target(pipeline_state)
         tip_to_target = tip_pos - target_pos
 
         # ---------------- hazard lidar ----------------
@@ -396,6 +410,20 @@ class SafeReacher(PipelineEnv):
             lidar,                  # (lidar_bins,)
         ])
 
+    def _tip_target(self, pipeline_state: base.State) -> tuple[jax.Array, jax.Array, jax.Array]:
+        target_pos = pipeline_state.x.pos[self._target_body_id]
+        tip_pos = (
+            pipeline_state.x.take(self._tip_body_id)
+            .do(base.Transform.create(pos=self._tip_offset))
+            .pos
+        )
+        tip_vel = (
+            base.Transform.create(pos=self._tip_offset)
+            .do(pipeline_state.xd.take(self._tip_body_id))
+            .vel
+        )
+        return tip_pos, tip_vel, target_pos
+
     # --------------------------- Hazard logic ---------------------------
 
     def _calculate_safety_cost(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
@@ -410,7 +438,7 @@ class SafeReacher(PipelineEnv):
 
         centers = hazard_positions[:, :2]  # (N,2)
 
-        # --- sample arm points in XY (same as your old function) ---
+        # --- sample arm points in XY ---
         theta1, theta2 = pipeline_state.q[0], pipeline_state.q[1]
         l1, l2 = 0.1, 0.1
 
