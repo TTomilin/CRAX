@@ -26,7 +26,7 @@ class SafeReacher(PipelineEnv):
     def __init__(
             self,
             backend: str = 'mjx',
-            num_hazards: int = 3,
+            num_hazards: int = 6,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.035,
             rect_half_extent: float = 0.03,
@@ -34,6 +34,9 @@ class SafeReacher(PipelineEnv):
             reach_radius: float = 0.27,
             cost_scale: float = 0.1,
             samples_per_link: int = 5,
+            lidar_bins: int = 16,
+            lidar_max_dist: float = 0.30,
+            lidar_alias: bool = True,
             **kwargs,
     ):
         # Config for hazards and env geometry
@@ -45,6 +48,9 @@ class SafeReacher(PipelineEnv):
         self._reach_radius = reach_radius
         self._cost_scale = cost_scale
         self._samples_per_link = samples_per_link
+        self._lidar_bins = int(lidar_bins)
+        self._lidar_max_dist = float(lidar_max_dist)
+        self._lidar_alias = bool(lidar_alias)
 
         # Build hazards as MJCF geoms/bodies (mocap)
         cyl_r = self._hazard_radius
@@ -260,9 +266,7 @@ class SafeReacher(PipelineEnv):
             mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
             pipeline_state = pipeline_state.replace(mocap_pos=mpos)
 
-        positions = hazards_pos  # keep your info['hazard_positions'] consistent
-
-        obs = self._get_obs(pipeline_state)
+        obs = self._get_obs(pipeline_state, hazards_pos)
         reward, done, zero = jp.zeros(3)
 
         # Initial per-step cost (zero at reset)
@@ -272,7 +276,7 @@ class SafeReacher(PipelineEnv):
             'cost': zero,
         }
         info = {
-            'hazard_positions': positions,
+            'hazard_positions': hazards_pos,
             'cost': zero,
         }
 
@@ -280,7 +284,8 @@ class SafeReacher(PipelineEnv):
 
     def step(self, state: State, action: jax.Array) -> State:
         pipeline_state = self.pipeline_step(state.pipeline_state, action)
-        obs = self._get_obs(pipeline_state)
+        hazard_positions = state.info['hazard_positions']
+        obs = self._get_obs(pipeline_state, hazard_positions)
 
         # Base reacher reward: distance + control
         reward_dist = -math.safe_norm(obs[-3:])
@@ -303,9 +308,14 @@ class SafeReacher(PipelineEnv):
 
     # --------------------------- Observations ---------------------------
 
-    def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-        """Returns egocentric observation of target and arm body"""
+    def _get_obs(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
+        """Observation: original reacher obs + hazard lidar bins.
+
+        Lidar is agent-centric using theta1 (first joint angle) as the 'heading'.
+        """
         theta = pipeline_state.q[:2]
+        theta1 = theta[0]
+
         target_pos = pipeline_state.x.pos[self._target_body_id]
         tip_pos = (
             pipeline_state.x.take(1)
@@ -319,12 +329,62 @@ class SafeReacher(PipelineEnv):
         )
         tip_to_target = tip_pos - target_pos
 
+        # ---------------- hazard lidar ----------------
+        hazards_xy = hazard_positions[:, :2]
+        n_h = hazards_xy.shape[0]
+
+        bins = self._lidar_bins
+        max_d = jp.asarray(self._lidar_max_dist, dtype=jp.float32)
+        bin_size = (2.0 * jp.pi) / bins
+
+        # rotate world -> agent frame using theta1
+        c = jp.cos(theta1)
+        s = jp.sin(theta1)
+
+        lidar = jp.zeros((bins,), dtype=jp.float32)
+
+        def body(i, lidar_acc):
+            hx, hy = hazards_xy[i, 0], hazards_xy[i, 1]
+
+            # agent-centric rotation (heading = theta1)
+            ax =  hx * c + hy * s
+            ay = -hx * s + hy * c
+
+            dist = jp.sqrt(ax * ax + ay * ay + 1e-8)
+            ang = jp.arctan2(ay, ax)
+            ang = (ang + 2.0 * jp.pi) % (2.0 * jp.pi)
+
+            # binning
+            bfloat = ang / bin_size
+            b0 = jp.minimum(jp.floor(bfloat), bins - 1).astype(jp.int32)
+
+            val = jp.maximum(0.0, max_d - dist) / max_d
+            val = jp.where(dist > max_d, 0.0, val)
+
+            # primary bin: max pooling
+            lidar_acc = lidar_acc.at[b0].set(jp.maximum(lidar_acc[b0], val))
+
+            if self._lidar_alias:
+                frac = bfloat - b0.astype(jp.float32)
+
+                b_plus = (b0 + 1) % bins
+                b_minus = (b0 - 1 + bins) % bins
+
+                lidar_acc = lidar_acc.at[b_plus].set(jp.maximum(lidar_acc[b_plus], frac * val))
+                lidar_acc = lidar_acc.at[b_minus].set(jp.maximum(lidar_acc[b_minus], (1.0 - frac) * val))
+
+            return lidar_acc
+
+        lidar = jax.lax.fori_loop(0, n_h, body, lidar)
+
+        # ---------------- final obs ----------------
         return jp.concatenate([
             jp.cos(theta),
             jp.sin(theta),
-            pipeline_state.q[2:],  # target x, y
+            pipeline_state.q[2:],   # target x, y
             tip_vel[:2],
             tip_to_target,
+            lidar,                  # (lidar_bins,)
         ])
 
     # --------------------------- Hazard logic ---------------------------
