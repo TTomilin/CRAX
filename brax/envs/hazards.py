@@ -242,7 +242,7 @@ class CylinderHazard(BaseHazard):
     def calculate_mass(self) -> float:
         r = float(self.size)
         h = float(self.height)
-        volume = float(jp.pi) * r * r * h
+        volume = float(jp.pi) * r * r * 2 * h
         rho = float(self.density)
         return rho * volume
 
