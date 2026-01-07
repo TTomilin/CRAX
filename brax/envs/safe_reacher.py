@@ -59,14 +59,14 @@ class SafeReacher(PipelineEnv):
         for i in range(self._num_hazards):
             t = types[i % len(types)]
             if t == 'cylinder':
-                size=cyl_r
+                size = cyl_r
             elif t in ('rect', 'cube'):
-                size=(rect_hx, rect_hy)
+                size = (rect_hx, rect_hy)
             else:
                 raise ValueError(f"Unknown hazard type '{t}'")
 
             hazard_manager.add_hazards(t, 1, positions=[(0.0, 0.0, self._hazard_height)], size=size,
-                             height=self._hazard_height, collidable=False, fixed=False, density=1.0)
+                                       height=self._hazard_height, collidable=False, fixed=False, density=1.0)
 
         # Build XML from base reacher and hazards; no goals used here
         base_name = 'reacher.xml'
@@ -152,15 +152,56 @@ class SafeReacher(PipelineEnv):
             ys = rs * jp.sin(angs)
             return jp.stack([xs, ys], axis=1)  # (n,2)
 
-        if n_h > 0:
-            rng_haz, sub = jax.random.split(rng_haz)
-            hazards_xy = _sample_points_in_disc(sub, n_h)
-            hazards_pos = jp.concatenate(
-                [hazards_xy, jp.full((n_h, 1), self._hazard_height)], axis=1
-            )  # (n_h,3)
-        else:
-            hazards_xy = jp.zeros((0, 2), dtype=jp.float32)
-            hazards_pos = jp.zeros((0, 3), dtype=jp.float32)
+        # --- 1) sample hazard positions first, but ensure hazards don't overlap ---
+        hazard_margin = jp.asarray(0.005, dtype=jp.float32)
+
+        def _haz_keepout_radius(i: int) -> jax.Array:
+            # cylinder: use radius; rect: use circumscribed circle radius
+            hx = self._hazard_half_extents[i, 0]
+            hy = self._hazard_half_extents[i, 1]
+            rect_r = jp.sqrt(hx * hx + hy * hy)
+            return jp.where(self._hazard_is_rect[i], rect_r, self._hazard_radii[i])
+
+        hazards_xy = jp.zeros((n_h, 2), dtype=jp.float32)
+
+        # Precompute keepout radii for ALL hazards once (shape: (n_h,))
+        haz_r = jax.vmap(_haz_keepout_radius)(jp.arange(n_h))
+
+        def ok_against_prev(i, cand_xy, placed_xy):
+            # Compare against all slots, but only enforce for j < i
+            d = jp.sqrt(jp.sum((placed_xy - cand_xy[None, :]) ** 2, axis=1) + 1e-8)  # (n_h,)
+            mask = jp.arange(n_h) < i  # (n_h,)
+            min_d = haz_r[i] + haz_r + hazard_margin  # (n_h,)
+            # For j>=i, mask=False so condition is auto-true
+            return jp.all(jp.logical_or(~mask, d > min_d))
+
+        def place_one(i, carry):
+            rng_k, placed = carry
+
+            rng_k, sub0 = jax.random.split(rng_k)
+            cand0 = _sample_points_in_disc(sub0, 1)[0]
+            ok0 = ok_against_prev(i, cand0, placed)
+
+            def attempt(_, st):
+                rng_t, ok, cur = st
+                rng_t, sub = jax.random.split(rng_t)
+                cand = _sample_points_in_disc(sub, 1)[0]
+                ok_cand = ok_against_prev(i, cand, placed)
+
+                take = (~ok) & ok_cand
+                cur = jax.lax.select(take, cand, cur)
+                ok = ok | ok_cand
+                return (rng_t, ok, cur)
+
+            rng_k, ok, chosen = jax.lax.fori_loop(0, 400, attempt, (rng_k, ok0, cand0))
+            placed = placed.at[i].set(chosen)
+            return (rng_k, placed)
+
+        rng_haz, hazards_xy = jax.lax.fori_loop(0, n_h, place_one, (rng_haz, hazards_xy))
+
+        hazards_pos = jp.concatenate(
+            [hazards_xy, jp.full((n_h, 1), self._hazard_height, dtype=jp.float32)], axis=1
+        )
 
         # --- 2) sample goal conditioned on hazards (reject if inside any hazard + goal radius buffer) ---
         goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
@@ -263,7 +304,7 @@ class SafeReacher(PipelineEnv):
     # --------------------------- Observations ---------------------------
 
     def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-        """Returns egocentric observation of target and arm body (identical to base)."""
+        """Returns egocentric observation of target and arm body"""
         theta = pipeline_state.q[:2]
         target_pos = pipeline_state.x.pos[self._target_body_id]
         tip_pos = (
