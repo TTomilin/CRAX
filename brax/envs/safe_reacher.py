@@ -287,8 +287,16 @@ class SafeReacher(PipelineEnv):
         hazard_positions = state.info['hazard_positions']
         obs = self._get_obs(pipeline_state, hazard_positions)
 
-        # Base reacher reward: distance + control
-        reward_dist = -math.safe_norm(obs[-3:])
+        # Base reacher reward: tip-to-target distance
+        target_pos = pipeline_state.x.pos[self._target_body_id]
+        tip_pos = (
+            pipeline_state.x.take(1)
+            .do(base.Transform.create(pos=jp.array([0.11, 0, 0])))
+            .pos
+        )
+        tip_to_target = tip_pos - target_pos
+
+        reward_dist = -math.safe_norm(tip_to_target)  # 3D distance
         reward_ctrl = -jp.square(action).sum()
         # reward = reward_dist + reward_ctrl
         reward = reward_dist
