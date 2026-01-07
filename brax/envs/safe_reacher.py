@@ -32,7 +32,7 @@ class SafeReacher(PipelineEnv):
             rect_half_extent: float = 0.03,
             hazard_height: float = 0.01,
             reach_radius: float = 0.27,
-            cost_scale: float = 1.0,
+            cost_scale: float = 0.1,
             samples_per_link: int = 5,
             **kwargs,
     ):
