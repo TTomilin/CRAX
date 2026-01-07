@@ -1,12 +1,12 @@
+import os
+
 import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import numpy as np
-from brax import base
 from PIL import Image, ImageDraw, ImageFont
-import os
 
-
+from brax import base
 from brax.envs.safe_reacher import SafeReacher
 
 
@@ -28,7 +28,7 @@ def run_episodes(env, jit_step, jit_reset, steps_per_ep: int = 100, num_episodes
     all_rewards = []
     all_costs = []
     all_dists = []
-    all_tip_xy = []     # list of (x, y)
+    all_tip_xy = []  # list of (x, y)
     all_target_xy = []  # list of (x, y)
 
     key = jax.random.PRNGKey(seed)
@@ -68,7 +68,7 @@ def run_episodes(env, jit_step, jit_reset, steps_per_ep: int = 100, num_episodes
                 .do(base.Transform.create(pos=env._tip_offset))
                 .pos
             )
-            target_pos = ps.x.pos[env._target_body_id]
+            target_pos = ps.mocap_pos[env._target_mocap_id]
 
             tip_xy = np.asarray(jax.device_get(tip_pos[:2]))
             target_xy = np.asarray(jax.device_get(target_pos[:2]))

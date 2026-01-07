@@ -36,13 +36,6 @@
         </body>
       </body>
     </body>
-    <!-- Target -->
-    <body name="target" pos="0 0 0.01">
-      <!-- The joint `ref` attributes are removed for brax. -->
-      <joint armature="0" axis="1 0 0" damping="0" limited="true" name="target_x" pos="0 0 0" range="-.27 .27" stiffness="0" type="slide"/>
-      <joint armature="0" axis="0 1 0" damping="0" limited="true" name="target_y" pos="0 0 0" range="-.27 .27" stiffness="0" type="slide"/>
-      <geom conaffinity="0" contype="0" name="target" pos="0 0 0" size=".009" type="sphere"/>
-    </body>
   </worldbody>
   <actuator>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" gear="200.0" joint="joint0"/>

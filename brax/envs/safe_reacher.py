@@ -1,13 +1,13 @@
-from typing import Tuple, List, Optional
+from typing import List, Optional
 
 import jax
 import mujoco
 from jax import numpy as jp
 
 from brax import base
-from brax import math
 from brax.envs.base import PipelineEnv, State
 from brax.envs.env_utils import generate_goal_xml_from_base
+from brax.envs.goals import GoalManager
 from brax.envs.hazards import HazardManager
 from brax.io import mjcf
 
@@ -76,9 +76,13 @@ class SafeReacher(PipelineEnv):
             hazard_manager.add_hazards(t, 1, positions=[(0.0, 0.0, self._hazard_height)], size=size,
                                        height=self._hazard_height, collidable=False, fixed=False, density=1.0)
 
-        # Build XML from base reacher and hazards; no goals used here
+        # Build a SphereGoal via GoalManager
+        goal_manager = GoalManager()
+        goal_manager.add_goals('sphere', 1, positions=[(0.0, 0.0, 0.01)], size=0.009, height=0.0)
+
+        # Build XML from base reacher, goal, and hazards
         base_name = 'reacher.xml'
-        xml_path = generate_goal_xml_from_base(base_name, goal_manager=None, hazard_manager=hazard_manager)
+        xml_path = generate_goal_xml_from_base(base_name, goal_manager=goal_manager, hazard_manager=hazard_manager)
 
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
@@ -87,18 +91,19 @@ class SafeReacher(PipelineEnv):
             if os.path.exists(xml_path):
                 os.unlink(xml_path)
 
-        self._target_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "target"))
-        target_geom_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, "target"))
-        if self._target_body_id < 0 or target_geom_id < 0:
-            raise RuntimeError("Could not find body named 'target' in MJCF")
+        # resolve our goal body/geom created via GoalManager
+        self._target_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "goal1"))
 
+        # cache target mocap id and default z for placement on reset
+        self._target_mocap_id = int(mj_model.body_mocapid[self._target_body_id])
+        self._target_z = float(mj_model.body_pos[self._target_body_id][2])
+
+        # cache tip body id and offset (for velocity calculation)
         self._tip_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "body1"))
-        if self._tip_body_id < 0:
-            raise RuntimeError("Could not find body named 'body1' in MJCF")
-
         self._tip_offset = jp.array([0.11, 0.0, 0.0], dtype=jp.float32)
 
         # sphere geom: geom_size[0] is the radius
+        target_geom_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, "goal1"))
         self._goal_radius = float(mj_model.geom_size[target_geom_id][0])
 
         # Load into Brax system
@@ -156,7 +161,19 @@ class SafeReacher(PipelineEnv):
             rng2, (self.sys.qd_size(),), minval=-0.005, maxval=0.005
         )
 
-        # --- 1) sample hazard positions first (unconditional) ---
+        # --- 1) sample the goal ---
+        def _sample_goal(key):
+            k1, k2 = jax.random.split(key)
+            dist = 0.2 * jax.random.uniform(k1)
+            ang = 2.0 * jp.pi * jax.random.uniform(k2)
+            return jp.array([dist * jp.cos(ang), dist * jp.sin(ang)], dtype=jp.float32)
+
+        rng_t, sub = jax.random.split(rng_t)
+        goal_xy = _sample_goal(sub)
+        jax.debug.print("goal_xy = {g}", g=goal_xy, ordered=True)
+        goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
+
+        # --- 2) place hazards conditioned on goal + non-overlap ---
         n_h = len(self._hazard_mocap_ids)
 
         def _sample_points_in_disc(key, n):
@@ -190,6 +207,11 @@ class SafeReacher(PipelineEnv):
             # For j>=i, mask=False so condition is auto-true
             return jp.all(jp.logical_or(~mask, d > min_d))
 
+        def ok_against_goal(i, cand_xy):
+            # keep hazard away from the goal (hazard radius + goal radius + small margin)
+            d = jp.sqrt(jp.sum((cand_xy - goal_xy) ** 2) + 1e-8)
+            return d > (haz_r[i] + goal_r + hazard_margin)
+
         def place_one(i, carry):
             rng_k, placed = carry
 
@@ -201,7 +223,7 @@ class SafeReacher(PipelineEnv):
                 rng_t, ok, cur = st
                 rng_t, sub = jax.random.split(rng_t)
                 cand = _sample_points_in_disc(sub, 1)[0]
-                ok_cand = ok_against_prev(i, cand, placed)
+                ok_cand = ok_against_prev(i, cand, placed) & ok_against_goal(i, cand)
 
                 take = (~ok) & ok_cand
                 cur = jax.lax.select(take, cand, cur)
@@ -218,65 +240,28 @@ class SafeReacher(PipelineEnv):
             [hazards_xy, jp.full((n_h, 1), self._hazard_height, dtype=jp.float32)], axis=1
         )
 
-        # --- 2) sample goal conditioned on hazards (reject if inside any hazard + goal radius buffer) ---
-        goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
-
-        def _goal_ok(goal_xy):
-            if n_h == 0:
-                return jp.array(True)
-
-            # cylinders: inside if dist <= (haz_r + goal_r)
-            d = jp.sqrt(jp.sum((hazards_xy - goal_xy[None, :]) ** 2, axis=1) + 1e-8)
-            cyl_ok = d > (self._hazard_radii + goal_r)
-
-            # rects (axis-aligned): outside if |dx| > (hx+goal_r) OR |dy| > (hy+goal_r)
-            dxdy = jp.abs(hazards_xy - goal_xy[None, :])
-            rect_out = jp.logical_or(
-                dxdy[:, 0] > (self._hazard_half_extents[:, 0] + goal_r),
-                dxdy[:, 1] > (self._hazard_half_extents[:, 1] + goal_r),
-            )
-            rect_ok = rect_out
-
-            is_rect = self._hazard_is_rect
-            ok_per_h = jp.where(is_rect, rect_ok, cyl_ok)
-            return jp.all(ok_per_h)
-
-        def _sample_goal(key):
-            # same distribution as your _random_target, but inline so we can reject
-            k1, k2 = jax.random.split(key)
-            dist = 0.2 * jax.random.uniform(k1)
-            ang = 2.0 * jp.pi * jax.random.uniform(k2)
-            return jp.array([dist * jp.cos(ang), dist * jp.sin(ang)], dtype=jp.float32)
-
-        # bounded rejection
-        rng_t, key0 = jax.random.split(rng_t)
-        goal_xy = _sample_goal(key0)
-        ok0 = _goal_ok(goal_xy)
-
-        def body(_, st):
-            key, ok, cur = st
-            key, sub = jax.random.split(key)
-            cand = _sample_goal(sub)
-            ok_cand = _goal_ok(cand)
-            cur = jax.lax.select(ok, cur, cand)
-            ok = jp.logical_or(ok, ok_cand)
-            return (key, ok, cur)
-
-        _, ok, goal_xy = jax.lax.fori_loop(0, 500, body, (rng_t, ok0, goal_xy))
-
-        # --- 3) now set target joints, init pipeline, then apply hazard mocaps ---
-        q = q.at[2:4].set(goal_xy)
-        qd = qd.at[2:4].set(0.0)
-
+        # --- 3) init pipeline, then apply hazard + target mocaps ---
         pipeline_state = self.pipeline_init(q, qd)
 
+        # set hazards
         ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
         mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
+        # set target (mocap sphere)
+        tgt_pos = jp.array([goal_xy[0], goal_xy[1], self._target_z], dtype=jp.float32)
+        mpos = mpos.at[self._target_mocap_id].set(tgt_pos)
         pipeline_state = pipeline_state.replace(mocap_pos=mpos)
 
         # compute initial distance-to-goal and store for progress reward
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
+
+        jax.debug.print(
+            "goal sampled={g} | mocap={m} | target_pos={x}",
+            g=goal_xy,
+            m=pipeline_state.mocap_pos[self._target_mocap_id][:2],
+            x=target_pos,
+            ordered=True,
+        )
 
         obs = self._get_obs(pipeline_state, hazards_pos)
         reward, done, zero = jp.zeros(3)
@@ -305,6 +290,14 @@ class SafeReacher(PipelineEnv):
         # --- distance to goal ---
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
+
+        jax.debug.print(
+            "step dist={d} | tip_pos={t} | target_pos={x}",
+            d=dist,
+            t=tip_pos,
+            x=target_pos,
+            ordered=True,
+        )
 
         min_dist = jp.asarray(state.info['min_dist'], dtype=jp.float32)
 
@@ -350,6 +343,7 @@ class SafeReacher(PipelineEnv):
 
         tip_pos, tip_vel, target_pos = self._tip_target(pipeline_state)
         tip_to_target = tip_pos - target_pos
+        target_xy = target_pos[:2]
 
         # ---------------- hazard lidar ----------------
         hazards_xy = hazard_positions[:, :2]
@@ -403,19 +397,15 @@ class SafeReacher(PipelineEnv):
         return jp.concatenate([
             jp.cos(theta),
             jp.sin(theta),
-            pipeline_state.q[2:],  # target x, y
+            target_xy,  # target x, y from mocap body
             tip_vel[:2],
             tip_to_target,
             lidar,  # (lidar_bins,)
         ])
 
     def _tip_target(self, pipeline_state: base.State) -> tuple[jax.Array, jax.Array, jax.Array]:
-        target_pos = pipeline_state.x.pos[self._target_body_id]
-        tip_pos = (
-            pipeline_state.x.take(self._tip_body_id)
-            .do(base.Transform.create(pos=self._tip_offset))
-            .pos
-        )
+        target_pos = pipeline_state.mocap_pos[self._target_mocap_id]
+        tip_pos = (pipeline_state.x.take(self._tip_body_id).pos)
         tip_vel = (
             base.Transform.create(pos=self._tip_offset)
             .do(pipeline_state.xd.take(self._tip_body_id))
@@ -481,14 +471,3 @@ class SafeReacher(PipelineEnv):
         total_cost = jp.sum(per_hazard_cost)
 
         return jp.asarray(self._cost_scale, dtype=jp.float32) * total_cost
-
-    # --------------------------- Target sampling ---------------------------
-
-    def _random_target(self, rng: jax.Array) -> Tuple[jax.Array, jax.Array]:
-        """Returns a target location in a random circle slightly above xy plane."""
-        rng, rng1, rng2 = jax.random.split(rng, 3)
-        dist = 0.2 * jax.random.uniform(rng1)
-        ang = jp.pi * 2.0 * jax.random.uniform(rng2)
-        target_x = dist * jp.cos(ang)
-        target_y = dist * jp.sin(ang)
-        return rng, jp.array([target_x, target_y])
