@@ -26,7 +26,7 @@ class SafeReacher(PipelineEnv):
     def __init__(
             self,
             backend: str = 'mjx',
-            num_hazards: int = 3,
+            num_hazards: int = 6,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.035,
             rect_half_extent: float = 0.03,
