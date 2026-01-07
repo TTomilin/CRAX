@@ -33,7 +33,7 @@ class SafeReacher(PipelineEnv):
             hazard_height: float = 0.01,
             reach_radius: float = 0.27,
             cost_scale: float = 1.0,
-            reward_scale: float = 10.0,
+            reward_scale: float = 0.1,
             samples_per_link: int = 5,
             lidar_bins: int = 16,
             lidar_max_dist: float = 0.30,
@@ -98,7 +98,7 @@ class SafeReacher(PipelineEnv):
         self._target_mocap_id = int(mj_model.body_mocapid[self._target_body_id])
         self._target_z = float(mj_model.body_pos[self._target_body_id][2])
 
-        # cache tip body id and offset (for velocity calculation)
+        # cache tip body id and offset
         self._tip_body_id = int(mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "body1"))
         self._tip_offset = jp.array([0.11, 0.0, 0.0], dtype=jp.float32)
 
@@ -280,7 +280,6 @@ class SafeReacher(PipelineEnv):
             'reward_ctrl': zero,
             'cost': zero,
             'dist': dist,
-            'progress': zero,
         }
         info = {
             'hazard_positions': hazards_pos,
@@ -299,15 +298,8 @@ class SafeReacher(PipelineEnv):
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
 
-        min_dist = jp.asarray(state.info['min_dist'], dtype=jp.float32)
-
         # proportional reward for getting closer to the goal
-        progress = min_dist - dist
-        reward = jp.maximum(progress, 0.0) * jp.asarray(self._reward_scale, jp.float32)
-
-        # terminate + bonus if touching goal
-        success = dist <= jp.asarray(self._goal_radius, dtype=jp.float32)
-        done = success.astype(jp.float32)
+        reward = -jp.asarray(self._reward_scale, jp.float32) * dist
 
         # --- safety cost ---
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
@@ -315,19 +307,15 @@ class SafeReacher(PipelineEnv):
         # metrics/info
         state.metrics.update(
             dist=dist,
-            progress=progress,
             cost=cost,
         )
-        new_min_dist = jp.minimum(min_dist, dist)
         info = dict(state.info)
         info['cost'] = cost
-        info['min_dist'] = new_min_dist  # update for next step
 
         return state.replace(
             pipeline_state=pipeline_state,
             obs=obs,
             reward=reward,
-            done=done,
             info=info,
         )
 
