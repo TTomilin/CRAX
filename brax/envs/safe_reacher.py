@@ -170,7 +170,6 @@ class SafeReacher(PipelineEnv):
 
         rng_t, sub = jax.random.split(rng_t)
         goal_xy = _sample_goal(sub)
-        jax.debug.print("goal_xy = {g}", g=goal_xy, ordered=True)
         goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
 
         # --- 2) place hazards conditioned on goal + non-overlap ---
@@ -255,14 +254,6 @@ class SafeReacher(PipelineEnv):
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
 
-        jax.debug.print(
-            "goal sampled={g} | mocap={m} | target_pos={x}",
-            g=goal_xy,
-            m=pipeline_state.mocap_pos[self._target_mocap_id][:2],
-            x=target_pos,
-            ordered=True,
-        )
-
         obs = self._get_obs(pipeline_state, hazards_pos)
         reward, done, zero = jp.zeros(3)
 
@@ -290,14 +281,6 @@ class SafeReacher(PipelineEnv):
         # --- distance to goal ---
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
-
-        jax.debug.print(
-            "step dist={d} | tip_pos={t} | target_pos={x}",
-            d=dist,
-            t=tip_pos,
-            x=target_pos,
-            ordered=True,
-        )
 
         min_dist = jp.asarray(state.info['min_dist'], dtype=jp.float32)
 
