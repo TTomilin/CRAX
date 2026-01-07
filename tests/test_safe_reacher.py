@@ -101,7 +101,7 @@ def render_states(env, states, rewards, costs, dists, tip_xy, target_xy, base_ag
 
     if show_metrics:
         try:
-            font_obj = ImageFont.truetype(f"{font}.ttf", 20)
+            font_obj = ImageFont.truetype(f"{font}.ttf", 14)
         except (OSError, IOError):
             font_obj = ImageFont.load_default()
 
