@@ -88,7 +88,7 @@ def run_episodes(env, jit_step, jit_reset, steps_per_ep: int = 100, num_episodes
 
 
 def render_states(env, states, rewards, costs, dists, tip_xy, target_xy, base_agent_name="safe_reacher",
-                  camera="fixedfar", width=320, height=240, fps=10,
+                  camera="fixedfar", width=320, height=240, fps=25,
                   show_metrics=True, font="DejaVuSans-Bold"):
     pipeline_states = [s.pipeline_state for s in states]
 
