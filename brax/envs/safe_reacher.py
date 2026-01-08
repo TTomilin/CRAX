@@ -188,12 +188,15 @@ class SafeReacher(PipelineEnv):
         # --- 2) place hazards conditioned on goal + non-overlap ---
         n_h = len(self._hazard_mocap_ids)
 
-        def _sample_points_in_disc(key, n, max_r):
+        def _sample_points_in_annulus(key, n, r_min, r_max):
             k1, k2 = jax.random.split(key)
-            max_r = jp.asarray(max_r, dtype=jp.float32)
-            max_r = jp.maximum(max_r, 0.01)
+            r_min = jp.asarray(r_min, dtype=jp.float32)
+            r_max = jp.asarray(r_max, dtype=jp.float32)
 
-            rs = max_r * jp.sqrt(jax.random.uniform(k1, (n,)))
+            # uniform over area: r^2 uniform in [r_min^2, r_max^2]
+            u = jax.random.uniform(k1, (n,))
+            rs = jp.sqrt((1.0 - u) * (r_min * r_min) + u * (r_max * r_max))
+
             angs = 2.0 * jp.pi * jax.random.uniform(k2, (n,))
             xs = rs * jp.cos(angs)
             ys = rs * jp.sin(angs)
@@ -227,19 +230,39 @@ class SafeReacher(PipelineEnv):
             d = jp.sqrt(jp.sum((cand_xy - goal_xy) ** 2) + 1e-8)
             return d > (haz_r[i] + goal_r + hazard_margin)
 
+        def ok_against_base(i, cand_xy):
+            # keep away from the reacher base at (0,0)
+            d = jp.sqrt(jp.sum(cand_xy * cand_xy) + 1e-8)
+            base_keepout = haz_r[i] + hazard_margin
+            return d > base_keepout
+
         def place_one(i, carry):
             rng_k, placed = carry
 
             rng_k, sub0 = jax.random.split(rng_k)
-            max_r_i = jp.asarray(self._reach_radius, jp.float32) - haz_r[i] - hazard_margin
-            cand0 = _sample_points_in_disc(sub0, 1, max_r_i)[0]
-            ok0 = ok_against_prev(i, cand0, placed)
+
+            # outer radius: must fit inside reach disc
+            r_max_i = jp.asarray(self._reach_radius, jp.float32) - haz_r[i] - hazard_margin
+            # inner radius: keep away from base
+            r_min_i = haz_r[i] + hazard_margin
+
+            cand0 = _sample_points_in_annulus(sub0, 1, r_min_i, r_max_i)[0]
+            ok0 = (
+                    ok_against_prev(i, cand0, placed)
+                    & ok_against_goal(i, cand0)
+                    & ok_against_base(i, cand0)
+            )
 
             def attempt(_, st):
                 rng_t, ok, cur = st
                 rng_t, sub = jax.random.split(rng_t)
-                cand = _sample_points_in_disc(sub, 1, max_r_i)[0]
-                ok_cand = ok_against_prev(i, cand, placed) & ok_against_goal(i, cand)
+                cand = _sample_points_in_annulus(sub, 1, r_min_i, r_max_i)[0]
+
+                ok_cand = (
+                        ok_against_prev(i, cand, placed)
+                        & ok_against_goal(i, cand)
+                        & ok_against_base(i, cand)
+                )
 
                 take = (~ok) & ok_cand
                 cur = jax.lax.select(take, cand, cur)
