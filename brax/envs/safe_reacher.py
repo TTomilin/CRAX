@@ -31,8 +31,6 @@ class SafeReacher(PipelineEnv):
             rect_half_extent: float = 0.03,
             hazard_height: float = 0.01,
             reach_radius: float = 0.27,
-            cost_scale: float = 1.0,
-            reward_scale: float = 0.1,
             samples_per_link: int = 5,
             lidar_bins: int = 16,
             lidar_max_dist: float = 0.30,
@@ -46,12 +44,13 @@ class SafeReacher(PipelineEnv):
         self._rect_half_extent = rect_half_extent
         self._hazard_height = hazard_height
         self._reach_radius = reach_radius
-        self._cost_scale = cost_scale
-        self._reward_scale = reward_scale
         self._samples_per_link = samples_per_link
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
         self._lidar_alias = lidar_alias
+
+        self._cost_scale = kwargs.get("cost", {}).get("scaler", 1.0)
+        self._reward_scale = kwargs.get("reward", {}).get("dense_scale", 0.1)
 
         # Build hazards as MJCF geoms/bodies (mocap)
         cyl_r = self._hazard_radius
