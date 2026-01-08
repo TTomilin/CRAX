@@ -946,22 +946,7 @@ class SafePointGoal(PipelineEnv):
         )
 
 
-def SafePointGoal_8Cubes(**kwargs):
-    """SafePointGoal with 8 cube hazards."""
-    return SafePointGoal(kwargs)
-
-
-def SafePointGoal_12Cubes(**kwargs):
-    """SafePointGoal with 12 cube hazards."""
-    config = default_config()
-    config.hazards.specs = [
-        {"type": "cube", "count": 12},
-    ]
-    config = config_merge(config, kwargs)
-    return SafePointGoal(config)
-
-
-def SafePointGoal_12Cylinders(**kwargs):
+def SafePointGoal_Level1(**kwargs):
     """SafePointGoal with 12 cylinder hazards."""
     config = default_config()
     config.goals.type = 'cylinder'
@@ -976,7 +961,7 @@ def SafePointGoal_12Cylinders(**kwargs):
     return SafePointGoal(config)
 
 
-def SafePointGoal_MixedHazards(**kwargs):
+def SafePointGoal_Level2(**kwargs):
     """SafePointGoal with mixed hazard types: 5 cubes + 7 cylinders."""
     config = default_config()
     config.goals.type = 'cylinder'

@@ -25,6 +25,7 @@ from matplotlib import pyplot as plt
 from brax import envs
 from brax.envs import Env
 from brax.envs.base import State as BraxState, Wrapper
+from brax.envs.difficulty import apply_difficulty
 
 # Import training modules conditionally to handle missing modules gracefully
 try:
@@ -195,13 +196,15 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
     """
     env_name = config.env_name
     alg_name = config.alg
+    difficulty = config.difficulty
 
     # Create environments
-    train_environment = envs.get_environment(env_name, **config.env_kwargs)
-    eval_env = envs.get_environment(env_name, **config.env_kwargs)
+    adjusted_env_kwargs = apply_difficulty(env_name, config.env_kwargs, difficulty)
+    train_environment = envs.get_environment(env_name, **adjusted_env_kwargs)
+    eval_env = envs.get_environment(env_name, **adjusted_env_kwargs)
 
-    print(f"Training environment '{env_name}' instantiated.")
-    print(f"Evaluation environment '{env_name}' instantiated.")
+    print(f"Training environment '{env_name}' instantiated with difficulty {difficulty}.")
+    print(f"Evaluation environment '{env_name}' instantiated with difficulty {difficulty}.")
 
     # Setup wandb if requested
     cfg = vars(config)
@@ -228,7 +231,7 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
         )
 
     # Setup metrics collection
-    progress_fn = functools.partial(custom_progress_fn, use_wandb=use_wandb, verbose=verbose,)
+    progress_fn = functools.partial(custom_progress_fn, use_wandb=use_wandb, verbose=verbose, )
 
     # Get the appropriate training function
     train_fn_base = get_algorithm_train_fn(alg_name)
@@ -759,16 +762,20 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Reduce verbosity")
     parser.add_argument("--skip-rollout", action="store_true", help="Skip rollout evaluation after training")
     parser.add_argument("--skip-video", action="store_true", help="Skip video recording after training")
-    parser.add_argument("--out_dir", type=str, default="runs/experimental_results", help="Directory for metrics/outputs")
     parser.add_argument("--model_dir", type=str, default="models", help="Directory to save model parameters")
+    parser.add_argument("--out_dir", type=str, default="runs/experimental_results",
+                        help="Directory for metrics/outputs")
 
     # --- Environment ---
     parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name")
+    parser.add_argument("--difficulty", type=int, choices=[1, 2, 3], default=1,
+                        help="Difficulty level for safety environments (1=easy, 2=medium, 3=hard)")
     parser.add_argument(
         "--env_kwargs",
         type=_json_type,
         default={
             "physics": {
+                "backend": "mjx",
                 "timestep": 0.02,
                 "n_frames": 4
             },
@@ -830,9 +837,12 @@ def main():
     parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
 
     # --- PPO-Saute ---
-    parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None, help="Budget discount factor; defaults to --discounting if None")
-    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=-1.0, help="Terminal penalty added on violation step")
-    parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1, help="Normalize budget observation by initial budget")
+    parser.add_argument("--saute-gamma-budget", dest="gamma_budget", type=float, default=None,
+                        help="Budget discount factor; defaults to --discounting if None")
+    parser.add_argument("--saute-violation-penalty", dest="violation_penalty", type=float, default=-1.0,
+                        help="Terminal penalty added on violation step")
+    parser.add_argument("--saute-normalize-budget-obs", dest="normalize_budget_obs", type=int, default=1,
+                        help="Normalize budget observation by initial budget")
 
     # --- PPO-Cost verification ---
     parser.add_argument("--ppoc-verify-log-steps", type=int, default=0,
@@ -853,7 +863,8 @@ def main():
     parser.add_argument("--video_length", type=int, default=None, help="Number of frames in the video")
     parser.add_argument("--video_fps", type=int, default=100, help="Output video FPS")
     parser.add_argument("--video_frame_stride", type=int, default=1, help="Output video frame stride")
-    parser.add_argument("--num_video_episodes", type=int, default=5, help="Number of episodes to record and concatenate into a single video")
+    parser.add_argument("--num_video_episodes", type=int, default=5,
+                        help="Number of episodes to record and concatenate into a single video")
 
     config = parser.parse_args()
 
@@ -886,7 +897,7 @@ def main():
                 seed=seed,
                 save_trajectory=True,
                 save_plots=True,
-                env_kwargs=config.env_kwargs
+                env_kwargs=apply_difficulty(rollout_env_name, config.env_kwargs, getattr(config, 'difficulty', 1))
             )
 
         if not config.skip_video:

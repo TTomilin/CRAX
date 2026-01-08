@@ -15,8 +15,6 @@ METRIC_COLS = {
 
 # Pretty labels
 TRANSLATIONS = {
-    "safe_point_goal_12_cylinders": "SafePointGoal (12 Cylinders)",
-    "safe_point_goal_mixed_hazards": "SafePointGoal (Mixed Hazards)",
     "reward": "Reward",
     "cost": "Cost",
     "ppo_pid": "PPO_PID",
@@ -260,7 +258,7 @@ def build_args() -> argparse.ArgumentParser:
         "--envs",
         type=str,
         nargs="+",
-        default=["safe_point_goal_12_cylinders", "safe_point_goal_mixed_hazards"],
+        default=["safe_point_goal"],
     )
     p.add_argument(
         "--algo",

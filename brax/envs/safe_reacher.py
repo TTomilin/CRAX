@@ -25,7 +25,6 @@ class SafeReacher(PipelineEnv):
 
     def __init__(
             self,
-            backend: str = 'mjx',
             num_hazards: int = 6,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.035,
@@ -109,15 +108,17 @@ class SafeReacher(PipelineEnv):
         # Load into Brax system
         sys = mjcf.load_model(mj_model)
 
-        n_frames = 2
+        # Determine the physics settings
+        physics = kwargs.get('physics', {})
+        backend = physics.get('backend', 'mjx')
+        n_frames = physics.get('n_frames', 2)
         if backend in ['spring', 'positional']:
             sys = sys.tree_replace({'opt.timestep': 0.005})
             sys = sys.replace(actuator=sys.actuator.replace(gear=jp.array([25.0, 25.0])))
             n_frames = 4
 
-        kwargs['n_frames'] = kwargs.get('n_frames', n_frames)
-
-        super().__init__(sys=sys, backend=backend, **kwargs)
+        # Pass physics settings to PipelineEnv
+        super().__init__(sys, backend=backend, n_frames=n_frames)
 
         # Cache hazard mocap ids and static params
         self._hazard_mocap_ids = []
