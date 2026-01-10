@@ -1,16 +1,14 @@
 import argparse
-import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
-    "reward": "episodic/reward",
+    "reward": "episodic/sum_reward",
     "cost": "episodic/cost",
 }
 
@@ -31,7 +29,8 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
 }
 
 
-def load_runs(base: Path, env: str, algo: str, seeds: List[int], metrics: List[str]) -> Dict[Tuple[str, str, str], List[pd.DataFrame]]:
+def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], metrics: List[str]) -> Dict[
+    Tuple[str, str, str], List[pd.DataFrame]]:
     """Return dict[(env, algo, metric)] -> list of per-seed DataFrames with ['_step', 'value']."""
     out: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for metric in metrics:
@@ -39,7 +38,7 @@ def load_runs(base: Path, env: str, algo: str, seeds: List[int], metrics: List[s
         out[key] = []
         col = METRIC_COLS[metric]
         for seed in seeds:
-            fp = base / env / algo / f"seed_{seed}.parquet"
+            fp = base / env / f"level_{level}" / algo / f"seed_{seed}.parquet"
             if not fp.exists():
                 # skip missing seed
                 print(f"File not found: {fp}")
@@ -145,6 +144,8 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
             x_max = args.x_max if args.x_max is not None else x_max_for_axis
             ax.set_xlim(0.0, x_max)
+            if env == "safe_reacher":
+                ax.set_ylim(-15, None)
 
             if args.grid:
                 ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
@@ -160,11 +161,12 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0), ncol=len(labels), fancybox=True, shadow=True)
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0), ncol=len(labels), fancybox=True,
+                   shadow=True)
 
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / (args.out_name if args.out_name.endswith(".pdf") else f"{args.out_name}.pdf")
+    out_path = out_dir / f"{args.out_name}_level_{args.level}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")
@@ -176,7 +178,7 @@ def main(args: argparse.Namespace) -> None:
     store: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for env in args.envs:
         for algo in args.algos:
-            loaded = load_runs(base, env, algo, args.seeds, args.metrics)
+            loaded = load_runs(base, env, args.level, algo, args.seeds, args.metrics)
             store.update(loaded)
     plot_metrics(store, args)
 
@@ -184,19 +186,20 @@ def main(args: argparse.Namespace) -> None:
 def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot Safe-Brax Parquet results.")
     p.add_argument("--input", type=str, default="data",
-                   help="Base directory with <env>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal"])
+                   help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    p.add_argument("--level", type=int, default=1)
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],
                    choices=list(METRIC_COLS.keys()))
-    p.add_argument("--x_max", type=int, default=3e8)
+    p.add_argument("--x_max", type=int, default=5e8)
     p.add_argument("--total_iterations", type=float, default=None,
                    help="If set, x-axis is rescaled to this many env steps.")
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines.")
     p.add_argument("--grid", action="store_true")
     p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="point_goal_baselines")
+    p.add_argument("--out_name", type=str, default="baselines")
     return p
 
 
