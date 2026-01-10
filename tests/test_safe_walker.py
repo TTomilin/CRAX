@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 
 import imageio.v3 as iio
 import jax
@@ -194,7 +195,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     env = SafeWalker()
-    model_path = os.path.join("models", args.model)
+    root_dir = Path(__file__).parent.parent.resolve()
+    model_path = root_dir / "models" / args.model
     policy = ppo_checkpoint.load_policy(model_path)
     states, rewards, costs = run_policy_episodes(env, policy, steps_per_ep=args.steps, num_episodes=args.episodes)
     render_states(env, states, rewards, costs, base_agent_name=args.out, camera=args.camera)

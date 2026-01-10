@@ -11,6 +11,7 @@ import json
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List
 from typing import Optional
 
@@ -231,6 +232,12 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
             tags=wandb_tags,
         )
 
+    if config.store_model:
+        root_dir = Path(__file__).parent.resolve()
+        ckpt_root = root_dir / config.model_dir / f"{env_name.lower()}_{alg_name}_seed{seed}_{config.timestamp}"
+        os.makedirs(ckpt_root, exist_ok=True)
+        cfg["save_checkpoint_path"] = ckpt_root
+
     # Setup metrics collection
     progress_fn = functools.partial(custom_progress_fn, use_wandb=use_wandb, verbose=verbose, )
 
@@ -258,15 +265,6 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
                 final_log_data[key] = value
         if final_log_data:
             wandb.log(final_log_data, step=int(float(np.asarray(config.num_timesteps).reshape(()))))
-
-    # Save model
-    if config.store_model:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_dir = config.model_dir
-        os.makedirs(model_dir, exist_ok=True)
-        model_path = f'{model_dir}/{env_name.lower()}_{alg_name}_seed{seed}_{timestamp}'
-        brax_model.save_params(model_path, params)
-        print(f"Trained model parameters saved to: {model_path}")
 
     return make_inference_fn, params, final_eval_metrics, eval_env
 

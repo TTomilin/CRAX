@@ -599,14 +599,14 @@ def train(
         value=ppo_network.value_network.init(key_value),
     )
 
-    obs_shape = jax.tree_util.tree_map(
+    obs_spec = jax.tree_util.tree_map(
         lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
     )
     training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
         optimizer_state=optimizer.init(init_params),  # pytype: disable=wrong-arg-types  # numpy-scalars
         params=init_params,
         normalizer_params=running_statistics.init_state(
-            _remove_pixels(obs_shape)
+            _remove_pixels(obs_spec)
         ),
         env_steps=types.UInt64(hi=0, lo=0),
     )
