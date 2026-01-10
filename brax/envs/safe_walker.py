@@ -25,15 +25,14 @@ class SafeWalker(PipelineEnv):
 
     def __init__(
         self,
-        num_hazards: int = 6,
+        num_hazards: int = 100,
         hazard_types: Optional[List[str]] = None,
         hazard_radius: float = 0.25,
         cube_half_extent: float = 0.20,
         hazard_height: float = 0.05,
-        min_gap: float = 1.5,
-        max_gap: float = 3.0,
+        min_gap: float = 0.5,
+        max_gap: float = 2.0,
         lateral_jitter: float = 0.25,
-        forward_reward_weight: float = 1.0,
         ctrl_cost_weight: float = 1e-3,
         healthy_reward: float = 1.0,
         terminate_when_unhealthy: bool = True,
@@ -43,8 +42,8 @@ class SafeWalker(PipelineEnv):
         exclude_current_positions_from_observation: bool = True,
         **kwargs,
     ):
-        # store walker reward/termination settings (mirrors brax.envs.walker2d)
-        self._forward_reward_weight = forward_reward_weight
+        self._forward_reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
+        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.1)
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
@@ -71,7 +70,7 @@ class SafeWalker(PipelineEnv):
         for i in range(self._num_hazards):
             t = self._hazard_types[i % len(self._hazard_types)].lower()
             if t == "sphere":
-                # alias to cylinder in (x,y)
+                # TODO implement sphere hazard
                 t = "cylinder"
             if t == "cylinder":
                 size = self._hazard_radius
@@ -97,9 +96,7 @@ class SafeWalker(PipelineEnv):
 
         # Build XML from base walker2d asset and injected hazards
         base_name = "walker2d.xml"
-        xml_path = generate_goal_xml_from_base(
-            base_name, goal_manager=goal_mgr, hazard_manager=hz_mgr
-        )
+        xml_path = generate_goal_xml_from_base(base_name, goal_manager=goal_mgr, hazard_manager=hz_mgr)
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
         finally:
@@ -107,25 +104,24 @@ class SafeWalker(PipelineEnv):
             if os.path.exists(xml_path):
                 os.unlink(xml_path)
 
-        # Cache key body ids: torso, feet
-        self._torso_body_id = int(
-            mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso")
-        )
-        self._right_foot_body_id = int(
-            mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "foot")
-        )
-        self._left_foot_body_id = int(
-            mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "foot_left")
-        )
-
-        # Load into Brax system; choose backend/n_frames similar to Walker2d default
         physics = kwargs.get("physics", {})
-        # Default to MJX backend to ensure compatibility with mocap hazards.
         backend = physics.get("backend", "mjx")
         n_frames = physics.get("n_frames", 4)
 
         sys = mjcf.load_model(mj_model)
         super().__init__(sys, backend=backend, n_frames=n_frames)
+
+        # Cache key body ids: torso, feet
+        def _link_idx(name: str) -> int:
+            try:
+                return sys.link_names.index(name)
+            except ValueError as e:
+                raise ValueError(f"Link '{name}' not found in sys.link_names: {self.sys.link_names}") from e
+
+        # NOTE: names must match sys.link_names exactly
+        self._torso_link_id = _link_idx("torso")
+        self._right_foot_link_id = _link_idx("foot")
+        self._left_foot_link_id = _link_idx("foot_left")
 
         # Hazard mocap ids + shape buffers
         self._hazard_mocap_ids = []
@@ -219,7 +215,7 @@ class SafeWalker(PipelineEnv):
         dt = self.dt
 
         # rewards (mirrors walker2d)
-        forward_reward = self._forward_reward_weight * (x - x_prev) / dt
+        forward_reward = self._forward_reward_scaler * (x - x_prev) / dt
         ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
 
         z = pipeline_state.q[1]
@@ -239,7 +235,8 @@ class SafeWalker(PipelineEnv):
             terminate = jp.array(0.0)
             healthy_reward = self._healthy_reward * is_healthy.astype(jp.float32)
 
-        reward = forward_reward + healthy_reward - ctrl_cost
+        # reward = forward_reward + healthy_reward - ctrl_cost
+        reward = forward_reward
 
         # safety cost: feet inside any hazard regions
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
@@ -275,7 +272,7 @@ class SafeWalker(PipelineEnv):
         # - optionally exclude rootx by slicing position[1:]
         # - concatenate positions and clipped velocities
         position = pipeline_state.q
-        position = position.at[1].set(pipeline_state.x.pos[0, 2])
+        position = position.at[1].set(pipeline_state.x.pos[self._torso_link_id, 2])
         velocity = jp.clip(pipeline_state.qd, -10, 10)
 
         if self._exclude_current_positions_from_observation:
@@ -291,8 +288,8 @@ class SafeWalker(PipelineEnv):
             return jp.array(0.0, dtype=jp.float32)
 
         # feet world positions (use body COM positions as proxy)
-        left_pos = pipeline_state.x.take(self._left_foot_body_id).pos
-        right_pos = pipeline_state.x.take(self._right_foot_body_id).pos
+        left_pos = pipeline_state.x.take(self._left_foot_link_id).pos
+        right_pos = pipeline_state.x.take(self._right_foot_link_id).pos
         feet_xy = jp.stack([left_pos[:2], right_pos[:2]], axis=0)  # (2,2)
 
         centers = hazard_positions[:, :2]  # (N,2)

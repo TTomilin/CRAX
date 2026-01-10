@@ -187,7 +187,7 @@ def render_states(env, states, rewards, costs, base_agent_name="safe_walker_poli
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run SafeWalker rollouts with a trained PPO policy")
-    parser.add_argument("--model", type=str, required=True, help="Checkpoint path or file name located under models/")
+    parser.add_argument("--model", type=str, default=None, help="Checkpoint path or file name located under models/")
     parser.add_argument("--steps", type=int, default=1000, help="Steps per episode")
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to run")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for episodes")
@@ -195,9 +195,23 @@ if __name__ == '__main__':
     parser.add_argument("--out", type=str, default="safe_walker_policy", help="Video base name (without extension)")
     args = parser.parse_args()
 
-    env = SafeWalker()
-    root_dir = Path(__file__).parent.parent.resolve()
-    model_path = root_dir / "models" / args.model
-    policy = ppo_checkpoint.load_policy(model_path)
+    kwargs = {
+        "cost": {
+            "scaler": 0.1
+        },
+        "reward": {
+            "scaler": 0.01
+        }
+    }
+    env = SafeWalker(**kwargs)
+    if args.model:
+        root_dir = Path(__file__).parent.parent.resolve()
+        model_path = root_dir / "models" / args.model
+        policy = ppo_checkpoint.load_policy(model_path)
+    else:
+        def policy(obs, rng):
+            act = jax.random.uniform(rng, (env.action_size,), minval=-1.0, maxval=1.0)
+            return act, None
+
     states, rewards, costs = run_policy_episodes(env, policy, steps_per_ep=args.steps, num_episodes=args.episodes, seed=args.seed)
     render_states(env, states, rewards, costs, base_agent_name=args.out, camera=args.camera)

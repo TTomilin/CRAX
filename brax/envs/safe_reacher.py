@@ -50,7 +50,7 @@ class SafeReacher(PipelineEnv):
         self._lidar_alias = lidar_alias
 
         self._cost_scale = kwargs.get("cost", {}).get("scaler", 1.0)
-        self._reward_scale = kwargs.get("reward", {}).get("dense_scale", 0.1)
+        self._reward_scale = kwargs.get("reward", {}).get("scaler", 0.1)
 
         # Build hazards as MJCF geoms/bodies (mocap)
         cyl_r = self._hazard_radius

@@ -39,7 +39,7 @@ def default_config() -> config_dict.ConfigDict:
         # --- Reward settings ---
         reward=config_dict.create(
             reward_goal=1.0,  # Sparse reward for reaching goal
-            dense_scale=0.0,  # Dense reward scale (progress toward goal)
+            scaler=0.0,  # Dense reward scale (progress toward goal)
         ),
 
         # --- Cost (safety) settings ---
@@ -264,7 +264,7 @@ class SafePointGoal(PipelineEnv):
 
         # Reward
         self._reward_goal = config.reward.reward_goal
-        self._reward_distance = config.reward.dense_scale
+        self._reward_distance = config.reward.scaler
 
         # Cost
         self._ctrl_cost_weight = config.cost.ctrl_cost_weight

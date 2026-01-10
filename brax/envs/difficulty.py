@@ -23,9 +23,9 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         3: {"num_hazards": 9},
     },
     "safe_walker": {
-        1: {"num_hazards": 9},
-        2: {"num_hazards": 12},
-        3: {"num_hazards": 15},
+        1: {"max_gap": 6.0},
+        2: {"max_gap": 4.0},
+        3: {"max_gap": 2.0},
     },
     "humanoid_height_constrained": {
         1: {"max_height": 1.60},

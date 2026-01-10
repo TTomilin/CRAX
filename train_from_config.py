@@ -785,7 +785,7 @@ def main():
             },
             "reward": {
                 "reward_goal": 1.0,
-                "dense_scale": 0.0
+                "scaler": 0.0
             }
         },
         help="JSON for env kwargs"
