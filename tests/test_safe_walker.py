@@ -95,7 +95,7 @@ def _load_policy_from_model_arg(model_arg: str):
         raise SystemExit(2)
 
 
-def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int = 3, seed: int = 0):
+def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int = 1, seed: int = 0):
     print(f"Starting {num_episodes} episodes using loaded policy")
     jit_step = jax.jit(env.step)
     jit_reset = jax.jit(env.reset)
@@ -139,7 +139,7 @@ def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int 
 
 
 def render_states(env, states, rewards, costs, base_agent_name="safe_walker_policy",
-                  camera="fixedfar", width=320, height=240, fps=25,
+                  camera="fixedfar", width=320, height=240, fps=100,
                   show_metrics=True, font="DejaVuSans-Bold"):
     pipeline_states = [s.pipeline_state for s in states]
 
@@ -188,8 +188,9 @@ def render_states(env, states, rewards, costs, base_agent_name="safe_walker_poli
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run SafeWalker rollouts with a trained PPO policy")
     parser.add_argument("--model", type=str, required=True, help="Checkpoint path or file name located under models/")
-    parser.add_argument("--steps", type=int, default=200, help="Steps per episode")
-    parser.add_argument("--episodes", type=int, default=3, help="Number of episodes to run")
+    parser.add_argument("--steps", type=int, default=1000, help="Steps per episode")
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to run")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed for episodes")
     parser.add_argument("--camera", type=str, default="fixedfar", help="Camera name for rendering")
     parser.add_argument("--out", type=str, default="safe_walker_policy", help="Video base name (without extension)")
     args = parser.parse_args()
@@ -198,5 +199,5 @@ if __name__ == '__main__':
     root_dir = Path(__file__).parent.parent.resolve()
     model_path = root_dir / "models" / args.model
     policy = ppo_checkpoint.load_policy(model_path)
-    states, rewards, costs = run_policy_episodes(env, policy, steps_per_ep=args.steps, num_episodes=args.episodes)
+    states, rewards, costs = run_policy_episodes(env, policy, steps_per_ep=args.steps, num_episodes=args.episodes, seed=args.seed)
     render_states(env, states, rewards, costs, base_agent_name=args.out, camera=args.camera)

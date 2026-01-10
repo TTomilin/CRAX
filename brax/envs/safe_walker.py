@@ -120,7 +120,8 @@ class SafeWalker(PipelineEnv):
 
         # Load into Brax system; choose backend/n_frames similar to Walker2d default
         physics = kwargs.get("physics", {})
-        backend = physics.get("backend", "generalized")
+        # Default to MJX backend to ensure compatibility with mocap hazards.
+        backend = physics.get("backend", "mjx")
         n_frames = physics.get("n_frames", 4)
 
         sys = mjcf.load_model(mj_model)
@@ -215,7 +216,7 @@ class SafeWalker(PipelineEnv):
 
         x_prev = state.pipeline_state.q[0]
         x = pipeline_state.q[0]
-        dt = self.sys.config.dt * self._n_frames
+        dt = self.dt
 
         # rewards (mirrors walker2d)
         forward_reward = self._forward_reward_weight * (x - x_prev) / dt
@@ -231,9 +232,12 @@ class SafeWalker(PipelineEnv):
             & (ang > healthy_angle_min)
             & (ang < healthy_angle_max)
         )
-        is_healthy = is_healthy.astype(jp.float32)
-        terminate = (~is_healthy).astype(jp.float32) if self._terminate_when_unhealthy else jp.array(0.0)
-        healthy_reward = self._healthy_reward * (1.0 - terminate)
+        if self._terminate_when_unhealthy:
+            terminate = jp.logical_not(is_healthy).astype(jp.float32)
+            healthy_reward = self._healthy_reward * (1.0 - terminate)
+        else:
+            terminate = jp.array(0.0)
+            healthy_reward = self._healthy_reward * is_healthy.astype(jp.float32)
 
         reward = forward_reward + healthy_reward - ctrl_cost
 
@@ -266,15 +270,18 @@ class SafeWalker(PipelineEnv):
     # ---------------- Observations ----------------
 
     def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-        q = pipeline_state.q
-        qd = pipeline_state.qd
-        # same shaping as base walker2d: positions (except rootx), then velocities
+        # Mirror base Walker2d observation shaping:
+        # - replace position[1] with torso z
+        # - optionally exclude rootx by slicing position[1:]
+        # - concatenate positions and clipped velocities
+        position = pipeline_state.q
+        position = position.at[1].set(pipeline_state.x.pos[0, 2])
+        velocity = jp.clip(pipeline_state.qd, -10, 10)
+
         if self._exclude_current_positions_from_observation:
-            pos = q[1:8]
-        else:
-            pos = q[:8]
-        obs = jp.concatenate([pos, qd[:9]])
-        return obs
+            position = position[1:]
+
+        return jp.concatenate((position, velocity))
 
     # ---------------- Safety logic ----------------
 
