@@ -22,6 +22,11 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         2: {"num_hazards": 6},
         3: {"num_hazards": 9},
     },
+    "safe_walker": {
+        1: {"num_hazards": 9},
+        2: {"num_hazards": 12},
+        3: {"num_hazards": 15},
+    },
     "humanoid_height_constrained": {
         1: {"max_height": 1.60},
         2: {"max_height": 1.45},
@@ -85,7 +90,8 @@ def _merge_dict(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
 
 def apply_difficulty(env_name: str, env_kwargs: dict[str, Any] | None, level: int) -> dict[str, Any]:
     if env_name not in _DIFFICULTY_OVERRIDES:
-        raise ValueError(f"Environment '{env_name}' does not support difficulty levels.")
+        print(f"Warning: Environment '{env_name}' does not support difficulty levels.")
+        return env_kwargs or {}
 
     env_kwargs = deepcopy(env_kwargs or {})
     overrides = deepcopy(_DIFFICULTY_OVERRIDES[env_name][level])
