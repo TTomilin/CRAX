@@ -61,6 +61,7 @@ from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.io import model as brax_model
 from brax.io import json as brax_json
 import wandb
+from etils import epath
 
 
 # Configure environment for GPU usage
@@ -215,7 +216,7 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
         wandb_config['seed'] = seed
 
         # Initialize wandb
-        run_name = f"{env_name}_{alg_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_seed{seed}"
+        run_name = f"{env_name}_{alg_name}_{config.timestamp}_seed{seed}"
         wandb_project = config.wandb_project
         wandb_group = config.wandb_group if config.wandb_group else env_name
         wandb_tags = config.wandb_tags
@@ -259,12 +260,13 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
             wandb.log(final_log_data, step=int(float(np.asarray(config.num_timesteps).reshape(()))))
 
     # Save model
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = config.model_dir
-    os.makedirs(model_dir, exist_ok=True)
-    model_path = f'{model_dir}/{env_name.lower()}_{alg_name}_seed{seed}_{timestamp}'
-    brax_model.save_params(model_path, params)
-    print(f"Trained model parameters saved to: {model_path}")
+    if config.store_model:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_dir = config.model_dir
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = f'{model_dir}/{env_name.lower()}_{alg_name}_seed{seed}_{timestamp}'
+        brax_model.save_params(model_path, params)
+        print(f"Trained model parameters saved to: {model_path}")
 
     return make_inference_fn, params, final_eval_metrics, eval_env
 
@@ -763,8 +765,8 @@ def main():
     parser.add_argument("--skip-rollout", action="store_true", help="Skip rollout evaluation after training")
     parser.add_argument("--skip-video", action="store_true", help="Skip video recording after training")
     parser.add_argument("--model_dir", type=str, default="models", help="Directory to save model parameters")
-    parser.add_argument("--out_dir", type=str, default="runs/experimental_results",
-                        help="Directory for metrics/outputs")
+    parser.add_argument("--out_dir", type=str, default="runs/experimental_results", help="Directory for metrics/outputs")
+    parser.add_argument("--store_model", type=bool, default=True, help="Store model checkpoint after training")
 
     # --- Environment ---
     parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name")
@@ -877,6 +879,8 @@ def main():
         print(f"Running experiment with seed {seed}")
         print(f"{'=' * 50}\n")
 
+        config.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+
         # Train the agent
         make_inference_fn, params, final_metrics, eval_env = train_from_config(
             config=config,
@@ -897,7 +901,7 @@ def main():
                 seed=seed,
                 save_trajectory=True,
                 save_plots=True,
-                env_kwargs=apply_difficulty(rollout_env_name, config.env_kwargs, getattr(config, 'difficulty', 1))
+                env_kwargs=apply_difficulty(rollout_env_name, config.env_kwargs, config.difficulty)
             )
 
         if not config.skip_video:
