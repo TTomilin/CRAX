@@ -236,7 +236,7 @@ class SafeWalker(PipelineEnv):
             healthy_reward = self._healthy_reward * is_healthy.astype(jp.float32)
 
         # reward = forward_reward + healthy_reward - ctrl_cost
-        reward = forward_reward
+        reward = forward_reward + healthy_reward
 
         # safety cost: feet inside any hazard regions
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
