@@ -55,7 +55,7 @@ def load_final_values(
         algos: List[str],
         seeds: List[int],
         metrics: List[str],
-        final_mode: str = "last",  # "last" or "mean_last_k"
+        final_mode: str = "mean_last_k",  # "last" or "mean_last_k"
         last_k: int = 10,
 ) -> pd.DataFrame:
     """
@@ -253,7 +253,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
 
-    p.add_argument("--final_mode", type=str, default="last", choices=["last", "mean_last_k"],
+    p.add_argument("--final_mode", type=str, default="mean_last_k", choices=["last", "mean_last_k"],
                    help="How to define 'final' value per seed.")
     p.add_argument("--last_k", type=int, default=10, help="Used when final_mode=mean_last_k.")
 
