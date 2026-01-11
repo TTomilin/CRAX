@@ -421,7 +421,7 @@ def train(
             optax.adam(learning_rate=learning_rate),
         )
 
-    safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
+    # safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
 
     def loss_fn(params, normalizer_params, data, rng, lambda_lagr):
         return ppo_losses.compute_ppo_lagrange_loss(
@@ -579,11 +579,19 @@ def train(
             length=num_updates_per_batch,
         )
 
-        # Update Lagrange multiplier once per training step based on final cost
-        avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        cost_violation = avg_cost - safety_bound
-        delta_lambda = cost_violation * lagrangian_coef_rate
-        updated_lambda_lagr = jax.nn.relu(training_state.lambda_lagr + delta_lambda)
+        # Episodic cost return estimate from rollout batch
+        ep_cost = data.extras['state_extras']['episode_metrics']['cost']  # [B, T]
+        ep_done = data.extras['state_extras']['episode_done']  # [B, T]
+
+        # pick episodic cost at the moment an episode ends
+        done_mask = ep_done.astype(jnp.float32)
+        sum_done = jnp.sum(done_mask)
+
+        # mean episodic cost over the episodes that ended inside this batch
+        avg_ep_cost = jnp.sum(ep_cost * done_mask) / jnp.maximum(sum_done, 1.0)
+
+        cost_violation = avg_ep_cost - safety_bound
+        updated_lambda_lagr = jax.nn.relu(training_state.lambda_lagr + lagrangian_coef_rate * cost_violation)
 
         # Add lambda info to metrics
         metrics['lambda_lagr'] = updated_lambda_lagr

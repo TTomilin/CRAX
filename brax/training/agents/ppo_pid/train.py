@@ -52,9 +52,9 @@ _PMAP_AXIS_NAME = 'i'
 @flax.struct.dataclass
 class PIDTrainingState(TrainingState):
     """Contains training state for the PID learner."""
-    pid_integral: jnp.ndarray         # shape [1], accumulated violation
-    pid_prev_violation: jnp.ndarray   # shape [1], previous violation
-    pid_deriv_ema: jnp.ndarray        # shape [1], EMA of violation difference
+    pid_integral: jnp.ndarray  # shape [1], accumulated violation
+    pid_prev_violation: jnp.ndarray  # shape [1], previous violation
+    pid_deriv_ema: jnp.ndarray  # shape [1], EMA of violation difference
 
 
 def _unpmap(v):
@@ -230,8 +230,8 @@ def train(
         pid_kp: float = 10.0,
         pid_ki: float = 0.01,
         pid_kd: float = 0.01,
-        pid_integral_clip: float = 1.0,   # anti-windup cap on the integral term
-        pid_lambda_clip: float = 1e6,      # clamp lambda for sanity
+        pid_integral_clip: float = 1.0,  # anti-windup cap on the integral term
+        pid_lambda_clip: float = 1e6,  # clamp lambda for sanity
         pid_deriv_ema_beta: float = 0.95,  # smoothing for derivative term
         # eval
         num_evals: int = 0,
@@ -424,7 +424,7 @@ def train(
             optax.adam(learning_rate=learning_rate),
         )
 
-    safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
+    # safety_bound /= episode_length  # The CLI defines an episodic safety bound for convenience, we need a per-step bound
 
     def loss_fn(params, normalizer_params, data, rng, lambda_lagr):
         return ppo_losses.compute_ppo_lagrange_loss(
@@ -583,9 +583,16 @@ def train(
         )
 
         # --- PID Lagrange update ---
-        # avg cost over this training step
-        avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        violation = avg_cost - safety_bound                     # shape []
+        ep_cost = data.extras['state_extras']['episode_metrics']['cost']  # [B, T]
+        ep_done = data.extras['state_extras']['episode_done']  # [B, T]
+
+        done_mask = ep_done.astype(jnp.float32)
+        num_done = jnp.sum(done_mask)
+
+        # average episodic cost over episodes that ended inside this rollout batch
+        avg_ep_cost = jnp.sum(ep_cost * done_mask) / jnp.maximum(num_done, 1.0)
+
+        violation = avg_ep_cost - safety_bound  # scalar
 
         # match shapes [1] everywhere to play nice with pmap
         v = jnp.asarray(violation).reshape((1,))
