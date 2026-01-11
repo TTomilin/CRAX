@@ -197,9 +197,9 @@ class SafeWalker(PipelineEnv):
         metrics = {
             "x_position": pipeline_state.q[0],
             "x_velocity": pipeline_state.qd[0],
-            "reward_ctrl": zero,
             "reward_forward": zero,
             "reward_healthy": zero,
+            "ctrl_cost": zero,
             "cost": zero,
         }
         info = {"hazard_positions": hazards_pos, "cost": zero}
