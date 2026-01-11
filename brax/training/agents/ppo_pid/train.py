@@ -688,13 +688,13 @@ def train(
         cost_value=ppo_network.cost_value_network.init(key_cost_value),
     )
 
-    obs_shape = jax.tree_util.tree_map(
+    obs_spec = jax.tree_util.tree_map(
         lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
     )
     training_state = PIDTrainingState(  # pytype: disable=wrong-arg-types
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(_remove_pixels(obs_shape)),
+        normalizer_params=running_statistics.init_state(_remove_pixels(obs_spec)),
         env_steps=types.UInt64(hi=0, lo=0),
         lambda_lagr=jnp.array([initial_lambda_lagr], dtype=jnp.float32),
         pid_integral=jnp.zeros((1,), dtype=jnp.float32),
