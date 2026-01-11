@@ -1,11 +1,10 @@
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 import imageio.v3 as iio
-import jax
-import jax.numpy as jnp
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -107,6 +106,8 @@ def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int 
 
     key = jax.random.PRNGKey(seed)
 
+    t0 = time.perf_counter()
+
     for ep in range(num_episodes):
         key, ep_key = jax.random.split(key)
         state = jit_reset(ep_key)
@@ -134,6 +135,9 @@ def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int 
 
         print(f"Finished episode {ep + 1}/{num_episodes}")
 
+    rollout_s = time.perf_counter() - t0
+    print(f"[timing] rollout: {rollout_s:.3f}s  ({num_episodes*steps_per_ep} steps)")
+
     print("Finished all episodes")
     return all_states, all_rewards, all_costs
 
@@ -141,14 +145,17 @@ def run_policy_episodes(env, policy, steps_per_ep: int = 200, num_episodes: int 
 def render_states(env, states, rewards, costs, base_agent_name="safe_walker_policy",
                   camera="fixedfar", width=320, height=240, fps=100,
                   show_metrics=True, font="DejaVuSans-Bold"):
+    t0 = time.perf_counter()
     pipeline_states = [s.pipeline_state for s in states]
 
+    t_render0 = time.perf_counter()
     frames = env.render(
         pipeline_states,
         width=width,
         height=height,
         camera=camera,
     )
+    render_s = time.perf_counter() - t_render0
 
     if show_metrics:
         try:
@@ -181,8 +188,12 @@ def render_states(env, states, rewards, costs, base_agent_name="safe_walker_poli
 
     os.makedirs("videos", exist_ok=True)
     path = f"videos/{base_agent_name}.mp4"
+    t_write0 = time.perf_counter()
     iio.imwrite(path, np.stack(frames), fps=fps)
+    write_s = time.perf_counter() - t_write0
     print("Saved video", path)
+    total_s = time.perf_counter() - t0
+    print(f"[timing] render: {render_s:.3f}s | write: {write_s:.3f}s | total video: {total_s:.3f}s")
 
 
 if __name__ == '__main__':
@@ -193,7 +204,15 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=1, help="Random seed for episodes")
     parser.add_argument("--camera", type=str, default="fixedfar", help="Camera name for rendering")
     parser.add_argument("--out", type=str, default="safe_walker_policy", help="Video base name (without extension)")
+    parser.add_argument("--cpu", action="store_true", help="Force JAX to run on CPU (set JAX_PLATFORM_NAME=cpu)")
     args = parser.parse_args()
+
+    if args.cpu:
+        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
+    import jax
+    import jax.numpy as jnp
+
 
     kwargs = {
         "cost": {

@@ -1,8 +1,8 @@
 from typing import List, Optional, Tuple
 
 import jax
-from jax import numpy as jp
 import mujoco
+from jax import numpy as jp
 
 from brax import base
 from brax.envs.base import PipelineEnv, State
@@ -24,25 +24,25 @@ class SafeWalker(PipelineEnv):
     """
 
     def __init__(
-        self,
-        num_hazards: int = 100,
-        hazard_types: Optional[List[str]] = None,
-        hazard_radius: float = 0.25,
-        cube_half_extent: float = 0.20,
-        hazard_height: float = 0.05,
-        min_gap: float = 0.5,
-        max_gap: float = 2.0,
-        lateral_jitter: float = 0.25,
-        ctrl_cost_weight: float = 1e-3,
-        healthy_reward: float = 1.0,
-        terminate_when_unhealthy: bool = True,
-        healthy_z_range: Tuple[float, float] = (0.8, 2.0),
-        healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
-        reset_noise_scale: float = 5e-3,
-        exclude_current_positions_from_observation: bool = True,
-        **kwargs,
+            self,
+            num_hazards: int = 100,
+            hazard_types: Optional[List[str]] = None,
+            hazard_radius: float = 0.25,
+            cube_half_extent: float = 0.20,
+            hazard_height: float = 0.05,
+            min_gap: float = 0.5,
+            max_gap: float = 2.0,
+            lateral_jitter: float = 0.25,
+            ctrl_cost_weight: float = 1e-3,
+            healthy_reward: float = 1.0,
+            terminate_when_unhealthy: bool = False,
+            healthy_z_range: Tuple[float, float] = (0.8, 2.0),
+            healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
+            reset_noise_scale: float = 5e-3,
+            exclude_current_positions_from_observation: bool = True,
+            **kwargs,
     ):
-        self._forward_reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
+        self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
         self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.1)
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
@@ -165,6 +165,7 @@ class SafeWalker(PipelineEnv):
 
         # sample hazard positions along +x with random gaps and lateral jitter
         n_h = len(self._hazard_mocap_ids)
+
         def sample_positions(key):
             # start a bit ahead of the agent
             key, k0 = jax.random.split(key)
@@ -209,21 +210,17 @@ class SafeWalker(PipelineEnv):
         """Runs one timestep of the environment's dynamics."""
         pipeline_state_prev = state.pipeline_state
         assert pipeline_state_prev is not None
-        pipeline_state = self.pipeline_step(state.pipeline_state, action)
+        pipeline_state = self.pipeline_step(pipeline_state_prev, action)
 
-        x_prev = pipeline_state_prev.q[0]
-        x = pipeline_state.q[0]
-        dt = self.dt
+        x_pos_prev = pipeline_state_prev.x.pos[0, 0]
+        x_pos = pipeline_state.x.pos[0, 0]
+        forward_reward = x_velocity = (x_pos - x_pos_prev) / self.dt
 
-        # rewards (mirrors walker2d)
-        forward_reward = self._forward_reward_scaler * (x - x_prev) / self.dt
-
-        z = pipeline_state.q[1]
-        angle = pipeline_state.q[2]
+        z, angle = pipeline_state.x.pos[0, 2], pipeline_state.q[2]
         min_z, max_z = self._healthy_z_range
         min_angle, max_angle = self._healthy_angle_range
         is_healthy = (
-                (z > min_z) & (z < max_z) * (angle > min_angle) & (angle < max_angle)
+                (z > min_z) & (z < max_z) & (angle > min_angle) & (angle < max_angle)
         )
         if self._terminate_when_unhealthy:
             healthy_reward = self._healthy_reward
@@ -232,7 +229,7 @@ class SafeWalker(PipelineEnv):
 
         ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
         obs = self._get_obs(pipeline_state)
-        reward = forward_reward + healthy_reward
+        reward = (forward_reward + healthy_reward) * self._reward_scaler
         hazard_positions = state.info["hazard_positions"]
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)  # safety cost: feet inside any hazards
 
@@ -240,11 +237,11 @@ class SafeWalker(PipelineEnv):
 
         metrics = dict(state.metrics)
         metrics.update(
-            x_position=x,
-            x_velocity=(x - x_prev) / dt,
-            reward_ctrl=-ctrl_cost,
+            x_position=x_pos,
+            x_velocity=x_velocity,
             reward_forward=forward_reward,
             reward_healthy=healthy_reward,
+            ctrl_cost=ctrl_cost,
             cost=cost,
         )
 
