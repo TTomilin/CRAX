@@ -89,7 +89,7 @@
           width="100" height="100"/>
       <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
       <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
-      <material name="MatPlane" reflectance="0.5" shininess="0.5" specular="0.3" texrepeat="60 60" texture="texplane"/>
+      <material name="MatPlane" reflectance="0.5" shininess="0.5" specular="0.3" texrepeat="400 60" texture="texplane"/>
       <material name="geom" texture="texgeom" texuniform="true"/>
   </asset>
 </mujoco>
