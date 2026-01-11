@@ -206,40 +206,37 @@ class SafeWalker(PipelineEnv):
         return State(pipeline_state, obs, reward, done, metrics, info)
 
     def step(self, state: State, action: jax.Array) -> State:
+        """Runs one timestep of the environment's dynamics."""
+        pipeline_state_prev = state.pipeline_state
+        assert pipeline_state_prev is not None
         pipeline_state = self.pipeline_step(state.pipeline_state, action)
-        hazard_positions = state.info["hazard_positions"]
-        obs = self._get_obs(pipeline_state)
 
-        x_prev = state.pipeline_state.q[0]
+        x_prev = pipeline_state_prev.q[0]
         x = pipeline_state.q[0]
         dt = self.dt
 
         # rewards (mirrors walker2d)
-        forward_reward = self._forward_reward_scaler * (x - x_prev) / dt
-        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
+        forward_reward = self._forward_reward_scaler * (x - x_prev) / self.dt
 
         z = pipeline_state.q[1]
-        ang = pipeline_state.q[2]
-        healthy_z_min, healthy_z_max = self._healthy_z_range
-        healthy_angle_min, healthy_angle_max = self._healthy_angle_range
+        angle = pipeline_state.q[2]
+        min_z, max_z = self._healthy_z_range
+        min_angle, max_angle = self._healthy_angle_range
         is_healthy = (
-            (z > healthy_z_min)
-            & (z < healthy_z_max)
-            & (ang > healthy_angle_min)
-            & (ang < healthy_angle_max)
+                (z > min_z) & (z < max_z) * (angle > min_angle) & (angle < max_angle)
         )
         if self._terminate_when_unhealthy:
-            terminate = jp.logical_not(is_healthy).astype(jp.float32)
-            healthy_reward = self._healthy_reward * (1.0 - terminate)
+            healthy_reward = self._healthy_reward
         else:
-            terminate = jp.array(0.0)
-            healthy_reward = self._healthy_reward * is_healthy.astype(jp.float32)
+            healthy_reward = self._healthy_reward * is_healthy
 
-        # reward = forward_reward + healthy_reward - ctrl_cost
+        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
+        obs = self._get_obs(pipeline_state)
         reward = forward_reward + healthy_reward
+        hazard_positions = state.info["hazard_positions"]
+        cost = self._calculate_safety_cost(pipeline_state, hazard_positions)  # safety cost: feet inside any hazards
 
-        # safety cost: feet inside any hazard regions
-        cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
+        done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
 
         metrics = dict(state.metrics)
         metrics.update(
@@ -251,7 +248,6 @@ class SafeWalker(PipelineEnv):
             cost=cost,
         )
 
-        done = jp.maximum(state.done, terminate)
         info = dict(state.info)
         info["cost"] = cost
 
