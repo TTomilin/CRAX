@@ -36,6 +36,7 @@ class SafeWalker(PipelineEnv):
             ctrl_cost_weight: float = 1e-3,
             healthy_reward: float = 1.0,
             terminate_when_unhealthy: bool = True,
+            unhealthy_termination_cost: float = 10.0,
             healthy_z_range: Tuple[float, float] = (0.8, 2.0),
             healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
             reset_noise_scale: float = 5e-3,
@@ -47,6 +48,7 @@ class SafeWalker(PipelineEnv):
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
+        self._unhealthy_termination_cost = unhealthy_termination_cost
         self._healthy_z_range = healthy_z_range
         self._healthy_angle_range = healthy_angle_range
         self._reset_noise_scale = reset_noise_scale
@@ -199,6 +201,8 @@ class SafeWalker(PipelineEnv):
             "x_velocity": pipeline_state.qd[0],
             "reward_forward": zero,
             "reward_healthy": zero,
+            "terminal_cost": zero,
+            "hazard_cost": zero,
             "ctrl_cost": zero,
             "cost": zero,
         }
@@ -231,9 +235,16 @@ class SafeWalker(PipelineEnv):
         obs = self._get_obs(pipeline_state)
         reward = (forward_reward + healthy_reward) * self._reward_scaler
         hazard_positions = state.info["hazard_positions"]
-        cost = self._calculate_safety_cost(pipeline_state, hazard_positions)  # safety cost: feet inside any hazards
 
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
+
+        # Hazard cost: feet inside any hazards
+        hazard_cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
+
+        # Terminal cost if episode ends due to being unhealthy (falling over)
+        terminal_cost = done * jp.asarray(self._unhealthy_termination_cost, dtype=hazard_cost.dtype)
+
+        cost = hazard_cost + terminal_cost
 
         metrics = dict(state.metrics)
         metrics.update(
@@ -242,6 +253,8 @@ class SafeWalker(PipelineEnv):
             reward_forward=forward_reward,
             reward_healthy=healthy_reward,
             ctrl_cost=ctrl_cost,
+            hazard_cost=hazard_cost,
+            terminal_cost=terminal_cost,
             cost=cost,
         )
 
