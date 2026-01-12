@@ -903,26 +903,29 @@ class SafePointGoal(PipelineEnv):
             return jp.where(mocap_idx >= 0, compass, jp.zeros(2))
 
         # --- choose closest-k hazards for compasses (fixed-size) ---
-        all_hz_ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
-        k = jp.asarray(self._hazard_compass_k, dtype=jp.int32)
+        all_hz_ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)  # (H,)
+        H = all_hz_ids.shape[0]
 
-        # positions of all hazards (world)
-        all_hz_pos = data.mocap_pos[all_hz_ids]  # (H,3)
-        rel_xy = all_hz_pos[:, :2] - agent_pos[:2]  # (H,2)
-        d2 = jp.sum(rel_xy * rel_xy, axis=1)  # (H,)
+        k = int(self._hazard_compass_k)  # Python int => static
+        k_eff = min(k, H)  # Python int => static
 
-        # indices of k closest hazards
-        order = jp.argsort(d2)
-        k_eff = jp.minimum(k, all_hz_ids.shape[0])
-        closest_ids = all_hz_ids[order[:k_eff]]
+        def _pick_and_pad():
+            all_hz_pos = data.mocap_pos[all_hz_ids]  # (H,3)
+            rel_xy = all_hz_pos[:, :2] - agent_pos[:2]  # (H,2)
+            d2 = jp.sum(rel_xy * rel_xy, axis=1)  # (H,)
+            order = jp.argsort(d2)  # (H,)
 
-        # pad to k with -1 so output shape is always (k,)
-        pad_n = k - k_eff
-        closest_ids = jp.where(
-            pad_n > 0,
-            jp.concatenate([closest_ids, -jp.ones((pad_n,), dtype=jp.int32)], axis=0),
-            closest_ids,
-            )
+            closest = all_hz_ids[order[:k_eff]]  # (k_eff,) static slice ✅
+
+            if k_eff < k:
+                pad = -jp.ones((k - k_eff,), dtype=jp.int32)
+                closest = jp.concatenate([closest, pad], axis=0)  # (k,)
+            return closest
+
+        def _no_hazards():
+            return -jp.ones((k,), dtype=jp.int32)
+
+        closest_ids = jax.lax.cond(H > 0, lambda _: _pick_and_pad(), lambda _: _no_hazards(), operand=None)
 
         hazard_compasses = jax.vmap(compute_compass_for_hazard)(closest_ids)  # (k,2)
         hazard_compasses_flat = hazard_compasses.reshape((-1,))  # (2k,)
