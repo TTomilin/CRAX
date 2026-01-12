@@ -5,7 +5,7 @@
     <geom contype="0" conaffinity="0" friction="0.7 0.1 0.1" rgba="0.65 0.55 0.45 1.0"/>
   </default>
   <!-- Removed RK4 integrator for brax. -->
-  <option timestep="0.002" iterations="4" />
+  <option timestep="0.002" iterations="4" gravity="0 0 -8.0"/>
   <custom>
     <!-- brax custom params -->
     <numeric data="5000" name="constraint_limit_stiffness"/>
@@ -19,7 +19,7 @@
     <numeric data="20" name="matrix_inv_iterations"/>
   </custom>
   <worldbody>
-    <geom name="floor" size="200 200 40" type="plane" conaffinity="1" material="MatPlane"/>
+    <geom name="floor" size="40 40 40" type="plane" conaffinity="1" material="MatPlane"/>
     <light pos="0 0 3" dir="0 0 -1" directional="true" cutoff="100" exponent="1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>
 
     <body name="torso" pos="0 0 1.25">
