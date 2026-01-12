@@ -41,6 +41,9 @@ class SafeWalker(PipelineEnv):
             healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
             reset_noise_scale: float = 5e-3,
             exclude_current_positions_from_observation: bool = True,
+            lidar_bins: int = 16,
+            lidar_max_dist: float = 5.0,
+            lidar_alias: bool = True,
             **kwargs,
     ):
         self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
@@ -66,6 +69,9 @@ class SafeWalker(PipelineEnv):
         self._max_gap = max_gap
         self._lateral_jitter = lateral_jitter
         self._cost_scale = kwargs.get("cost", {}).get("scaler", 1.0)
+        self._lidar_bins = lidar_bins
+        self._lidar_max_dist = lidar_max_dist
+        self._lidar_alias = lidar_alias
 
         # Build hazards via HazardManager; passable (collidable=False)
         hz_mgr = HazardManager()
@@ -183,16 +189,16 @@ class SafeWalker(PipelineEnv):
                 xs.append(jp.array([cur, y, self._hazard_height], dtype=jp.float32))
             return jp.stack(xs) if n_h > 0 else jp.zeros((0, 3), dtype=jp.float32)
 
-        hazards_pos = sample_positions(r_h)
+        hazard_positions = sample_positions(r_h)
 
         pipeline_state = self.pipeline_init(q, qd)
 
         # set hazard mocap positions
         ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
-        mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
+        mpos = pipeline_state.mocap_pos.at[ids].set(hazard_positions)
         pipeline_state = pipeline_state.replace(mocap_pos=mpos)
 
-        obs = self._get_obs(pipeline_state)
+        obs = self._get_obs(pipeline_state, hazard_positions)
         reward, done, zero = jp.zeros(3)
 
         # metrics/info
@@ -206,7 +212,7 @@ class SafeWalker(PipelineEnv):
             "ctrl_cost": zero,
             "cost": zero,
         }
-        info = {"hazard_positions": hazards_pos, "cost": zero}
+        info = {"hazard_positions": hazard_positions, "cost": zero}
 
         return State(pipeline_state, obs, reward, done, metrics, info)
 
@@ -231,12 +237,11 @@ class SafeWalker(PipelineEnv):
         else:
             healthy_reward = self._healthy_reward * is_healthy
 
-        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
-        obs = self._get_obs(pipeline_state)
         reward = (forward_reward + healthy_reward) * self._reward_scaler
-        hazard_positions = state.info["hazard_positions"]
-
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
+        hazard_positions = state.info["hazard_positions"]
+        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
+        obs = self._get_obs(pipeline_state, hazard_positions)
 
         # Hazard cost: feet inside any hazards
         hazard_cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
@@ -272,11 +277,7 @@ class SafeWalker(PipelineEnv):
 
     # ---------------- Observations ----------------
 
-    def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-        # Mirror base Walker2d observation shaping:
-        # - replace position[1] with torso z
-        # - optionally exclude rootx by slicing position[1:]
-        # - concatenate positions and clipped velocities
+    def _get_obs(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
         position = pipeline_state.q
         position = position.at[1].set(pipeline_state.x.pos[self._torso_link_id, 2])
         velocity = jp.clip(pipeline_state.qd, -10, 10)
@@ -284,7 +285,54 @@ class SafeWalker(PipelineEnv):
         if self._exclude_current_positions_from_observation:
             position = position[1:]
 
-        return jp.concatenate((position, velocity))
+        obs = jp.concatenate((position, velocity))
+
+        # ---- hazard lidar (fixed size) ----
+        n_h = hazard_positions.shape[0]
+        bins = self._lidar_bins
+        max_d = jp.asarray(self._lidar_max_dist, dtype=jp.float32)
+        bin_size = (2.0 * jp.pi) / bins
+
+        lidar = jp.zeros((bins,), dtype=jp.float32)
+        if n_h == 0:
+            return jp.concatenate([obs, lidar])
+
+        torso_xy = pipeline_state.x.pos[self._torso_link_id, :2]
+        hazards_xy = hazard_positions[:, :2] - torso_xy[None, :]   # relative
+
+        # heading: use torso angle (you already use q[2] for health)
+        heading = pipeline_state.q[2]
+        c = jp.cos(heading)
+        s = jp.sin(heading)
+
+        # rotate into agent frame
+        ax = hazards_xy[:, 0] * c + hazards_xy[:, 1] * s
+        ay = -hazards_xy[:, 0] * s + hazards_xy[:, 1] * c
+
+        dist = jp.sqrt(ax * ax + ay * ay + 1e-8)
+        ang = jp.arctan2(ay, ax)
+        ang = (ang + 2.0 * jp.pi) % (2.0 * jp.pi)
+
+        # value like SafeReacher
+        val = jp.maximum(0.0, max_d - dist) / max_d
+        val = jp.where(dist > max_d, 0.0, val)
+
+        # bin index
+        bfloat = ang / bin_size
+        b0 = jp.minimum(jp.floor(bfloat), bins - 1).astype(jp.int32)
+
+        # scatter-max into bins
+        lidar = lidar.at[b0].max(val)
+
+        if self._lidar_alias:
+            frac = bfloat - b0.astype(jp.float32)
+            b_plus = (b0 + 1) % bins
+            b_minus = (b0 - 1 + bins) % bins
+            lidar = lidar.at[b_plus].max(frac * val)
+            lidar = lidar.at[b_minus].max((1.0 - frac) * val)
+
+        return jp.concatenate([obs, lidar])
+
 
     # ---------------- Safety logic ----------------
 
