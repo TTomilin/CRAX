@@ -53,6 +53,7 @@ def default_config() -> config_dict.ConfigDict:
             bins=16,  # Number of bins for goal and hazard lidars
             max_dist=3.0,  # Maximum detection distance
             alias=True,  # Bin aliasing for smoother readings
+            hazard_compass_k=8,  # number of hazard compasses to include (closest-k)
         ),
 
         # --- Placement constraints (Safety Gymnasium style) ---
@@ -279,6 +280,7 @@ class SafePointGoal(PipelineEnv):
         # Lidar
         self._lidar_num_bins = config.lidar.bins
         self._lidar_max_dist = config.lidar.max_dist
+        self._hazard_compass_k = config.lidar.hazard_compass_k
 
         # Placement
         self._placement_extents = config.placement.extents
@@ -866,10 +868,11 @@ class SafePointGoal(PipelineEnv):
             return (hazard_lidar, agent_pos, agent_z_angle, cos_a, sin_a), None
 
         # Process all hazards using scan to handle variable number of hazards
-        # Pad hazard_mocap_ids to ensure we can process them all
-        hazard_mocap_ids_array = jp.array(self._hazard_mocap_ids + [-1] * (8 - len(self._hazard_mocap_ids)))[:8]
+        hazard_mocap_ids_array = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
         init_carry = (hazard_lidar_obs, agent_pos, agent_z_angle, cos_a, sin_a)
-        (hazard_lidar_obs, _, _, _, _), _ = jax.lax.scan(process_hazard_lidar, init_carry, hazard_mocap_ids_array)
+        (hazard_lidar_obs, _, _, _, _), _ = jax.lax.scan(
+            process_hazard_lidar, init_carry, hazard_mocap_ids_array
+        )
 
         # === HAZARD COMPASSES ===
         # Create individual compass observations for each hazard
@@ -899,12 +902,30 @@ class SafePointGoal(PipelineEnv):
             # Return zero compass if invalid mocap index
             return jp.where(mocap_idx >= 0, compass, jp.zeros(2))
 
-        # Compute compasses for all hazard mocap indices
-        hazard_mocap_ids_for_compass = jp.array(self._hazard_mocap_ids + [-1] * (8 - len(self._hazard_mocap_ids)))[:8]
-        hazard_compasses = jax.vmap(compute_compass_for_hazard)(hazard_mocap_ids_for_compass)
+        # --- choose closest-k hazards for compasses (fixed-size) ---
+        all_hz_ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
+        k = jp.asarray(self._hazard_compass_k, dtype=jp.int32)
 
-        # Flatten to get (16,) shape for 8 hazards
-        hazard_compasses_flat = hazard_compasses.flatten()
+        # positions of all hazards (world)
+        all_hz_pos = data.mocap_pos[all_hz_ids]  # (H,3)
+        rel_xy = all_hz_pos[:, :2] - agent_pos[:2]  # (H,2)
+        d2 = jp.sum(rel_xy * rel_xy, axis=1)  # (H,)
+
+        # indices of k closest hazards
+        order = jp.argsort(d2)
+        k_eff = jp.minimum(k, all_hz_ids.shape[0])
+        closest_ids = all_hz_ids[order[:k_eff]]
+
+        # pad to k with -1 so output shape is always (k,)
+        pad_n = k - k_eff
+        closest_ids = jp.where(
+            pad_n > 0,
+            jp.concatenate([closest_ids, -jp.ones((pad_n,), dtype=jp.int32)], axis=0),
+            closest_ids,
+            )
+
+        hazard_compasses = jax.vmap(compute_compass_for_hazard)(closest_ids)  # (k,2)
+        hazard_compasses_flat = hazard_compasses.reshape((-1,))  # (2k,)
 
         # Build observation with separate goal and hazard lidars plus individual hazard compasses
         obs = jp.concatenate([
@@ -942,7 +963,7 @@ class SafePointGoal(PipelineEnv):
                 12 +  # Sensor data (3 each for accel, vel, gyro, mag)
                 self._lidar_num_bins * 2 +  # Goal and hazard lidars
                 2 +  # Goal compass
-                self._num_hazards * 2  # Hazard compasses
+                self._hazard_compass_k * 2  # Hazard compasses
         )
 
 
