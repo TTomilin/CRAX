@@ -560,9 +560,10 @@ def train(
         assert data.discount.shape[1:] == (unroll_length,)
 
         state_extras = data.extras['state_extras']
+        episode_metrics = state_extras['episode_metrics']
         jax.debug.callback(
             metrics_aggregator.update_env_metrics,
-            state_extras['episode_metrics'],
+            episode_metrics,
             state_extras['episode_done'],
             training_state.env_steps,
         )
@@ -584,16 +585,16 @@ def train(
         )
 
         # --- PID Lagrange update ---
-        ep_cost = state_extras['episode_metrics']['cost']  # [B, T]
-        ep_steps = state_extras['episode_steps']  # [B, T]
+        ep_cost = episode_metrics['cost']  # [B, T]
+        ep_length = episode_metrics['length']  # [B, T]
 
         # Use the last value in the rollout for each env (works even if no episode ended)
         ep_cost_last = ep_cost[:, -1]  # [B]
-        if ep_steps is None:
+        if ep_length is None:
             # fallback: assume we always unroll unroll_length steps; cruder but better than "no update"
             ep_steps_last = jnp.ones_like(ep_cost_last) * float(unroll_length)
         else:
-            ep_steps_last = ep_steps[:, -1]
+            ep_steps_last = ep_length[:, -1]
 
         # Estimate per-step cost in the *current* episode (stable)
         mean_cost_per_step = jnp.mean(ep_cost_last / jnp.maximum(ep_steps_last, 1.0))
