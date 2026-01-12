@@ -217,7 +217,7 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
         wandb_config['seed'] = seed
 
         # Initialize wandb
-        run_name = f"{env_name}_{alg_name}_{config.timestamp}_seed{seed}"
+        run_name = f"{env_name}_Level_{difficulty}_{alg_name}_{config.timestamp}_seed{seed}"
         wandb_project = config.wandb_project
         wandb_group = config.wandb_group if config.wandb_group else env_name
         wandb_tags = config.wandb_tags
