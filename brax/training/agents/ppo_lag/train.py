@@ -556,10 +556,11 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
+        state_extras = data.extras['state_extras']
         jax.debug.callback(
             metrics_aggregator.update_env_metrics,
-            data.extras['state_extras']['episode_metrics'],
-            data.extras['state_extras']['episode_done'],
+            state_extras['episode_metrics'],
+            state_extras['episode_done'],
             training_state.env_steps,
         )
 
@@ -580,18 +581,27 @@ def train(
         )
 
         # Episodic cost return estimate from rollout batch
-        ep_cost = data.extras['state_extras']['episode_metrics']['cost']  # [B, T]
-        ep_done = data.extras['state_extras']['episode_done']  # [B, T]
+        ep_cost = state_extras['episode_metrics']['cost']  # [B, T]
+        ep_steps = state_extras['episode_steps']  # [B, T]
 
-        # pick episodic cost at the moment an episode ends
-        done_mask = ep_done.astype(jnp.float32)
-        sum_done = jnp.sum(done_mask)
+        # Use the last value in the rollout for each env (works even if no episode ended)
+        ep_cost_last = ep_cost[:, -1]  # [B]
+        if ep_steps is None:
+            # fallback: assume we always unroll unroll_length steps; cruder but better than "no update"
+            ep_steps_last = jnp.ones_like(ep_cost_last) * float(unroll_length)
+        else:
+            ep_steps_last = ep_steps[:, -1]
 
-        # mean episodic cost over the episodes that ended inside this batch
-        avg_ep_cost = jnp.sum(ep_cost * done_mask) / jnp.maximum(sum_done, 1.0)
+        # Estimate per-step cost in the *current* episode (stable)
+        mean_cost_per_step = jnp.mean(ep_cost_last / jnp.maximum(ep_steps_last, 1.0))
 
-        cost_violation = avg_ep_cost - safety_bound
-        updated_lambda_lagr = jax.nn.relu(training_state.lambda_lagr + lagrangian_coef_rate * cost_violation)
+        # Convert the episodic safety_bound to per-step
+        safety_bound_step = safety_bound / float(episode_length)
+
+        cost_violation = mean_cost_per_step - safety_bound_step
+        updated_lambda_lagr = jax.nn.relu(
+            training_state.lambda_lagr + lagrangian_coef_rate * cost_violation
+        )
 
         # Add lambda info to metrics
         metrics['lambda_lagr'] = updated_lambda_lagr
