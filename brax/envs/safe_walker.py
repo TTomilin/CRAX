@@ -34,7 +34,7 @@ class SafeWalker(PipelineEnv):
             max_gap: float = 2.0,
             lateral_jitter: float = 0.25,
             ctrl_cost_weight: float = 1e-3,
-            healthy_reward: float = 0.25,
+            healthy_reward: float = 0.5,
             terminate_when_unhealthy: bool = True,
             unhealthy_termination_cost: float = 10.0,
             healthy_z_range: Tuple[float, float] = (0.8, 2.0),
