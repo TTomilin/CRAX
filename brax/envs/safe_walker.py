@@ -120,16 +120,9 @@ class SafeWalker(PipelineEnv):
         super().__init__(sys, backend=backend, n_frames=n_frames)
 
         # Cache key body ids: torso, feet
-        def _link_idx(name: str) -> int:
-            try:
-                return sys.link_names.index(name)
-            except ValueError as e:
-                raise ValueError(f"Link '{name}' not found in sys.link_names: {self.sys.link_names}") from e
-
-        # NOTE: names must match sys.link_names exactly
-        self._torso_link_id = _link_idx("torso")
-        self._right_foot_link_id = _link_idx("foot")
-        self._left_foot_link_id = _link_idx("foot_left")
+        self._torso_link_id = sys.link_names.index("torso")
+        self._right_foot_link_id = sys.link_names.index("foot")
+        self._left_foot_link_id = sys.link_names.index("foot_left")
 
         # Hazard mocap ids + shape buffers
         self._hazard_mocap_ids = []
@@ -233,12 +226,14 @@ class SafeWalker(PipelineEnv):
                 (z > min_z) & (z < max_z) & (angle > min_angle) & (angle < max_angle)
         )
         if self._terminate_when_unhealthy:
-            healthy_reward = self._healthy_reward
+            terminate = jp.logical_not(is_healthy).astype(jp.float32)
+            healthy_reward = self._healthy_reward * (1.0 - terminate)
         else:
-            healthy_reward = self._healthy_reward * is_healthy
+            terminate = jp.array(0.0)
+            healthy_reward = self._healthy_reward * is_healthy.astype(jp.float32)
 
         reward = (forward_reward + healthy_reward) * self._reward_scaler
-        done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
+        done = jp.maximum(state.done, terminate)
         hazard_positions = state.info["hazard_positions"]
         ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
         obs = self._get_obs(pipeline_state, hazard_positions)
