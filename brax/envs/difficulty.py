@@ -12,7 +12,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
-from ml_collections import config_dict
+from ml_collections.config_dict import ConfigDict 
 
 from brax.envs.SafePointGoal import default_config as spg_default_config
 
@@ -96,23 +96,35 @@ def apply_difficulty(env_name: str, env_kwargs: dict[str, Any] | None, level: in
     env_kwargs = deepcopy(env_kwargs or {})
     overrides = deepcopy(_DIFFICULTY_OVERRIDES[env_name][level])
 
-    # SafePointGoal: build/merge config dict and return {"config": ...}
+    # SafePointGoal: build/merge config and return {"config": ...}
     if env_name == "safe_point_goal":
+
+        def _merge_into_cfg(dst: ConfigDict, src: Any) -> ConfigDict:
+            """
+            Recursively merge src into dst.
+            - src can be dict or ConfigDict
+            - nested dict/ConfigDict become nested ConfigDicts
+            """
+            for k, v in src.items():
+                if isinstance(v, (ConfigDict, dict)):
+                    cur = dst.get(k, None)
+                    if not isinstance(cur, ConfigDict):
+                        cur = ConfigDict()
+                    dst[k] = _merge_into_cfg(cur, v)
+                else:
+                    dst[k] = deepcopy(v)
+            return dst
+
         # start from default config
-        base_cfg = spg_default_config().to_dict() if spg_default_config is not None else {}
+        base_cfg = spg_default_config() if spg_default_config is not None else None
+        cfg = (deepcopy(base_cfg))
 
-        cfg = _merge_dict(base_cfg, deepcopy(overrides))
+        # merge difficulty overrides (dict) into cfg
+        _merge_into_cfg(cfg, deepcopy(overrides))
 
-        # merge in caller-provided config (wins)
-        if env_kwargs.get("config") is not None:
-            caller_cfg = env_kwargs["config"]
-            if config_dict is not None and isinstance(caller_cfg, config_dict.ConfigDict):
-                caller_cfg = caller_cfg.to_dict()
-            cfg = _merge_dict(cfg, deepcopy(caller_cfg))
-
-        # merge in any top-level kwargs into cfg (wins)
+        # merge in any top-level kwargs into cfg
         top = {k: v for k, v in env_kwargs.items() if k != "config"}
-        cfg = _merge_dict(cfg, deepcopy(top))
+        _merge_into_cfg(cfg, deepcopy(top))
 
         return {"config": cfg}
 
