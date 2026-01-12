@@ -581,11 +581,20 @@ def train(
             length=num_updates_per_batch,
         )
 
-        # Use per-step costs directly from rollout data (not cumulative episode metrics).
-        # This provides immediate signal even when episodes rarely complete, which is
-        # common in heavily parallelized setups where first episodes take millions of steps.
-        step_costs = data.extras['state_extras']['cost']  # [batch_size * num_minibatches, unroll_length]
-        mean_cost_per_step = jnp.mean(step_costs)
+        # Episodic cost return estimate from rollout batch
+        ep_cost = episode_metrics['cost']  # [B, T]
+        ep_length = episode_metrics['length']  # [B, T]
+
+        # Use the last value in the rollout for each env (works even if no episode ended)
+        ep_cost_last = ep_cost[:, -1]  # [B]
+        if ep_length is None:
+            # fallback: assume we always unroll unroll_length steps; cruder but better than "no update"
+            ep_steps_last = jnp.ones_like(ep_cost_last) * float(unroll_length)
+        else:
+            ep_steps_last = ep_length[:, -1]
+
+        # Estimate per-step cost in the *current* episode (stable)
+        mean_cost_per_step = jnp.mean(ep_cost_last / jnp.maximum(ep_steps_last, 1.0))
 
         # Convert the episodic safety_bound to per-step
         safety_bound_step = safety_bound / float(episode_length)
