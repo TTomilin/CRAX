@@ -7,11 +7,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Map short metric names -> Parquet column names
-METRIC_COLS = {
-    "reward": "episodic/sum_reward",
-    "cost": "episodic/cost",
-}
+from .common import (
+    DEFAULT_METRIC_COLS as METRIC_COLS,
+    get_series,
+    set_mpl_style,
+    nice_grid as _nice_grid,
+)
 
 # Pretty labels
 TRANSLATIONS = {
@@ -33,22 +34,6 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
     "safe_reacher": 25.0,
     "safe_walker": 25.0,
 }
-
-
-def _nice_grid(n: int, max_cols: int = 4) -> Tuple[int, int]:
-    """
-    Pick a grid that feels like: 2x2, 2x3, 2x4, 3x3, 3x4, 4x4, ...
-    """
-    if n <= 0:
-        return 1, 1
-    best = None
-    for cols in range(1, max_cols + 1):
-        rows = math.ceil(n / cols)
-        # prefer fewer rows, then more square
-        score = (rows, abs(rows - cols), cols)
-        if best is None or score < best[0]:
-            best = (score, rows, cols)
-    return best[1], best[2]
 
 
 def load_final_values(
@@ -83,11 +68,10 @@ def load_final_values(
                     df = df.sort_values("_step", kind="mergesort")
 
                     for metric in metrics:
-                        col = METRIC_COLS[metric]
-                        if col not in df.columns:
+                        series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+                        if series is None:
                             continue
-
-                        series = df[col].dropna().astype(np.float32)
+                        series = series.dropna().astype(np.float32)
                         if len(series) == 0:
                             continue
 
@@ -123,8 +107,7 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
-    plt.rcParams.update({"figure.dpi": 300})
-    plt.style.use("seaborn-v0_8-paper")
+    set_mpl_style()
 
     envs = args.envs
     metrics = args.metrics  # expects ["reward","cost"] by default

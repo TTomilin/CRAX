@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from .common import align_and_stack, set_mpl_style
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
@@ -81,8 +82,7 @@ def plot_metrics(
         data: Dict[Tuple[str, str, str], List[pd.DataFrame]],
         args: argparse.Namespace,
 ) -> None:
-    plt.rcParams.update({"figure.dpi": 300})
-    plt.style.use("seaborn-v0_8-paper")
+    set_mpl_style()
 
     nrows = len(args.envs)
     ncols = len(args.metrics)

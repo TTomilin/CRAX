@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Map short metric names -> Parquet column names
-METRIC_COLS = {
-    "reward": "episodic/sum_reward",
-    "cost": "episodic/cost",
-}
+from .common import (
+    DEFAULT_METRIC_COLS as METRIC_COLS,
+    get_series,
+    align_and_stack,
+    set_mpl_style,
+)
 
 # Pretty labels (edit if you care)
 TRANSLATIONS = {
@@ -31,12 +32,14 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
 
 def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], metrics: List[str]) -> Dict[
     Tuple[str, str, str], List[pd.DataFrame]]:
-    """Return dict[(env, algo, metric)] -> list of per-seed DataFrames with ['_step', 'value']."""
+    """Return dict[(env, algo, metric)] -> list of per-seed DataFrames with ['_step', 'value'].
+
+    Uses get_series to reconstruct true reward for ppo_cost by adding cost back.
+    """
     out: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for metric in metrics:
         key = (env, algo, metric)
         out[key] = []
-        col = METRIC_COLS[metric]
         for seed in seeds:
             fp = base / env / f"level_{level}" / algo / f"seed_{seed}.parquet"
             if not fp.exists():
@@ -44,35 +47,23 @@ def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], met
                 print(f"File not found: {fp}")
                 continue
             df = pd.read_parquet(fp, engine="pyarrow")
-            if "_step" not in df or col not in df:
+            if "_step" not in df:
                 continue
-            # Keep only the two columns we need and rename to a common schema
-            d = df[["_step", col]].rename(columns={col: "value"}).dropna()
-            # enforce numeric
-            d = d.astype({"_step": np.int64, "value": np.float32})
+            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+            if series is None:
+                continue
+            d = pd.DataFrame({
+                "_step": df["_step"].astype(np.int64),
+                "value": series.astype(np.float32),
+            }).dropna()
             out[key].append(d)
     return out
 
 
-def align_and_stack(dfs: List[pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Align multiple runs by truncating to the min length after sorting by _step.
-    Returns (steps, values) with shape [runs, T].
-    """
-    if not dfs:
-        return np.array([]), np.array([[]])
-    # sort each by step, then truncate to min length
-    lens = [len(d) for d in dfs]
-    T = min(lens)
-    trimmed = [d.sort_values("_step", kind="mergesort").iloc[:T] for d in dfs]
-    steps = trimmed[0]["_step"].to_numpy(copy=True)
-    vals = np.stack([d["value"].to_numpy(copy=True) for d in trimmed], axis=0)  # [R, T]
-    return steps, vals
 
 
 def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: argparse.Namespace) -> None:
-    plt.rcParams.update({"figure.dpi": 300})
-    plt.style.use("seaborn-v0_8-paper")
+    set_mpl_style()
 
     nrows = len(args.envs)
     ncols = len(args.metrics)
