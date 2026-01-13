@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from .common import align_and_stack, set_mpl_style
+from common import align_and_stack, set_mpl_style
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
