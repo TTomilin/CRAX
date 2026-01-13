@@ -7,7 +7,7 @@ class SauteWrapper(Wrapper):
     def __init__(
             self,
             env: Env,
-            safety_bound: float = 15.0,
+            safety_bound: float = 25.0,
             gamma_budget: float = 0.99,
             violation_penalty: float = -1.0,
             normalize_budget_obs: bool = True,

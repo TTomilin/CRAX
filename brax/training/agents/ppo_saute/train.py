@@ -33,7 +33,7 @@ def train(
     environment: envs.Env,
     num_timesteps: int,
     # Saute parameters:
-    safety_bound: float = 15.0,
+    safety_bound: float = 25.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
     violation_penalty: float = 0.0,
     normalize_budget_obs: bool = True,
