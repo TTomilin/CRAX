@@ -24,7 +24,13 @@ class SauteWrapper(Wrapper):
         return self.env.observation_size + 1
 
     def _augment_obs(self, obs: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-        b_obs = b / self._b0 if self._normalize else b
+        if self._normalize:
+            # Normalize by initial budget so z ∈ [0, 1] initially
+            # Clip to [0, 2] to prevent numerical issues when budget grows
+            # (budget grows when agent is safe: b_{t+1} = (b_t - c_t) / γ)
+            b_obs = jnp.clip(b / self._b0, 0.0, 2.0)
+        else:
+            b_obs = b
         return jnp.concatenate([obs, jnp.expand_dims(b_obs, -1)], axis=-1)
 
     def reset(self, rng: jnp.ndarray) -> State:
@@ -71,7 +77,8 @@ class SauteWrapper(Wrapper):
         violated = b_candidate < 0.0
 
         # Store a bounded budget so it can't blow up on long safe streaks
-        b_next = jnp.clip(b_candidate, 0.0, self._b0 * 100)
+        # Clip to 3x initial budget (observation clips to 2x for network input)
+        b_next = jnp.clip(b_candidate, 0.0, self._b0 * 3.0)
 
         # Violation penalty
         reward = jnp.where(
