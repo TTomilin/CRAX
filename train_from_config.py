@@ -60,6 +60,7 @@ except ImportError:
 from brax.training.agents.ppo_lag import train as ppo_lag
 from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.training.agents.p3o import train as p3o
+from brax.training.agents.focops import train as focops
 from brax.io import json as brax_json
 import wandb
 
@@ -172,6 +173,7 @@ def get_algorithm_train_fn(alg_name: str):
         'ppo_pid': ppo_pid,
         'ppo_saute': ppo_saute,
         'p3o': p3o,
+        'focops': focops,
     }
 
     train_fn = alg_map.get(alg_name)
