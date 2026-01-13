@@ -24,12 +24,14 @@ TRANSLATIONS = {
     "ppo_saute": "PPOSaute",
     "safe_point_goal": "Safe Point Goal",
     "safe_reacher": "Safe Reacher",
+    "safe_walker": "Safe Walker",
 }
 
 # Optional safety thresholds per env for cost bars (None disables)
 SAFETY_THRESHOLDS: Dict[str, float] = {
     "safe_point_goal": 25.0,
     "safe_reacher": 25.0,
+    "safe_walker": 25.0,
 }
 
 
@@ -248,7 +250,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
