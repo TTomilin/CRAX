@@ -140,13 +140,14 @@ def compute_focops_loss(
         discount=discounting,
     )
 
-    # Normalize advantages separately (reward only)
+    # Normalize reward advantages only (not cost advantages!)
+    # Cost advantages need their raw scale for proper constraint enforcement
     if normalize_advantage:
         adv_r = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        adv_c = (cost_advantages - cost_advantages.mean()) / (cost_advantages.std() + 1e-8)
     else:
         adv_r = advantages
-        adv_c = cost_advantages
+    # Keep cost advantages unnormalized to preserve scale
+    adv_c = cost_advantages
 
     # FOCOPS combined advantage: (A^R - ν×A^C)
     # Scaled by 1/(1+ν) for numerical stability when ν is large

@@ -143,11 +143,11 @@ def train(
         seed: int = 0,
         # FOCOPS specific params
         safety_bound: float = 0.0,
-        initial_nu: float = 0.0,
-        nu_lr: float = 0.01,
-        nu_max: float = 100.0,
-        focops_lam: float = 1.5,
-        focops_eta: float = 0.02,
+        initial_nu: float = 1.0,   # Start with some cost awareness
+        nu_lr: float = 0.05,       # Faster response to violations
+        nu_max: float = 200.0,     # Allow stronger penalties
+        focops_lam: float = 1.5,   # Temperature (lower = more aggressive)
+        focops_eta: float = 0.02,  # KL threshold
         # Eval params
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
