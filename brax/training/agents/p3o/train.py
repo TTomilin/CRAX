@@ -212,7 +212,7 @@ def train(
         seed: int = 0,
         # P3O specific params
         safety_bound: float = 0.0,
-        initial_kappa: float = 1.0,
+        initial_kappa: float = 0.1,
         kappa_increase_factor: float = 1.5,
         kappa_max: float = 1000.0,
         # eval
@@ -569,7 +569,7 @@ def train(
 
         # Increase kappa when violated, decrease slowly when satisfied
         rho_increase = jnp.asarray(kappa_increase_factor, dtype=jnp.float32)
-        rho_decrease = jnp.asarray(0.99, dtype=jnp.float32)  # Slow decrease
+        rho_decrease = jnp.asarray(0.95, dtype=jnp.float32)  # Slow decrease
         kappa_cap = jnp.asarray(kappa_max, dtype=jnp.float32)
         kappa_min = jnp.asarray(initial_kappa, dtype=jnp.float32)
 
