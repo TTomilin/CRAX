@@ -28,7 +28,7 @@ TRANSLATIONS = {
 
 # Optional safety thresholds per env for cost bars (None disables)
 SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 15.0,
+    "safe_point_goal": 25.0,
     "safe_reacher": 25.0,
 }
 

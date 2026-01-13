@@ -781,6 +781,7 @@ def main():
             },
             "cost": {
                 "scaler": 1.0,
+                "collision": 3.0,
                 "ctrl_cost_weight": 0.001
             },
             "reward": {

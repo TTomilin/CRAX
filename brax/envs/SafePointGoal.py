@@ -45,6 +45,7 @@ def default_config() -> config_dict.ConfigDict:
         # --- Cost (safety) settings ---
         cost=config_dict.create(
             scaler=1.0,  # Hazard cost scaler
+            collision=3.0,  # Collision cost
             ctrl_cost_weight=0.001,  # Control effort cost
         ),
 
@@ -269,7 +270,8 @@ class SafePointGoal(PipelineEnv):
 
         # Cost
         self._ctrl_cost_weight = config.cost.ctrl_cost_weight
-        self._cost_scaler = config.cost.scaler
+        self._proximity_cost_scaler = config.cost.scaler
+        self._collision_cost = config.cost.collision
 
         # Physics
         self._terminate_when_unhealthy = config.physics.terminate_when_unhealthy
@@ -654,7 +656,8 @@ class SafePointGoal(PipelineEnv):
             total = total + h.calculate_cost(
                 agent_xy=agent_xy,
                 hazard_xy=hz_xy,
-                cost_scaler=self._cost_scaler,
+                proximity_cost_scaler=self._proximity_cost_scaler,
+                collision_cost=self._collision_cost,
                 contact_geom1=ids1,
                 contact_geom2=ids2,
                 contact_dist=dist,
@@ -993,10 +996,26 @@ def SafePointGoal_Level2(**kwargs):
     config.goals.size = 0.2
     config.goals.height = 0.2
     config.hazards.specs = [
-        {"type": "cube", "count": 3, "size": 0.3, "height": 0.01, "collidable": False},
-        {"type": "cube", "count": 2, "size": 0.2, "height": 0.5, "collidable": True},
-        {"type": "cylinder", "count": 4, "size": 0.4, "height": 0.01, "collidable": False},
-        {"type": "cylinder", "count": 3, "size": 0.2, "height": 0.4, "collidable": True},
+        {"type": "cylinder", "count": 8, "size": 0.4, "height": 0.01, "collidable": False},
+        {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.4, "collidable": True},
+        {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
+    ]
+    config = config_merge(config, kwargs)
+    return SafePointGoal(config)
+
+
+def SafePointGoal_Level3(**kwargs):
+    """SafePointGoal with mixed hazard types: 5 cubes + 7 cylinders."""
+    config = default_config()
+    config.goals.type = 'cylinder'
+    config.goals.count = 2
+    config.goals.size = 0.2
+    config.goals.height = 0.2
+    config.hazards.specs = [
+        {"type": "cube", "count": 5, "size": 0.3, "height": 0.01, "collidable": False},
+        {"type": "cube", "count": 5, "size": 0.2, "height": 0.5, "collidable": True},
+        {"type": "cylinder", "count": 5, "size": 0.4, "height": 0.01, "collidable": False},
+        {"type": "cylinder", "count": 5, "size": 0.2, "height": 0.4, "collidable": True},
         {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
     ]
     config = config_merge(config, kwargs)

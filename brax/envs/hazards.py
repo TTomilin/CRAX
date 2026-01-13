@@ -36,7 +36,8 @@ class BaseHazard(ABC):
     def calculate_cost(self,
                        agent_xy: jp.ndarray,
                        hazard_xy: jp.ndarray,
-                       cost_scaler: float = 1.0,
+                       proximity_cost_scaler: float = 1.0,
+                       collision_cost: float = 1.0,
                        contact_geom1: jp.ndarray | None = None,
                        contact_geom2: jp.ndarray | None = None,
                        contact_dist: jp.ndarray | None = None,
@@ -47,11 +48,11 @@ class BaseHazard(ABC):
         - Else: fall back to subclass proximity_cost.
         """
         if self.collidable and (contact_geom1 is not None) and (agent_geom_ids is not None):
-            return cost_scaler * self._collision_binary_cost(
+            return collision_cost * self._collision_binary_cost(
                 contact_geom1, contact_geom2, contact_dist, ncon, agent_geom_ids
             )
         # Proximity shaping for non-collidable or when contacts aren’t available
-        return cost_scaler * self.proximity_cost(agent_xy, hazard_xy)
+        return proximity_cost_scaler * self.proximity_cost(agent_xy, hazard_xy)
 
     def _collision_binary_cost(self,
                                contact_geom1: jp.ndarray,
