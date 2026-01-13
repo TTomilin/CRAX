@@ -21,12 +21,15 @@ TRANSLATIONS = {
     "ppo_cost": "PPOCost",
     "ppo_lag": "PPOLag",
     "ppo_pid": "PPOPID",
+    "ppo_saute": "PPOSaute",
+    "p3o": "P3O",
 }
 
 # Optional safety thresholds per env for the cost plot (None disables line)
 SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 15.0,
+    "safe_point_goal": 25.0,
     "safe_reacher": 25.0,
+    "safe_walker": 25.0,
 }
 
 
@@ -178,8 +181,8 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot Safe-Brax Parquet results.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
+    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=1)
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],

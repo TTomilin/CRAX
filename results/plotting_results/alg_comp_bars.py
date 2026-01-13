@@ -22,6 +22,7 @@ TRANSLATIONS = {
     "ppo_lag": "PPOLag",
     "ppo_pid": "PPOPID",
     "ppo_saute": "PPOSaute",
+    "p3o": "P3O",
     "safe_point_goal": "Safe Point Goal",
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
@@ -233,7 +234,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute"])
+    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
