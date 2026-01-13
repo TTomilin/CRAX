@@ -44,6 +44,7 @@ class SafeWalker(PipelineEnv):
             lidar_bins: int = 16,
             lidar_max_dist: float = 5.0,
             lidar_alias: bool = True,
+            lidar_max_hazards: int = 10,
             **kwargs,
     ):
         self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
@@ -72,6 +73,7 @@ class SafeWalker(PipelineEnv):
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
         self._lidar_alias = lidar_alias
+        self._lidar_max_hazards = lidar_max_hazards
 
         # Build hazards via HazardManager; passable (collidable=False)
         hz_mgr = HazardManager()
@@ -293,7 +295,19 @@ class SafeWalker(PipelineEnv):
             return jp.concatenate([obs, lidar])
 
         torso_xy = pipeline_state.x.pos[self._torso_link_id, :2]
-        hazards_xy = hazard_positions[:, :2] - torso_xy[None, :]   # relative
+        hazards_xy = hazard_positions[:, :2] - torso_xy[None, :]  # relative
+
+        # Compute distances to all hazards (cheap, just for sorting)
+        all_dist_sq = jp.sum(hazards_xy ** 2, axis=1)
+
+        # Keep only the K closest hazards for lidar computation
+        # Note: top_k requires static k, use Python min since n_h is fixed at init
+        k = min(self._lidar_max_hazards, self._num_hazards)
+        # Use negative distances for top_k (which returns largest values)
+        _, closest_idx = jax.lax.top_k(-all_dist_sq, k)
+
+        # Filter to closest hazards
+        hazards_xy = hazards_xy[closest_idx]
 
         # heading: use torso angle (you already use q[2] for health)
         heading = pipeline_state.q[2]
