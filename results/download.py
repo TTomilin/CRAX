@@ -51,7 +51,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     env = config['env_name']
     level = config['difficulty']
     algo = config['alg']
-    extra_attribute = None
+    extra_attribute = ''
 
     attribute_key = args.extra_attribute
     if attribute_key:
