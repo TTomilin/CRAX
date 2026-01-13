@@ -59,10 +59,9 @@ except ImportError:
 
 from brax.training.agents.ppo_lag import train as ppo_lag
 from brax.training.agents.ppo_pid import train as ppo_pid
-from brax.io import model as brax_model
+from brax.training.agents.p3o import train as p3o
 from brax.io import json as brax_json
 import wandb
-from etils import epath
 
 
 # Configure environment for GPU usage
@@ -172,6 +171,7 @@ def get_algorithm_train_fn(alg_name: str):
         'ppo_lag': ppo_lag,
         'ppo_pid': ppo_pid,
         'ppo_saute': ppo_saute,
+        'p3o': p3o,
     }
 
     train_fn = alg_map.get(alg_name)
@@ -763,7 +763,8 @@ def main():
     parser.add_argument("--skip-rollout", action="store_true", help="Skip rollout evaluation after training")
     parser.add_argument("--skip-video", action="store_true", help="Skip video recording after training")
     parser.add_argument("--model_dir", type=str, default="models", help="Directory to save model parameters")
-    parser.add_argument("--out_dir", type=str, default="runs/experimental_results", help="Directory for metrics/outputs")
+    parser.add_argument("--out_dir", type=str, default="runs/experimental_results",
+                        help="Directory for metrics/outputs")
     parser.add_argument("--store_model", type=bool, default=True, help="Store model checkpoint after training")
 
     # --- Environment ---
