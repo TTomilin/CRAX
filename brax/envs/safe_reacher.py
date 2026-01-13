@@ -321,8 +321,11 @@ class SafeReacher(PipelineEnv):
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
         dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
 
-        # proportional reward for getting closer to the goal
-        reward = -jp.asarray(self._reward_scale, jp.float32) * dist
+        # Positive reward for being close to the goal (0 when far, positive when close)
+        # Normalized so reward is in [0, reward_scale] range
+        max_dist = jp.asarray(self._reach_radius * 2.0, jp.float32)  # Maximum possible distance
+        normalized_closeness = jp.maximum(0.0, 1.0 - dist / max_dist)
+        reward = jp.asarray(self._reward_scale, jp.float32) * normalized_closeness
 
         # --- safety cost ---
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
