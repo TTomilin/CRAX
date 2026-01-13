@@ -57,6 +57,7 @@ def compute_p3o_loss(
         rng: jnp.ndarray,
         ppo_network: ppo_networks.PPONetworks,
         kappa: jnp.ndarray,
+        cost_violation: jnp.ndarray,
         safety_bound: float = 0.0,
         episode_length: int = 1000,
         entropy_cost: float = 1e-4,
@@ -77,6 +78,8 @@ def compute_p3o_loss(
       rng: Random key.
       ppo_network: PPO networks.
       kappa: Penalty coefficient for cost constraint.
+      cost_violation: Current constraint violation (J_C - d), computed from
+        episodic costs in the training loop.
       safety_bound: Safety constraint bound (episodic).
       episode_length: Episode length for per-step bound conversion.
       entropy_cost: Entropy cost coefficient.
@@ -84,7 +87,8 @@ def compute_p3o_loss(
       reward_scaling: Reward multiplier.
       gae_lambda: GAE lambda parameter.
       clipping_epsilon: PPO clipping epsilon.
-      normalize_advantage: Whether to normalize advantage estimates.
+      normalize_advantage: Whether to normalize reward advantage estimates.
+        Note: Cost advantages are NOT normalized to preserve scale information.
 
     Returns:
       A tuple (loss, metrics).
@@ -142,13 +146,14 @@ def compute_p3o_loss(
         discount=discounting,
     )
 
-    # Normalize advantages
+    # Normalize reward advantages only (not cost advantages!)
+    # Cost advantages need their raw scale for proper constraint enforcement
     if normalize_advantage:
         adv = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        cadv = (cost_advantages - cost_advantages.mean()) / (cost_advantages.std() + 1e-8)
     else:
         adv = advantages
-        cadv = cost_advantages
+    # Keep cost advantages unnormalized to preserve scale
+    cadv = cost_advantages
 
     # Importance sampling ratio
     rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
@@ -165,25 +170,25 @@ def compute_p3o_loss(
     surrogate_loss_c2 = rho_clipped * cadv
     clipped_cost_surrogate = jnp.mean(jnp.maximum(surrogate_loss_c1, surrogate_loss_c2))
 
-    # Estimate current policy's cost return J_C(π_k)
-    # Use mean of cost value estimates as proxy for expected cost return
-    mean_cost_value = jnp.mean(cost_baseline)
+    # Use the cost_violation passed in from training loop (computed from episodic costs)
+    # This is more accurate than using the value network estimate early in training
+    # The constraint gap term is (1-γ) * (J_C - d) where cost_violation = J_C - d
+    cost_violation_scalar = cost_violation[0] if cost_violation.ndim > 0 else cost_violation
+    constraint_gap = (1 - discounting) * cost_violation_scalar
 
-    # Convert episodic safety bound to value function scale
-    # J_C = E[sum_{t=0}^{T-1} γ^t c_t], for per-step bound d/T, the value is approximately d
-    safety_bound_value = safety_bound
-
-    # Add the constraint gap term: (1-γ)(J_C - d)
-    # This centers the constraint around the safety bound
-    constraint_gap = (1 - discounting) * (mean_cost_value - safety_bound_value)
+    # Total cost loss before penalty
     cost_loss_unpenalized = clipped_cost_surrogate + constraint_gap
 
     # Apply ReLU: only penalize when constraint is violated
+    # Note: we also add a small positive term based purely on violation to ensure gradient signal
     cost_loss_relu = jax.nn.relu(cost_loss_unpenalized)
+
+    # Also add direct violation penalty (ensures gradient even when surrogate is negative)
+    direct_violation_penalty = jax.nn.relu(cost_violation_scalar)
 
     # Apply penalty coefficient kappa
     kappa_scalar = kappa[0] if kappa.ndim > 0 else kappa
-    cost_penalty = kappa_scalar * cost_loss_relu
+    cost_penalty = kappa_scalar * (cost_loss_relu + 0.1 * direct_violation_penalty)
 
     # Policy loss combines reward maximization and cost penalty
     policy_loss = reward_loss + cost_penalty
@@ -202,6 +207,7 @@ def compute_p3o_loss(
 
     # Mean cost for metrics
     mean_cost = jnp.mean(costs)
+    mean_cost_value = jnp.mean(cost_baseline)
 
     total_loss = policy_loss + v_loss + cost_v_loss + entropy_loss
 
@@ -211,6 +217,7 @@ def compute_p3o_loss(
         'reward_loss': reward_loss,
         'cost_penalty': cost_penalty,
         'cost_loss_relu': cost_loss_relu,
+        'direct_violation_penalty': direct_violation_penalty,
         'cost_loss_unpenalized': cost_loss_unpenalized,
         'constraint_gap': constraint_gap,
         'clipped_cost_surrogate': clipped_cost_surrogate,
@@ -220,5 +227,6 @@ def compute_p3o_loss(
         'entropy': entropy,
         'mean_cost': mean_cost,
         'mean_cost_value': mean_cost_value,
+        'cost_violation': cost_violation_scalar,
         'kappa': kappa_scalar,
     }

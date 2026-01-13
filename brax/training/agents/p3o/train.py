@@ -375,7 +375,7 @@ def train(
             optax.adam(learning_rate=learning_rate),
         )
 
-    def loss_fn(params, normalizer_params, data, rng, kappa):
+    def loss_fn(params, normalizer_params, data, rng, kappa, cost_violation):
         return p3o_losses.compute_p3o_loss(
             params=params,
             normalizer_params=normalizer_params,
@@ -383,6 +383,7 @@ def train(
             rng=rng,
             ppo_network=ppo_network,
             kappa=kappa,
+            cost_violation=cost_violation,
             safety_bound=safety_bound,
             episode_length=episode_length,
             entropy_cost=entropy_cost,
@@ -393,15 +394,15 @@ def train(
             normalize_advantage=normalize_advantage,
         )
 
-    def gradient_update_fn(params, normalizer_params, data, rng, kappa, optimizer_state):
+    def gradient_update_fn(params, normalizer_params, data, rng, kappa, cost_violation, optimizer_state):
         """Custom gradient update function for P3O."""
 
-        def loss_and_pgrad(params, normalizer_params, data, rng, kappa):
-            total_loss, metrics = loss_fn(params, normalizer_params, data, rng, kappa)
+        def loss_and_pgrad(params, normalizer_params, data, rng, kappa, cost_violation):
+            total_loss, metrics = loss_fn(params, normalizer_params, data, rng, kappa, cost_violation)
             return total_loss, metrics
 
         grad_fn = jax.value_and_grad(loss_and_pgrad, has_aux=True)
-        (loss, metrics), grads = grad_fn(params, normalizer_params, data, rng, kappa)
+        (loss, metrics), grads = grad_fn(params, normalizer_params, data, rng, kappa, cost_violation)
 
         updates, new_optimizer_state = optimizer.update(grads, optimizer_state, params)
         new_params = optax.apply_updates(params, updates)
@@ -419,6 +420,7 @@ def train(
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
             kappa: jnp.ndarray,
+            cost_violation: jnp.ndarray,
     ):
         optimizer_state, params, key = carry
         key, key_loss = jax.random.split(key)
@@ -428,6 +430,7 @@ def train(
             data,
             key_loss,
             kappa,
+            cost_violation,
             optimizer_state,
         )
 
@@ -439,6 +442,7 @@ def train(
             data: types.Transition,
             normalizer_params: running_statistics.RunningStatisticsState,
             kappa: jnp.ndarray,
+            cost_violation: jnp.ndarray,
     ):
         optimizer_state, params, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -462,7 +466,12 @@ def train(
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(minibatch_step, normalizer_params=normalizer_params, kappa=kappa),
+            functools.partial(
+                minibatch_step,
+                normalizer_params=normalizer_params,
+                kappa=kappa,
+                cost_violation=cost_violation,
+            ),
             (optimizer_state, params, key_grad),
             shuffled_data,
             length=num_minibatches,
@@ -521,39 +530,60 @@ def train(
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
 
+        # Compute cost violation BEFORE SGD steps using episodic costs (like ppo_lag)
+        ep_cost = episode_metrics['cost']  # [B, T]
+        ep_length = episode_metrics['length']  # [B, T]
+
+        # Use the last value in the rollout for each env
+        ep_cost_last = ep_cost[:, -1]  # [B]
+        ep_steps_last = jnp.where(
+            ep_length is not None,
+            ep_length[:, -1],
+            jnp.ones_like(ep_cost_last) * float(unroll_length),
+        )
+
+        # Estimate per-step cost in the current episode
+        mean_cost_per_step = jnp.mean(ep_cost_last / jnp.maximum(ep_steps_last, 1.0))
+
+        # Convert the episodic safety_bound to per-step
+        safety_bound_step = safety_bound / float(episode_length)
+
+        # Cost violation: positive when constraint is violated
+        cost_violation = jnp.array([mean_cost_per_step - safety_bound_step], dtype=jnp.float32)
+
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(
-                sgd_step, data=data, normalizer_params=normalizer_params, kappa=training_state.kappa
+                sgd_step,
+                data=data,
+                normalizer_params=normalizer_params,
+                kappa=training_state.kappa,
+                cost_violation=cost_violation,
             ),
             (training_state.optimizer_state, training_state.params, key_sgd),
             (),
             length=num_updates_per_batch,
         )
 
-        # P3O kappa adaptation: increase kappa when constraint is violated
-        # Use per-step costs from rollout data for immediate signal
-        step_costs = data.extras['state_extras']['cost']
-        mean_cost_per_step = jnp.mean(step_costs)
+        # P3O kappa adaptation: bidirectional update
+        constraint_violated = cost_violation[0] > 0.0
 
-        # Convert episodic safety bound to per-step
-        safety_bound_step = safety_bound / float(episode_length)
-
-        # Check if constraint is violated
-        constraint_violated = mean_cost_per_step > safety_bound_step
-
-        # Adaptive kappa update: increase by factor rho when violated
-        rho = jnp.asarray(kappa_increase_factor, dtype=jnp.float32)
+        # Increase kappa when violated, decrease slowly when satisfied
+        rho_increase = jnp.asarray(kappa_increase_factor, dtype=jnp.float32)
+        rho_decrease = jnp.asarray(0.99, dtype=jnp.float32)  # Slow decrease
         kappa_cap = jnp.asarray(kappa_max, dtype=jnp.float32)
+        kappa_min = jnp.asarray(initial_kappa, dtype=jnp.float32)
+
         updated_kappa = jnp.where(
             constraint_violated,
-            jnp.minimum(training_state.kappa * rho, kappa_cap),
-            training_state.kappa,
+            jnp.minimum(training_state.kappa * rho_increase, kappa_cap),
+            jnp.maximum(training_state.kappa * rho_decrease, kappa_min),
         )
 
         # Add kappa info to metrics
         metrics = {
             **metrics,
             'kappa': updated_kappa,
+            'cost_violation': cost_violation[0],
             'constraint_violated': constraint_violated.astype(jnp.float32),
             'mean_cost_per_step': mean_cost_per_step,
             'safety_bound_step': safety_bound_step,
