@@ -996,7 +996,7 @@ def SafePointGoal_Level2(**kwargs):
     config.goals.size = 0.2
     config.goals.height = 0.2
     config.hazards.specs = [
-        {"type": "cylinder", "count": 8, "size": 0.4, "height": 0.01, "collidable": False},
+        {"type": "cylinder", "count": 8, "size": 0.3, "height": 0.01, "collidable": False},
         {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.4, "collidable": True},
         {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
     ]
@@ -1014,7 +1014,7 @@ def SafePointGoal_Level3(**kwargs):
     config.hazards.specs = [
         {"type": "cube", "count": 5, "size": 0.3, "height": 0.01, "collidable": False},
         {"type": "cube", "count": 5, "size": 0.2, "height": 0.5, "collidable": True},
-        {"type": "cylinder", "count": 5, "size": 0.4, "height": 0.01, "collidable": False},
+        {"type": "cylinder", "count": 5, "size": 0.3, "height": 0.01, "collidable": False},
         {"type": "cylinder", "count": 5, "size": 0.2, "height": 0.4, "collidable": True},
         {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
     ]
