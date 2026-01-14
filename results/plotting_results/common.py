@@ -16,12 +16,29 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
 
 def set_mpl_style() -> None:
     """Apply a consistent plotting style for all result figures."""
-    plt.rcParams.update({"figure.dpi": 300})
     # Use the same seaborn style used across scripts
     plt.style.use("seaborn-v0_8-paper")
+    # Improve visibility: larger fonts and thicker lines globally
+    plt.rcParams.update({
+        "figure.dpi": 300,
+        # Base/font sizes
+        "font.size": 12.5,
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12.5,
+        "figure.titlesize": 16,
+        # Line and axes widths
+        "lines.linewidth": 2.2,
+        "axes.linewidth": 1.2,
+        # Grid
+        "grid.linewidth": 0.8,
+        "grid.alpha": 0.4,
+    })
 
 
-def nice_grid(n: int, max_cols: int = 4) -> Tuple[int, int]:
+def nice_grid(n: int, max_cols: int = 3) -> Tuple[int, int]:
     """Pick a visually pleasing grid (rows, cols) for n panels.
 
     Tries to keep rows small and aspect roughly square while respecting max_cols.

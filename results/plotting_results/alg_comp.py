@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import FormatStrFormatter
 
 from common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
@@ -141,11 +142,14 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
 
+            # format y-axis ticks as integers without thousands separators
+            ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+
             # safety threshold line (red dashed) with legend entry, no text on plot
             if metric == "cost" and not args.no_threshold:
                 thr = SAFETY_THRESHOLDS.get(env, None)
                 if thr is not None:
-                    thr_line = ax.axhline(thr, linestyle="--", color="red")
+                    thr_line = ax.axhline(thr, linestyle="--", color="red", linewidth=1.8)
                     if "Threshold" not in legend_handles:
                         legend_handles["Threshold"] = thr_line
 
@@ -155,14 +159,14 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                 ax.set_ylim(-15, None)
 
             if args.grid:
-                ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
+                ax.grid(True, linestyle="--", linewidth=0.9, alpha=0.45)
 
         # Center env title above the metric group for this env
         left_bbox = get_ax(env_i, 0).get_position()
         right_bbox = get_ax(env_i, m - 1).get_position()
         row_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
         row_y = max(left_bbox.y1, right_bbox.y1) + 0.01
-        fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=10)
+        fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=14)
 
     # hide any unused env cells
     for env_i in range(n_env, nrows_env * ncols_env):
@@ -212,7 +216,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines.")
     p.add_argument("--grid", action="store_true")
 
-    p.add_argument("--max_cols", type=int, default=4, help="Max env columns in grid.")
+    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
     p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
 

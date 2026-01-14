@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import FormatStrFormatter
 
 from common import align_and_stack, set_mpl_style, nice_grid
 
@@ -110,7 +111,7 @@ def plot_metrics(
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.45, hspace=0.55)
 
     def get_ax(env_i: int, metric_i: int):
         gr = env_i // ncols_env
@@ -176,24 +177,26 @@ def plot_metrics(
 
                 # For cost: add dashed horizontal line at this bound value
                 if metric == "cost" and not args.no_bound_lines and not np.isnan(bound_val):
-                    ax.axhline(bound_val, linestyle=":", linewidth=1.0, color="darkgreen")
+                    ax.axhline(bound_val, linestyle=":", linewidth=1.8, color="darkgreen")
 
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
+            # format y-axis ticks as integers without thousands separators
+            ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
 
             x_max = args.x_max if args.x_max is not None else x_max_for_axis
             if x_max is not None:
                 ax.set_xlim(0.0, x_max)
 
             if args.grid:
-                ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
+                ax.grid(True, linestyle="--", linewidth=0.9, alpha=0.45)
 
         # center env title across metric group
         left_bbox = get_ax(env_i, 0).get_position()
         right_bbox = get_ax(env_i, m - 1).get_position()
         row_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
         row_y = max(left_bbox.y1, right_bbox.y1) + 0.01
-        fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=10)
+        fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=14)
 
     # hide unused env slots
     for env_i in range(n_env, nrows_env * ncols_env):
@@ -209,7 +212,7 @@ def plot_metrics(
             handles,
             labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, -0.2),
+            bbox_to_anchor=(0.5, -0.4),
             ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
@@ -308,9 +311,9 @@ def build_args() -> argparse.ArgumentParser:
         help="Turn on grid.",
     )
 
-    p.add_argument("--max_cols", type=int, default=4, help="Max env columns in grid.")
-    p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
-    p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
+    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
+    p.add_argument("--panel_w", type=float, default=2.6, help="Width per metric subplot.")
+    p.add_argument("--panel_h", type=float, default=1.8, help="Height per env row.")
 
     p.add_argument(
         "--output_fig_dir",
