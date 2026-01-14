@@ -35,10 +35,11 @@ from brax.envs import reacher
 from brax.envs import safe_reacher
 from brax.envs import swimmer
 from brax.envs import walker2d
+from brax.envs import safe_ant
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
-from brax.envs.SafePointGoal import SafePointGoal, SafePointGoal_Level1, SafePointGoal_Level2
+from brax.envs.SafePointGoal import SafePointGoal, SafePointGoal_Level1, SafePointGoal_Level2, SafePointGoal_Level3
 from brax.envs.SafePointGoalWeighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
@@ -60,12 +61,14 @@ _envs = {
     'swimmer': swimmer.Swimmer,
     'walker2d': walker2d.Walker2d,
     'safe_walker': safe_walker.SafeWalker,
+    'safe_ant': safe_ant.SafeAnt,
     'point_resetting_goal_random_hazard_sensor_obs': PointResettingGoalRandomHazardSensorObs,
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,
     'safe_point_goal_weighted': SafePointGoalWeighted,
     'safe_point_goal_level_1': SafePointGoal_Level1,
     'safe_point_goal_level_2': SafePointGoal_Level2,
+    'safe_point_goal_level_3': SafePointGoal_Level3,
 }
 
 
