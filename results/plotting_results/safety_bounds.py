@@ -10,7 +10,7 @@ from common import align_and_stack, set_mpl_style
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
-    "reward": "episodic/reward",
+    "reward": "episodic/sum_reward",
     "cost": "episodic/cost",
 }
 
@@ -18,7 +18,7 @@ METRIC_COLS = {
 TRANSLATIONS = {
     "reward": "Reward",
     "cost": "Cost",
-    "ppo_pid": "PPO_PID",
+    "ppo_pid": "PPOPID",
 }
 
 
@@ -33,6 +33,7 @@ def _bound_value(bound: str) -> float:
 def load_runs(
         base: Path,
         env: str,
+        level: int,
         algo: str,
         bound: str,
         seeds: List[int],
@@ -50,7 +51,7 @@ def load_runs(
         out[key] = []
         col = METRIC_COLS[metric]
         for seed in seeds:
-            fp = base / env / algo / bound / f"seed_{seed}.parquet"
+            fp = base / env / f"level_{args.level}" / algo / f"safety_bound_{bound}" / f"seed_{seed}.parquet"
             if not fp.exists():
                 print(f"File not found: {fp}")
                 continue
@@ -106,7 +107,8 @@ def plot_metrics(
 
     # sort bounds by numeric value: smaller = stricter
     all_bounds = set(key[1] for key in data.keys())
-    all_bounds = sorted(all_bounds, key=lambda x: float(x.split('_')[-1]))
+    # all_bounds = sorted(all_bounds, key=lambda x: float(x.split('_')[-1]))
+    all_bounds = sorted(all_bounds)
 
     bound_vals = {b: _bound_value(b) for b in args.bounds}
 
@@ -119,7 +121,7 @@ def plot_metrics(
     legend_handles: Dict[str, plt.Line2D] = {}
 
     for r, env in enumerate(args.envs):
-        env_title = TRANSLATIONS.get(env, env)
+        env_title = env.replace("_", " ").title()
 
         for c, metric in enumerate(args.metrics):
             ax = axs[r, c]
@@ -204,7 +206,7 @@ def plot_metrics(
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         # labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        labels = [label.replace('_', ' ').title() for label in labels]
+        labels = [f"Bound {label}" for label in labels]
         fig.legend(
             handles,
             labels,
@@ -231,14 +233,7 @@ def main(args: argparse.Namespace) -> None:
     store: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for env in args.envs:
         for bound in args.bounds:
-            loaded = load_runs(
-                base,
-                env,
-                args.algo,
-                bound,
-                args.seeds,
-                args.metrics,
-            )
+            loaded = load_runs(base, env, args.level, args.algo, bound, args.seeds, args.metrics)
             store.update(loaded)
 
     plot_metrics(store, args)
@@ -258,7 +253,7 @@ def build_args() -> argparse.ArgumentParser:
         "--envs",
         type=str,
         nargs="+",
-        default=["safe_point_goal"],
+        default=["safe_point_goal", "safe_reacher", "safe_walker"],
     )
     p.add_argument(
         "--algo",
@@ -268,10 +263,16 @@ def build_args() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--bounds",
-        type=str,
+        type=int,
         nargs="+",
-        default=["bound_10", "bound_15", "bound_20"],
-        help="Bound subfolders under the algo, e.g. bound_10 bound_15.",
+        default=[15, 25, 35],
+        help="Safety bound subfolders under the algo",
+    )
+    p.add_argument(
+        "--level",
+        type=int,
+        default=1,
+        help="Difficulty level",
     )
     p.add_argument(
         "--seeds",
@@ -289,7 +290,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument(
         "--x_max",
         type=float,
-        default=3e8,
+        default=5e8,
         help="Max x-axis limit (environment steps).",
     )
     p.add_argument(

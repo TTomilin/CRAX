@@ -23,6 +23,7 @@ TRANSLATIONS = {
     "ppo_pid": "PPOPID",
     "ppo_saute": "PPOSaute",
     "p3o": "P3O",
+    "focops": "FOCOPS",
     "safe_point_goal": "Safe Point Goal",
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
@@ -216,7 +217,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
             handles, labels,
             loc="lower center",
             bbox_to_anchor=(0.5, -0.2),
-            ncol=min(len(labels), 6),
+            ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
         )
@@ -234,7 +235,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o"])
+    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
