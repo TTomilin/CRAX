@@ -224,7 +224,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_final_bars_levels_{levels[0]}_{levels[-1]}.pdf"
+    out_path = out_dir / f"{args.out_name}_final.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")

@@ -2,11 +2,11 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from common import align_and_stack, set_mpl_style
+from common import align_and_stack, set_mpl_style, nice_grid
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
@@ -22,12 +22,24 @@ TRANSLATIONS = {
 }
 
 
-def _bound_value(bound: str) -> float:
-    """Extract numeric value from a bound name like 'bound_10' -> 10.0."""
+def _bound_value(bound) -> float:
+    """Extract numeric value from a bound identifier.
+
+    Accepts:
+    - int/float: returns float(bound)
+    - str like 'bound_10' or 'safety_bound_10': parses trailing number
+    """
     try:
-        return float(bound.split("_")[-1])
+        # numeric already
+        if isinstance(bound, (int, float, np.integer, np.floating)):
+            return float(bound)
+        # string pattern
+        if isinstance(bound, str):
+            tail = bound.split("_")[-1]
+            return float(tail)
     except Exception:
-        return np.nan
+        pass
+    return np.nan
 
 
 def load_runs(
@@ -51,7 +63,7 @@ def load_runs(
         out[key] = []
         col = METRIC_COLS[metric]
         for seed in seeds:
-            fp = base / env / f"level_{args.level}" / algo / f"safety_bound_{bound}" / f"seed_{seed}.parquet"
+            fp = base / env / f"level_{level}" / algo / f"safety_bound_{bound}" / f"seed_{seed}.parquet"
             if not fp.exists():
                 print(f"File not found: {fp}")
                 continue
@@ -85,46 +97,46 @@ def plot_metrics(
 ) -> None:
     set_mpl_style()
 
-    nrows = len(args.envs)
-    ncols = len(args.metrics)
+    envs = args.envs
+    metrics = args.metrics
 
-    fig, axs = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(2.4 * ncols, 2.1 * nrows),
-        squeeze=True,
-    )
-    axs = np.atleast_2d(axs)
+    n_env = len(envs)
+    nrows_env, ncols_env = nice_grid(n_env, max_cols=args.max_cols)
 
-    fig.subplots_adjust(
-        left=0.0,
-        right=1.0,
-        top=0.90,
-        bottom=0.18,
-        wspace=0.28,
-        hspace=0.68,
-    )
+    m = len(metrics)
+    total_rows = nrows_env
+    total_cols = ncols_env * m
+
+    fig_w = args.panel_w * total_cols
+    fig_h = args.panel_h * total_rows
+    fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+
+    def get_ax(env_i: int, metric_i: int):
+        gr = env_i // ncols_env
+        gc = env_i % ncols_env
+        r = gr
+        c = gc * m + metric_i
+        return axs[r, c]
 
     # sort bounds by numeric value: smaller = stricter
     all_bounds = set(key[1] for key in data.keys())
-    # all_bounds = sorted(all_bounds, key=lambda x: float(x.split('_')[-1]))
     all_bounds = sorted(all_bounds)
 
-    bound_vals = {b: _bound_value(b) for b in args.bounds}
+    # map each discovered bound to its numeric value for drawing threshold lines
+    bound_vals = {b: _bound_value(b) for b in all_bounds}
 
-    # one color family, darker for stricter (smaller) bounds
+    # one color family
     colors = plt.get_cmap("tab20c")
-
-    # Assign colors to bounds
     bound_colors = {bound: colors(4 + i) for i, bound in enumerate(all_bounds)}
 
     legend_handles: Dict[str, plt.Line2D] = {}
 
-    for r, env in enumerate(args.envs):
+    for env_i, env in enumerate(envs):
         env_title = env.replace("_", " ").title()
 
-        for c, metric in enumerate(args.metrics):
-            ax = axs[r, c]
+        for metric_i, metric in enumerate(metrics):
+            ax = get_ax(env_i, metric_i)
             label_y = TRANSLATIONS.get(metric, metric.capitalize())
 
             x_max_for_axis = None
@@ -140,43 +152,31 @@ def plot_metrics(
                     continue
 
                 if args.total_iterations is not None and len(steps) > 0:
-                    x = np.linspace(
-                        0.0,
-                        args.total_iterations,
-                        num=len(steps),
-                        endpoint=True,
-                    )
+                    x = np.linspace(0.0, args.total_iterations, num=len(steps), endpoint=True)
                 else:
                     x = steps.astype(float)
 
                 if len(x) == 0:
                     continue
 
-                x_max_for_axis = x[-1] if x_max_for_axis is None else max(
-                    x_max_for_axis, x[-1]
-                )
+                x_max_for_axis = x[-1] if x_max_for_axis is None else max(x_max_for_axis, x[-1])
 
                 mean = vals.mean(axis=0)
                 ci = 1.96 * vals.std(axis=0) / np.sqrt(max(vals.shape[0], 1))
 
                 bound_val = bound_vals[bound]
-                label = f"bound_{bound_val:g}" if not np.isnan(bound_val) else bound
+                label_key = f"{bound_val:g}" if not np.isnan(bound_val) else str(bound)
                 color = bound_colors[bound]
 
-                (line,) = ax.plot(x, mean, label=label, color=color)
+                (line,) = ax.plot(x, mean, label=f"Bound {label_key}", color=color)
                 ax.fill_between(x, mean - ci, mean + ci, alpha=0.25, color=color)
 
-                if label not in legend_handles:
-                    legend_handles[label] = line
+                if label_key not in legend_handles:
+                    legend_handles[label_key] = line
 
                 # For cost: add dashed horizontal line at this bound value
                 if metric == "cost" and not args.no_bound_lines and not np.isnan(bound_val):
-                    ax.axhline(
-                        bound_val,
-                        linestyle=":",
-                        # color=color,
-                        linewidth=1.0,
-                    )
+                    ax.axhline(bound_val, linestyle=":", linewidth=1.0, color="darkgreen")
 
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
@@ -188,31 +188,29 @@ def plot_metrics(
             if args.grid:
                 ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
 
-        # center env name above row
-        left_bbox = axs[r, 0].get_position()
-        right_bbox = axs[r, -1].get_position()
+        # center env title across metric group
+        left_bbox = get_ax(env_i, 0).get_position()
+        right_bbox = get_ax(env_i, m - 1).get_position()
         row_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
-        row_y = right_bbox.y1 + 0.01
-        fig.text(
-            row_x,
-            row_y,
-            env_title,
-            ha="center",
-            va="bottom",
-            fontsize=10,
-        )
+        row_y = max(left_bbox.y1, right_bbox.y1) + 0.01
+        fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=10)
+
+    # hide unused env slots
+    for env_i in range(n_env, nrows_env * ncols_env):
+        for metric_i in range(m):
+            ax = get_ax(env_i, metric_i)
+            ax.axis("off")
 
     # single legend at bottom
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
-        # labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
         labels = [f"Bound {label}" for label in labels]
         fig.legend(
             handles,
             labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, 0),
-            ncol=len(labels),
+            bbox_to_anchor=(0.5, -0.2),
+            ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
         )
@@ -309,6 +307,11 @@ def build_args() -> argparse.ArgumentParser:
         action="store_true",
         help="Turn on grid.",
     )
+
+    p.add_argument("--max_cols", type=int, default=4, help="Max env columns in grid.")
+    p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
+    p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
+
     p.add_argument(
         "--output_fig_dir",
         type=str,

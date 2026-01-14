@@ -11,6 +11,7 @@ from common import (
     get_series,
     align_and_stack,
     set_mpl_style,
+    nice_grid,
 )
 
 # Pretty labels (edit if you care)
@@ -23,6 +24,7 @@ TRANSLATIONS = {
     "ppo_pid": "PPOPID",
     "ppo_saute": "PPOSaute",
     "p3o": "P3O",
+    "focops": "FOCOPS",
 }
 
 # Optional safety thresholds per env for the cost plot (None disables line)
@@ -68,26 +70,37 @@ def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], met
 def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: argparse.Namespace) -> None:
     set_mpl_style()
 
-    nrows = len(args.envs)
-    ncols = len(args.metrics)
-    # smaller figure size
-    fig, axs = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(2.25 * ncols, 2 * nrows),
-        squeeze=True
-    )
-    # leave more space at bottom for global legend
-    fig.subplots_adjust(left=0.0, right=1.0, top=0.90, bottom=0.18, wspace=0.28, hspace=0.68)
+    envs = args.envs
+    metrics = args.metrics
+
+    n_env = len(envs)
+    nrows_env, ncols_env = nice_grid(n_env, max_cols=args.max_cols)
+
+    m = len(metrics)
+    total_rows = nrows_env
+    total_cols = ncols_env * m
+
+    fig_w = args.panel_w * total_cols
+    fig_h = args.panel_h * total_rows
+    fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+
+    # map (env_i, metric_i) -> axis
+    def get_ax(env_i: int, metric_i: int):
+        gr = env_i // ncols_env
+        gc = env_i % ncols_env
+        r = gr
+        c = gc * m + metric_i
+        return axs[r, c]
 
     # collect handles for a single legend at the bottom
     legend_handles: Dict[str, plt.Line2D] = {}
 
-    for r, env in enumerate(args.envs):
-        env_title = TRANSLATIONS.get(env, env)
+    for env_i, env in enumerate(envs):
+        env_title = env.replace("_", " ").title()
 
-        for c, metric in enumerate(args.metrics):
-            ax = axs[r, c]
+        for metric_i, metric in enumerate(metrics):
+            ax = get_ax(env_i, metric_i)
             label_y = TRANSLATIONS.get(metric, metric.capitalize())
 
             # track max x for this axis so we can set xlim(0, xmax)
@@ -144,18 +157,24 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
             if args.grid:
                 ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
 
-        # center env name above both columns for this row
-        left_bbox = axs[r, 0].get_position()
-        right_bbox = axs[r, -1].get_position()
+        # Center env title above the metric group for this env
+        left_bbox = get_ax(env_i, 0).get_position()
+        right_bbox = get_ax(env_i, m - 1).get_position()
         row_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
-        row_y = right_bbox.y1 + 0.01
+        row_y = max(left_bbox.y1, right_bbox.y1) + 0.01
         fig.text(row_x, row_y, env_title, ha="center", va="bottom", fontsize=10)
+
+    # hide any unused env cells
+    for env_i in range(n_env, nrows_env * ncols_env):
+        for metric_i in range(m):
+            ax = get_ax(env_i, metric_i)
+            ax.axis("off")
 
     # single legend at the bottom
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0), ncol=len(labels), fancybox=True,
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.2), ncol=min(len(labels), 10), fancybox=True,
                    shadow=True)
 
     out_dir = Path(args.output_fig_dir)
@@ -182,7 +201,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o"])
+    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=1)
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],
@@ -192,6 +211,11 @@ def build_args() -> argparse.ArgumentParser:
                    help="If set, x-axis is rescaled to this many env steps.")
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines.")
     p.add_argument("--grid", action="store_true")
+
+    p.add_argument("--max_cols", type=int, default=4, help="Max env columns in grid.")
+    p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
+    p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
+
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="baselines")
     return p
