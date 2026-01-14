@@ -178,7 +178,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.2), ncol=min(len(labels), 10), fancybox=True,
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.1), ncol=min(len(labels), 10), fancybox=True,
                    shadow=True)
 
     out_dir = Path(args.output_fig_dir)
