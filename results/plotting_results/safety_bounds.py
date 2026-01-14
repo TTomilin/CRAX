@@ -320,7 +320,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument(
         "--out_name",
         type=str,
-        default="point_goal_bounds",
+        default="safety_bounds",
     )
     return p
 
