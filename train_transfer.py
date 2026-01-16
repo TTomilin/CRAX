@@ -10,44 +10,25 @@ Example usage:
     python examples/safety_transfer.py --env safe_ant --unsafe_steps 2000000 --safe_steps 2000000
 """
 
-import argparse
 import functools
 import os
 from datetime import datetime
 from pathlib import Path
 
 import wandb
-
-from configs.training_config import build_base_parser
 from brax.training import transfer
-from run_utils import setup_gpu_environment, get_algorithm_train_fn
+from configs.training_config import build_base_parser
+from run_utils import setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn
 
 # Local metrics buffer to avoid spamming wandb
 _metrics_buffer = []
 
 
-def _progress_fn(step, metrics, use_wandb: bool = False, verbose: bool = True):
-    if verbose:
-        phase = metrics.get('phase', '?')
-        algo = metrics.get('algorithm', 'unsafe' if phase == 'unsafe' else metrics.get('algorithm', '?'))
-        reward = metrics.get('eval/episode_reward', float('nan'))
-        cost = metrics.get('eval/episode_cost', float('nan'))
-        print(f"[{step:,}] phase={phase} algo={algo}: reward={reward:.2f}, cost={cost:.2f}")
-    _metrics_buffer.append({"step": step, **metrics})
-    if use_wandb and wandb.run is not None:
-        for row in _metrics_buffer:
-            wandb.log({k: v for k, v in row.items() if k != 'step'}, step=row['step'])
-        _metrics_buffer.clear()
-
-
 def main():
     parser = build_base_parser(description='Safety transfer benchmark')
-    parser.add_argument('--unsafe_steps', type=int, default=2_000_000,
-                        help='Steps for unsafe pre-training')
-    parser.add_argument('--safe_steps', type=int, default=2_000_000,
-                        help='Steps for safe fine-tuning per algorithm')
-    parser.add_argument('--algorithms', type=str, nargs='+',
-                        default=['ppo_lag', 'ppo_pid', 'focops', 'p3o'],
+    parser.add_argument('--unsafe_steps', type=float, default=1e8, help='Steps for unsafe pre-training')
+    parser.add_argument('--safe_steps', type=float, default=1e8, help='Steps for safe fine-tuning per algorithm')
+    parser.add_argument('--algorithms', type=str, nargs='+', default=['ppo_lag', 'ppo_pid', 'focops', 'p3o'],
                         help='Safe algorithms to test')
     args = parser.parse_args()
 
@@ -89,7 +70,7 @@ def main():
             )
 
         # Progress logger
-        progress = functools.partial(_progress_fn, use_wandb=args.use_wandb, verbose=not args.quiet)
+        progress = functools.partial(custom_progress_fn, use_wandb=args.use_wandb, verbose=not args.quiet)
 
         # Execute benchmark (transfer module will filter kwargs per train fn)
         _, results = transfer.benchmark_safety_transfer(
@@ -132,7 +113,6 @@ def main():
         # Finish wandb run if active
         if args.use_wandb and wandb.run is not None:
             wandb.finish()
-
 
 
 if __name__ == '__main__':

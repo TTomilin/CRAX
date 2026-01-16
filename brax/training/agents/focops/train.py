@@ -574,19 +574,20 @@ def train(
     if effective_restore_params is not None:
         logging.info('Restoring TrainingState from pretrained/restore params.')
         # Handle transfer from PPO (no cost_value) or legacy checkpoints
-        has_cost_value = len(effective_restore_params) > 2
+        # Params tuple structure: (normalizer[0], policy[1], value[2], cost_value[3], nu[4])
+        has_cost_value = len(effective_restore_params) > 3
 
         if has_cost_value:
-            cost_value_params = effective_restore_params[2]
+            cost_value_params = effective_restore_params[3]
         elif init_cost_value_from == 'value':
             logging.info('Initializing cost_value from value network (transfer mode).')
-            cost_value_params = effective_restore_params[1]
+            cost_value_params = effective_restore_params[2]
         else:
             logging.info('Using random initialization for cost_value network.')
             cost_value_params = init_params.cost_value
 
-        value_params = effective_restore_params[1] if restore_value_fn else init_params.value
-        nu_value = effective_restore_params[3] if len(effective_restore_params) > 3 else jnp.array([initial_nu], dtype=jnp.float32)
+        value_params = effective_restore_params[2] if restore_value_fn else init_params.value
+        nu_value = effective_restore_params[4] if len(effective_restore_params) > 4 else jnp.array([initial_nu], dtype=jnp.float32)
         training_state = training_state.replace(
             normalizer_params=effective_restore_params[0],
             params=training_state.params.replace(
