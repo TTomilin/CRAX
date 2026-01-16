@@ -36,7 +36,7 @@ def main():
         stages = curriculum.create_difficulty_curriculum(
             env_name=env_name,
             levels=config.levels,
-            steps_per_level=config.num_timesteps // len(config.levels),
+            steps_per_level=int(config.num_timesteps // len(config.levels)),
         )
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
