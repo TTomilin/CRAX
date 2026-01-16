@@ -7,7 +7,7 @@ import argparse
 import functools
 import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 import numpy as np
 import wandb
@@ -17,41 +17,7 @@ from brax.envs import Env
 from brax.envs.difficulty import apply_difficulty
 from configs.training_config import build_base_parser
 from run_utils import collect_rollout_metrics, record_episode_video, setup_gpu_environment, get_algorithm_train_fn, \
-    filter_kwargs_for_fn
-
-# Global metrics buffer instance
-metrics_buffer = []
-
-
-def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool = False, verbose: bool = True) -> None:
-    """
-    Progress function to print metrics and log to Weights & Biases.
-
-    Args:
-        num_steps: Current training step
-        metrics: Metrics dictionary
-        use_wandb: Whether to use wandb logging
-        verbose: Whether to print metrics to console
-    """
-    global metrics_buffer
-
-    if verbose:
-        print(f"Step {num_steps}:")
-
-    log_data = {}
-    for key, value in metrics.items():
-        if verbose and any(tok in key for tok in ("lambda", "cost", "constraint", "reward")):
-            print(f"  {key}: {value}")
-        log_data[key] = value
-
-    metrics_buffer.append({"step": num_steps, **log_data})
-
-    if use_wandb and wandb.run is not None and log_data:
-        for row in metrics_buffer:
-            wandb.log(log_data, step=row["step"])
-
-        # clear the logged history from the buffer
-        metrics_buffer.clear()
+    filter_kwargs_for_fn, custom_progress_fn
 
 
 def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = True,

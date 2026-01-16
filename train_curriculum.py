@@ -15,24 +15,7 @@ import wandb
 
 from brax.training import curriculum
 from configs.training_config import build_base_parser
-from run_utils import setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn
-
-_metrics_buffer = []
-
-
-def custom_progress_fn(step, metrics, use_wandb: bool = False, verbose: bool = True):
-    if verbose:
-        stage = metrics.get('curriculum_stage', '?')
-        env = metrics.get('curriculum_env', '?')
-        reward = metrics.get('eval/episode_reward', float('nan'))
-        cost = metrics.get('eval/episode_cost', float('nan'))
-        print(f"[{step:,}] Stage {stage + 1} ({env}): reward={reward:.1f}, cost={cost:.1f}")
-    _metrics_buffer.append({"step": step, **metrics})
-    if use_wandb and wandb.run is not None:
-        # flush buffered logs
-        for row in _metrics_buffer:
-            wandb.log({k: v for k, v in row.items() if k != 'step'}, step=row['step'])
-        _metrics_buffer.clear()
+from run_utils import setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn
 
 
 def main():

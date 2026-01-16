@@ -23,6 +23,88 @@ from brax.training.agents.ppo_lag import train as ppo_lag
 from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.training.agents.ppo_saute import train as ppo_saute
 
+# Global metrics buffer instance
+metrics_buffer = []
+
+
+def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool = False, verbose: bool = True) -> None:
+    """
+    Progress function to print metrics and log to Weights & Biases.
+
+    Args:
+        num_steps: Current training step
+        metrics: Metrics dictionary
+        use_wandb: Whether to use wandb logging
+        verbose: Whether to print metrics to console
+    """
+    global metrics_buffer
+
+    if verbose:
+        print(f"Step {num_steps}:")
+
+    log_data = {}
+    for key, value in metrics.items():
+        if verbose and any(tok in key for tok in ("lambda", "cost", "constraint", "reward")):
+            print(f"  {key}: {value}")
+        log_data[key] = value
+
+    metrics_buffer.append({"step": num_steps, **log_data})
+
+    if use_wandb and wandb.run is not None and log_data:
+        for row in metrics_buffer:
+            wandb.log(log_data, step=row["step"])
+
+        # clear the logged history from the buffer
+        metrics_buffer.clear()
+
+
+def setup_gpu_environment():
+    """Setup GPU environment for MuJoCo and XLA."""
+    # Configure MuJoCo to use the EGL rendering backend (requires GPU)
+    os.environ['MUJOCO_GL'] = 'egl'
+
+    # Tell XLA to use Triton GEMM, this improves steps/sec by ~30% on some GPUs
+    xla_flags = os.environ.get('XLA_FLAGS', '')
+    xla_flags += ' --xla_gpu_triton_gemm_any=True'
+    os.environ['XLA_FLAGS'] = xla_flags
+
+    # Check installation
+    try:
+        print('Checking that the installation succeeded:')
+        mujoco.MjModel.from_xml_string('<mujoco/>')
+        print('Installation successful.')
+    except Exception as e:
+        raise RuntimeError(
+            'Something went wrong during installation. Check the error message above '
+            'for more information.'
+        ) from e
+
+
+def get_algorithm_train_fn(alg_name: str):
+    """Get the appropriate training function based on algorithm name."""
+    alg_map = {
+        'ppo': ppo_train,
+        'ppo_cost': train_ppo_cost,
+        'ppo_lag': ppo_lag,
+        'ppo_pid': ppo_pid,
+        'ppo_saute': ppo_saute,
+        'p3o': p3o,
+        'focops': focops,
+    }
+
+    train_fn = alg_map.get(alg_name)
+    if train_fn is None:
+        available = [k for k, v in alg_map.items() if v is not None]
+        raise ValueError(f"Algorithm '{alg_name}' not available or not installed. Available: {available}")
+
+    return train_fn
+
+
+def filter_kwargs_for_fn(fn, cfg):
+    sig = inspect.signature(fn)
+    valid_keys = set(sig.parameters.keys())
+    return {k: v for k, v in cfg.items() if k in valid_keys}
+
 
 def collect_rollout_metrics(env_name: str, make_inference_fn, params,
                             num_steps: int = 5000, seed: int = None,
@@ -415,51 +497,3 @@ def record_episode_video(
             wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")})
 
         print("Saved video:", mp4_path)
-
-
-def setup_gpu_environment():
-    """Setup GPU environment for MuJoCo and XLA."""
-    # Configure MuJoCo to use the EGL rendering backend (requires GPU)
-    os.environ['MUJOCO_GL'] = 'egl'
-
-    # Tell XLA to use Triton GEMM, this improves steps/sec by ~30% on some GPUs
-    xla_flags = os.environ.get('XLA_FLAGS', '')
-    xla_flags += ' --xla_gpu_triton_gemm_any=True'
-    os.environ['XLA_FLAGS'] = xla_flags
-
-    # Check installation
-    try:
-        print('Checking that the installation succeeded:')
-        mujoco.MjModel.from_xml_string('<mujoco/>')
-        print('Installation successful.')
-    except Exception as e:
-        raise RuntimeError(
-            'Something went wrong during installation. Check the error message above '
-            'for more information.'
-        ) from e
-
-
-def get_algorithm_train_fn(alg_name: str):
-    """Get the appropriate training function based on algorithm name."""
-    alg_map = {
-        'ppo': ppo_train,
-        'ppo_cost': train_ppo_cost,
-        'ppo_lag': ppo_lag,
-        'ppo_pid': ppo_pid,
-        'ppo_saute': ppo_saute,
-        'p3o': p3o,
-        'focops': focops,
-    }
-
-    train_fn = alg_map.get(alg_name)
-    if train_fn is None:
-        available = [k for k, v in alg_map.items() if v is not None]
-        raise ValueError(f"Algorithm '{alg_name}' not available or not installed. Available: {available}")
-
-    return train_fn
-
-
-def filter_kwargs_for_fn(fn, cfg):
-    sig = inspect.signature(fn)
-    valid_keys = set(sig.parameters.keys())
-    return {k: v for k, v in cfg.items() if k in valid_keys}
