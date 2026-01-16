@@ -246,6 +246,9 @@ def train(
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
+        # transfer learning / curriculum support
+        pretrained_params: Optional[Any] = None,
+        init_cost_value_from: str = 'value',
 ):
     """PPO-Lagrange training.
 
@@ -318,6 +321,12 @@ def train(
         from the return values of ppo.train().
       restore_value_fn: whether to restore the value function from the checkpoint
         or use a random initialization
+      pretrained_params: alias for restore_params, used for curriculum/transfer learning.
+        Takes precedence over restore_params if both are specified.
+      init_cost_value_from: how to initialize cost_value network when transferring
+        from an algorithm without cost_value (e.g., PPO). Options:
+        - 'value': copy from value network (often works well for transfer)
+        - 'random': use random initialization
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -699,17 +708,32 @@ def train(
             lambda_lagr=lambda_lagr_value,
         )
 
-    if restore_params is not None:
-        logging.info('Restoring TrainingState from `restore_params`.')
-        # Handle legacy restore_params that might not have cost_value or lambda_lagr
-        cost_value_params = restore_params[2] if len(restore_params) > 2 else init_params.cost_value
-        value_params = restore_params[1] if restore_value_fn else init_params.value
-        lambda_lagr_value = restore_params[3] if len(restore_params) > 3 else jnp.array([initial_lambda_lagr],
+    # pretrained_params takes precedence over restore_params (alias for curriculum/transfer)
+    effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
+
+    if effective_restore_params is not None:
+        logging.info('Restoring TrainingState from pretrained/restore params.')
+        # Handle transfer from PPO (no cost_value) or legacy checkpoints
+        has_cost_value = len(effective_restore_params) > 2
+
+        if has_cost_value:
+            cost_value_params = effective_restore_params[2]
+        elif init_cost_value_from == 'value':
+            # Initialize cost_value from value network (good for transfer learning)
+            logging.info('Initializing cost_value from value network (transfer mode).')
+            cost_value_params = effective_restore_params[1]  # Copy from value
+        else:
+            # Use random initialization
+            logging.info('Using random initialization for cost_value network.')
+            cost_value_params = init_params.cost_value
+
+        value_params = effective_restore_params[1] if restore_value_fn else init_params.value
+        lambda_lagr_value = effective_restore_params[3] if len(effective_restore_params) > 3 else jnp.array([initial_lambda_lagr],
                                                                                         dtype=jnp.float32)
         training_state = training_state.replace(
-            normalizer_params=restore_params[0],
+            normalizer_params=effective_restore_params[0],
             params=training_state.params.replace(
-                policy=restore_params[1],
+                policy=effective_restore_params[1],
                 value=value_params,
                 cost_value=cost_value_params
             ),

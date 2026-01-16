@@ -22,7 +22,7 @@ def main():
 
     # Throughput sweep if num_envs_list present, else training/eval
     if "num_envs_list" in cfg:
-        from tools.throughput_sweep import sweep_throughput
+        from scripts.throughput_sweep import sweep_throughput
         sweep_throughput(
             env_name=cfg["env"],
             alg=cfg["alg"],
@@ -50,7 +50,7 @@ def main():
             initial_lambda_lagr=cfg.get("initial_lambda_lagr"),
         )
     else:
-        from tools.collect_metrics import run_experiment
+        from scripts.collect_metrics import run_experiment
         run_experiment(
             env_name=cfg["env"],
             alg=cfg["alg"],

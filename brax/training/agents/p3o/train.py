@@ -232,6 +232,9 @@ def train(
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
+        # transfer learning / curriculum support
+        pretrained_params: Optional[Any] = None,
+        init_cost_value_from: str = 'value',
 ):
     """P3O training.
 
@@ -678,15 +681,29 @@ def train(
             kappa=kappa_value,
         )
 
-    if restore_params is not None:
-        logging.info('Restoring TrainingState from `restore_params`.')
-        cost_value_params = restore_params[2] if len(restore_params) > 2 else init_params.cost_value
-        value_params = restore_params[1] if restore_value_fn else init_params.value
-        kappa_value = restore_params[3] if len(restore_params) > 3 else jnp.array([initial_kappa], dtype=jnp.float32)
+    # pretrained_params takes precedence over restore_params (for curriculum/transfer)
+    effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
+
+    if effective_restore_params is not None:
+        logging.info('Restoring TrainingState from pretrained/restore params.')
+        # Handle transfer from PPO (no cost_value) or legacy checkpoints
+        has_cost_value = len(effective_restore_params) > 2
+
+        if has_cost_value:
+            cost_value_params = effective_restore_params[2]
+        elif init_cost_value_from == 'value':
+            logging.info('Initializing cost_value from value network (transfer mode).')
+            cost_value_params = effective_restore_params[1]
+        else:
+            logging.info('Using random initialization for cost_value network.')
+            cost_value_params = init_params.cost_value
+
+        value_params = effective_restore_params[1] if restore_value_fn else init_params.value
+        kappa_value = effective_restore_params[3] if len(effective_restore_params) > 3 else jnp.array([initial_kappa], dtype=jnp.float32)
         training_state = training_state.replace(
-            normalizer_params=restore_params[0],
+            normalizer_params=effective_restore_params[0],
             params=training_state.params.replace(
-                policy=restore_params[1],
+                policy=effective_restore_params[1],
                 value=value_params,
                 cost_value=cost_value_params
             ),

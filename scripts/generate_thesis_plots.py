@@ -50,7 +50,7 @@ def main() -> int:
         sys.path.insert(0, base_dir)
 
     try:
-        import thesis_plotting_functions as t
+        from scripts import thesis_plotting_functions as t
     except Exception as exc:
         print(f"Failed to import thesis_plotting_functions: {exc}", file=sys.stderr)
         return 2
