@@ -45,18 +45,14 @@ def train_from_config(config: argparse.Namespace, seed: int, use_wandb: bool = T
     runtime_cfg = {"seed": seed, "timestamp": config.timestamp}
     cfg = {**cli_cfg, **runtime_cfg}
 
-    cfg = vars(config)
-    cfg['seed'] = seed
     if use_wandb:
         # Prepare wandb config
         wandb_config = cfg.copy()
-        wandb_config['seed'] = seed
-
-        # Initialize wandb
         wandb_project = config.wandb_project
         wandb_group = config.wandb_group if config.wandb_group else env_name
         wandb_tags = config.wandb_tags
 
+        # Initialize wandb
         wandb.init(
             project=wandb_project,
             name=run_name,
