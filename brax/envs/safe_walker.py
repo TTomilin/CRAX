@@ -69,7 +69,6 @@ class SafeWalker(PipelineEnv):
         self._min_gap = min_gap
         self._max_gap = max_gap
         self._lateral_jitter = lateral_jitter
-        self._cost_scale = kwargs.get("cost", {}).get("scaler", 1.0)
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
         self._lidar_alias = lidar_alias
@@ -376,4 +375,4 @@ class SafeWalker(PipelineEnv):
         is_cyl = 1.0 - is_rect
         per_hazard_cost = cyl_any_per_h * is_cyl + rect_any_per_h * is_rect  # (N,)
         total_cost = jp.sum(per_hazard_cost)
-        return jp.asarray(self._cost_scale, dtype=jp.float32) * total_cost
+        return jp.asarray(self._cost_scaler, dtype=jp.float32) * total_cost
