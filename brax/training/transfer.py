@@ -64,6 +64,13 @@ from brax import envs
 from brax.envs.difficulty import apply_difficulty
 from run_utils import filter_kwargs_for_fn
 
+# Optional wandb import - only used if wandb_config is provided
+try:
+    import wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _WANDB_AVAILABLE = False
+
 
 class TransferResult(NamedTuple):
     """Results from a safety transfer experiment."""
@@ -139,6 +146,7 @@ def benchmark_safety_transfer(
         unsafe_train_kwargs: Optional[Dict[str, Any]] = None,
         progress_fn: Optional[Callable] = None,
         seed: int = 0,
+        wandb_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Dict[str, TransferResult]]:
     """Benchmark safety transfer across multiple safe RL algorithms.
 
@@ -155,12 +163,24 @@ def benchmark_safety_transfer(
         unsafe_train_kwargs: Additional kwargs only for unsafe training.
         progress_fn: Optional progress callback.
         seed: Random seed.
+        wandb_config: Optional wandb configuration dict with keys:
+            - enabled: bool, whether to use wandb
+            - project: str, wandb project name
+            - group: str, wandb group name (algorithms will be grouped together)
+            - tags: list, wandb tags
+            - base_name: str, base run name (algorithm name will be appended)
+            - config: dict, config to log to wandb
 
     Returns:
         Tuple of (unsafe_params, dict mapping algorithm names to TransferResult).
     """
     train_kwargs = train_kwargs or {}
     unsafe_train_kwargs = unsafe_train_kwargs or {}
+
+    # Determine if wandb is enabled
+    use_wandb = (wandb_config is not None and
+                 wandb_config.get('enabled', False) and
+                 _WANDB_AVAILABLE)
 
     print("=" * 70)
     print("SAFETY TRANSFER BENCHMARK")
@@ -181,6 +201,21 @@ def benchmark_safety_transfer(
     print("[Phase 1] Training unsafe baseline policy")
     print("-" * 50)
 
+    # Initialize wandb run for unsafe training
+    if use_wandb:
+        base_name = wandb_config.get('base_name', f'{env_name}_transfer')
+        run_config = wandb_config.get('config', {})
+        run_config['algorithm'] = 'ppo'
+        run_config['phase'] = 'unsafe'
+        wandb.init(
+            project=wandb_config.get('project', 'safety-transfer'),
+            name=f"{base_name}_ppo",
+            group=wandb_config.get('group', env_name),
+            tags=wandb_config.get('tags', []),
+            config=run_config,
+            job_type='unsafe_pretraining',
+        )
+
     # Build kwargs for unsafe train function, filtering to its signature
     base_unsafe_kwargs = dict(train_kwargs)
     base_unsafe_kwargs.update(unsafe_train_kwargs)
@@ -194,23 +229,15 @@ def benchmark_safety_transfer(
     def unsafe_progress_fn(step, metrics):
         metrics['phase'] = 'unsafe'
         unsafe_metrics_history.append(metrics)
+        if use_wandb and wandb.run is not None:
+            wandb.log(metrics, step=step)
         if progress_fn:
             progress_fn(step, metrics)
 
     unsafe_kwargs['progress_fn'] = unsafe_progress_fn
 
     start_time = time.time()
-    unsafe_out = unsafe_train_fn(**unsafe_kwargs)
-    # Normalize return to (make_policy, params, final_metrics)
-    if isinstance(unsafe_out, tuple):
-        if len(unsafe_out) == 4:
-            unsafe_make_policy, unsafe_params, unsafe_final_metrics = unsafe_out[0], unsafe_out[1], unsafe_out[2]
-        elif len(unsafe_out) == 3:
-            unsafe_make_policy, unsafe_params, unsafe_final_metrics = unsafe_out
-        else:
-            raise ValueError(f"unsafe_train_fn returned unexpected tuple of length {len(unsafe_out)}")
-    else:
-        raise ValueError(f"unsafe_train_fn returned unexpected type: {type(unsafe_out)}")
+    unsafe_make_policy, unsafe_params, unsafe_final_metrics, eval_env = unsafe_train_fn(**unsafe_kwargs)
     unsafe_training_time = time.time() - start_time
 
     print(f"\nUnsafe training complete:")
@@ -220,6 +247,10 @@ def benchmark_safety_transfer(
     if 'eval/episode_cost' in unsafe_final_metrics:
         print(f"  Final cost: {unsafe_final_metrics['eval/episode_cost']:.2f}")
 
+    # Finish wandb run for unsafe training
+    if use_wandb and wandb.run is not None:
+        wandb.finish()
+
     # Phase 2: Transfer to each safe algorithm
     print("\n[Phase 2] Safety Transfer Experiments")
     print("-" * 50)
@@ -227,6 +258,22 @@ def benchmark_safety_transfer(
     results = {}
     for algo_name, safe_train_fn in safe_train_fns.items():
         print(f"\n  Testing {algo_name}...")
+
+        # Initialize wandb run for this safe algorithm
+        if use_wandb:
+            base_name = wandb_config.get('base_name', f'{env_name}_transfer')
+            run_config = wandb_config.get('config', {}).copy()
+            run_config['algorithm'] = algo_name
+            run_config['phase'] = 'safe'
+            run_config['pretrained_from'] = 'ppo'
+            wandb.init(
+                project=wandb_config.get('project', 'safety-transfer'),
+                name=f"{base_name}_{algo_name}",
+                group=wandb_config.get('group', env_name),
+                tags=wandb_config.get('tags', []),
+                config=run_config,
+                job_type='safety_finetuning',
+            )
 
         base_safe_kwargs = dict(train_kwargs)
         base_safe_kwargs['environment'] = environment
@@ -239,38 +286,22 @@ def benchmark_safety_transfer(
 
         safe_metrics_history = []
 
-        def safe_progress_fn(step, metrics):
-            metrics['phase'] = 'safe'
-            metrics['algorithm'] = algo_name
-            safe_metrics_history.append(dict(metrics))
-            if progress_fn:
-                progress_fn(unsafe_steps + step, metrics)
+        # Use closure to capture algo_name correctly for each iteration
+        def make_safe_progress_fn(alg_name, metrics_history):
+            def safe_progress_fn(step, metrics):
+                metrics['phase'] = 'safe'
+                metrics['algorithm'] = alg_name
+                metrics_history.append(dict(metrics))
+                if use_wandb and wandb.run is not None:
+                    wandb.log(metrics, step=step)
+                if progress_fn:
+                    progress_fn(step, metrics)
+            return safe_progress_fn
 
-        safe_kwargs['progress_fn'] = safe_progress_fn
+        safe_kwargs['progress_fn'] = make_safe_progress_fn(algo_name, safe_metrics_history)
 
         start_time = time.time()
-        try:
-            safe_out = safe_train_fn(**safe_kwargs)
-        except TypeError as e:
-            # Some train functions might not support pretrained_params
-            if 'pretrained_params' in str(e):
-                print("    Warning: train_fn doesn't support pretrained_params, training from scratch")
-                safe_kwargs.pop('pretrained_params', None)
-                safe_out = safe_train_fn(**safe_kwargs)
-            else:
-                raise
-
-        # Normalize return to (make_policy, params, final_metrics)
-        if isinstance(safe_out, tuple):
-            if len(safe_out) == 4:
-                _, safe_params, safe_final_metrics = safe_out[0], safe_out[1], safe_out[2]
-            elif len(safe_out) == 3:
-                _, safe_params, safe_final_metrics = safe_out
-            else:
-                raise ValueError(f"safe_train_fn returned unexpected tuple of length {len(safe_out)} for {algo_name}")
-        else:
-            raise ValueError(f"safe_train_fn returned unexpected type: {type(safe_out)} for {algo_name}")
-
+        _, safe_params, safe_final_metrics, eval_env = safe_train_fn(**safe_kwargs)
         safe_training_time = time.time() - start_time
 
         print(f"    {algo_name} complete:")
@@ -279,6 +310,10 @@ def benchmark_safety_transfer(
             print(f"      Final reward: {safe_final_metrics['eval/episode_reward']:.2f}")
         if 'eval/episode_cost' in safe_final_metrics:
             print(f"      Final cost: {safe_final_metrics['eval/episode_cost']:.2f}")
+
+        # Finish wandb run for this safe algorithm
+        if use_wandb and wandb.run is not None:
+            wandb.finish()
 
         results[algo_name] = TransferResult(
             algorithm=algo_name,

@@ -70,7 +70,7 @@ def train_curriculum(
         train_kwargs: Dict[str, Any],
         progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
         seed: int = 0,
-) -> Tuple[Any, List[StageResult]]:
+):
     """Train sequentially across multiple curriculum stages.
 
     Args:
@@ -83,7 +83,7 @@ def train_curriculum(
         seed: Random seed for the first stage. Incremented for each stage.
 
     Returns:
-        Tuple of (final_params, list of StageResult for each stage).
+        Tuple of (policy_fn, final_params, list of StageResult for each stage, eval_env).
     """
     all_results = []
     current_params = None
@@ -178,7 +178,7 @@ def train_curriculum(
     print(f"Total stages: {len(stages)}")
     print(f"Total steps: {global_step:,}")
 
-    return current_params, all_results
+    return make_policy, current_params, all_results, eval_env
 
 
 def create_difficulty_curriculum(

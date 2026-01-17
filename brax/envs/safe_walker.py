@@ -48,7 +48,7 @@ class SafeWalker(PipelineEnv):
             **kwargs,
     ):
         self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
-        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.1)
+        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.2)
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy

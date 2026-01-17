@@ -15,7 +15,8 @@ import wandb
 
 from brax.training import curriculum
 from configs.training_config import build_base_parser
-from run_utils import setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn
+from run_utils import setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn, \
+    record_episode_video
 
 
 def main():
@@ -80,7 +81,7 @@ def main():
         train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
 
         # Train with curriculum
-        final_params, results = curriculum.train_curriculum(
+        policy_fn, final_params, results, eval_env = curriculum.train_curriculum(
             stages=stages,
             train_fn=train_fn_base,
             train_kwargs=train_kwargs,
@@ -100,6 +101,24 @@ def main():
                 print(f"  Final reward: {result.final_metrics['eval/episode_reward']:.2f}")
             if 'eval/episode_cost' in result.final_metrics:
                 print(f"  Final cost: {result.final_metrics['eval/episode_cost']:.2f}")
+
+        if not config.skip_video:
+            video_length = config.video_length if config.video_length else config.episode_length
+            record_episode_video(
+                env=eval_env,
+                make_inference_fn=policy_fn,
+                params=final_params,
+                steps=video_length,
+                cameras=config.cameras,
+                width=config.video_width,
+                height=config.video_height,
+                fps=config.video_fps,
+                frame_stride=config.video_frame_stride,
+                out_name=run_name,
+                log_to_wandb=config.use_wandb,
+                seed=seed,
+                num_episodes=config.num_video_episodes,
+            )
 
         # Finish wandb run if active
         if use_wandb and wandb.run is not None:

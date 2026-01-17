@@ -39,12 +39,12 @@ def default_config() -> config_dict.ConfigDict:
         # --- Reward settings ---
         reward=config_dict.create(
             reward_goal=1.0,  # Sparse reward for reaching goal
-            scaler=0.0,  # Dense reward scale (progress toward goal)
+            scaler=0.0,  # Reward scaler
         ),
 
         # --- Cost (safety) settings ---
         cost=config_dict.create(
-            scaler=1.0,  # Hazard cost scaler
+            scaler=2.0,  # Hazard cost scaler
             collision=3.0,  # Collision cost
             ctrl_cost_weight=0.001,  # Control effort cost
         ),

@@ -15,13 +15,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import wandb
 from brax.training import transfer
 from configs.training_config import build_base_parser
 from run_utils import setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn
-
-# Local metrics buffer to avoid spamming wandb
-_metrics_buffer = []
 
 
 def main():
@@ -42,8 +38,7 @@ def main():
     # Run experiments per seed
     for seed in args.seeds:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-        algs_str = '-'.join(args.algorithms)
-        run_name = f"{args.env_name}_transfer_{algs_str}_seed{seed}_{timestamp}"
+        base_run_name = f"{args.env_name}_transfer_seed{seed}_{timestamp}"
 
         # Prepare full config dict
         cli_cfg = vars(args)
@@ -53,35 +48,36 @@ def main():
         # Optional checkpoint dir
         if args.store_model:
             root_dir = Path(__file__).parent.resolve()
-            ckpt_root = root_dir / args.model_dir / run_name
+            ckpt_root = root_dir / args.model_dir / base_run_name
             os.makedirs(ckpt_root, exist_ok=True)
             cfg["save_checkpoint_path"] = ckpt_root
 
-        # WandB per-seed run
+        # Build wandb config for per-algorithm runs
+        wandb_config = None
         if args.use_wandb:
-            wandb.init(
-                project=args.wandb_project,
-                name=run_name,
-                id=run_name,
-                config=cfg,
-                group=args.wandb_group if args.wandb_group else args.env_name,
-                job_type='safety_transfer',
-                tags=args.wandb_tags,
-            )
+            wandb_config = {
+                'enabled': True,
+                'project': args.wandb_project,
+                'group': args.wandb_group if args.wandb_group else f"{args.env_name}_transfer",
+                'tags': args.wandb_tags or [],
+                'base_name': base_run_name,
+                'config': cfg,
+            }
 
-        # Progress logger
-        progress = functools.partial(custom_progress_fn, use_wandb=args.use_wandb, verbose=not args.quiet)
+        # Progress logger (no wandb logging here - handled per-algorithm in transfer module)
+        progress = functools.partial(custom_progress_fn, use_wandb=False, verbose=not args.quiet)
 
-        # Execute benchmark (transfer module will filter kwargs per train fn)
+        # Execute benchmark (transfer module will manage wandb runs per algorithm)
         _, results = transfer.benchmark_safety_transfer(
             env_name=args.env_name,
             unsafe_train_fn=unsafe_train_fn,
             safe_train_fns=safe_train_fns,
-            unsafe_steps=args.unsafe_steps,
-            safe_steps=args.safe_steps,
+            unsafe_steps=int(args.unsafe_steps),
+            safe_steps=int(args.safe_steps),
             train_kwargs=cfg,
             progress_fn=progress,
             seed=seed,
+            wandb_config=wandb_config,
         )
 
         # Detailed results
@@ -109,10 +105,6 @@ def main():
                 print(f"  Status: SAFE (cost {safe_cost:.1f} <= bound {cfg.get('safety_bound')})")
             else:
                 print(f"  Status: UNSAFE (cost {safe_cost:.1f} > bound {cfg.get('safety_bound')})")
-
-        # Finish wandb run if active
-        if args.use_wandb and wandb.run is not None:
-            wandb.finish()
 
 
 if __name__ == '__main__':
