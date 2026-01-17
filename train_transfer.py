@@ -18,6 +18,7 @@ from pathlib import Path
 from brax.training import transfer
 from configs.training_config import build_base_parser
 from run_utils import setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn
+import wandb
 
 
 def main():
@@ -68,7 +69,7 @@ def main():
         progress = functools.partial(custom_progress_fn, use_wandb=False, verbose=not args.quiet)
 
         # Execute benchmark (transfer module will manage wandb runs per algorithm)
-        _, results = transfer.benchmark_safety_transfer(
+        unsafe_params, results = transfer.benchmark_safety_transfer(
             env_name=args.env_name,
             unsafe_train_fn=unsafe_train_fn,
             safe_train_fns=safe_train_fns,
@@ -105,6 +106,11 @@ def main():
                 print(f"  Status: SAFE (cost {safe_cost:.1f} <= bound {cfg.get('safety_bound')})")
             else:
                 print(f"  Status: UNSAFE (cost {safe_cost:.1f} > bound {cfg.get('safety_bound')})")
+
+
+        # Finish wandb run if active (should already be finished inside transfer module)
+        if wandb.run is not None:
+            wandb.finish()
 
 
 if __name__ == '__main__':

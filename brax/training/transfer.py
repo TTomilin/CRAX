@@ -62,7 +62,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from brax import envs
 from brax.envs.difficulty import apply_difficulty
-from run_utils import filter_kwargs_for_fn
+from run_utils import filter_kwargs_for_fn, record_episode_video
 
 # Optional wandb import - only used if wandb_config is provided
 try:
@@ -192,10 +192,14 @@ def benchmark_safety_transfer(
     print()
 
     # Create environment using difficulty mapping if provided
-    base_env_kwargs = train_kwargs.get('env_kwargs', None)
+    env_kwargs = train_kwargs.get('env_kwargs', None)
     difficulty = train_kwargs.get('difficulty', None)
-    adjusted_env_kwargs = apply_difficulty(env_name, base_env_kwargs, difficulty) if difficulty is not None else (base_env_kwargs or {})
-    environment = envs.get_environment(env_name, **adjusted_env_kwargs)
+    adjusted_env_kwargs = apply_difficulty(env_name, env_kwargs, difficulty) if difficulty is not None else (env_kwargs or {})
+    env = envs.get_environment(env_name, **adjusted_env_kwargs)
+    eval_env = envs.get_environment(env_name, **adjusted_env_kwargs)
+
+    # Determine the episode length
+    episode_length = train_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
     # Phase 1: Train unsafe policy
     print("[Phase 1] Training unsafe baseline policy")
@@ -219,9 +223,11 @@ def benchmark_safety_transfer(
     # Build kwargs for unsafe train function, filtering to its signature
     base_unsafe_kwargs = dict(train_kwargs)
     base_unsafe_kwargs.update(unsafe_train_kwargs)
-    base_unsafe_kwargs['environment'] = environment
+    base_unsafe_kwargs['environment'] = env
+    base_unsafe_kwargs['eval_env'] = eval_env
     base_unsafe_kwargs['num_timesteps'] = unsafe_steps
     base_unsafe_kwargs['seed'] = seed
+    base_unsafe_kwargs['episode_length'] = episode_length
     unsafe_kwargs = filter_kwargs_for_fn(unsafe_train_fn, base_unsafe_kwargs)
 
     unsafe_metrics_history = []
@@ -237,7 +243,7 @@ def benchmark_safety_transfer(
     unsafe_kwargs['progress_fn'] = unsafe_progress_fn
 
     start_time = time.time()
-    unsafe_make_policy, unsafe_params, unsafe_final_metrics, eval_env = unsafe_train_fn(**unsafe_kwargs)
+    unsafe_make_policy, unsafe_params, unsafe_final_metrics, returned_eval_env = unsafe_train_fn(**unsafe_kwargs)
     unsafe_training_time = time.time() - start_time
 
     print(f"\nUnsafe training complete:")
@@ -246,6 +252,29 @@ def benchmark_safety_transfer(
         print(f"  Final reward: {unsafe_final_metrics['eval/episode_reward']:.2f}")
     if 'eval/episode_cost' in unsafe_final_metrics:
         print(f"  Final cost: {unsafe_final_metrics['eval/episode_cost']:.2f}")
+
+    # Record unsafe rollout video if requested
+    if not train_kwargs.get('skip_video', False):
+        video_env = returned_eval_env or eval_env
+        video_length = train_kwargs.get('video_length') or train_kwargs.get('episode_length')
+        if video_length is None:
+            video_length = getattr(video_env, 'episode_length', None) or getattr(video_env, 'default_episode_length', None)
+        out_name = (wandb_config.get('base_name', f'{env_name}_transfer') + '_ppo') if use_wandb else f'{env_name}_ppo_transfer'
+        record_episode_video(
+            env=video_env,
+            make_inference_fn=unsafe_make_policy,
+            params=unsafe_params,
+            steps=video_length,
+            cameras=train_kwargs.get('cameras'),
+            width=train_kwargs.get('video_width'),
+            height=train_kwargs.get('video_height'),
+            fps=train_kwargs.get('video_fps'),
+            frame_stride=train_kwargs.get('video_frame_stride'),
+            out_name=out_name,
+            log_to_wandb=use_wandb and wandb.run is not None,
+            seed=seed,
+            num_episodes=train_kwargs.get('num_video_episodes', 1),
+        )
 
     # Finish wandb run for unsafe training
     if use_wandb and wandb.run is not None:
@@ -276,9 +305,11 @@ def benchmark_safety_transfer(
             )
 
         base_safe_kwargs = dict(train_kwargs)
-        base_safe_kwargs['environment'] = environment
+        base_safe_kwargs['environment'] = env
+        base_safe_kwargs['eval_env'] = eval_env
         base_safe_kwargs['num_timesteps'] = safe_steps
-        base_safe_kwargs['seed'] = seed + 1000  # Different seed for safety phase
+        base_safe_kwargs['seed'] = seed
+        base_safe_kwargs['episode_length'] = episode_length
         base_safe_kwargs['pretrained_params'] = unsafe_params
 
         # Filter kwargs for the specific safe algorithm signature
@@ -301,7 +332,7 @@ def benchmark_safety_transfer(
         safe_kwargs['progress_fn'] = make_safe_progress_fn(algo_name, safe_metrics_history)
 
         start_time = time.time()
-        _, safe_params, safe_final_metrics, eval_env = safe_train_fn(**safe_kwargs)
+        safe_make_policy, safe_params, safe_final_metrics, returned_eval_env_safe = safe_train_fn(**safe_kwargs)
         safe_training_time = time.time() - start_time
 
         print(f"    {algo_name} complete:")
@@ -310,6 +341,29 @@ def benchmark_safety_transfer(
             print(f"      Final reward: {safe_final_metrics['eval/episode_reward']:.2f}")
         if 'eval/episode_cost' in safe_final_metrics:
             print(f"      Final cost: {safe_final_metrics['eval/episode_cost']:.2f}")
+
+        # Record safe-phase rollout video if requested
+        if not train_kwargs.get('skip_video', False):
+            video_env = returned_eval_env_safe or eval_env
+            video_length = train_kwargs.get('video_length') or train_kwargs.get('episode_length')
+            if video_length is None:
+                video_length = getattr(video_env, 'episode_length', None) or getattr(video_env, 'default_episode_length', None)
+            out_name = (wandb_config.get('base_name', f'{env_name}_transfer') + f'_{algo_name}') if use_wandb else f'{env_name}_{algo_name}_transfer'
+            record_episode_video(
+                env=video_env,
+                make_inference_fn=safe_make_policy,
+                params=safe_params,
+                steps=video_length,
+                cameras=train_kwargs.get('cameras'),
+                width=train_kwargs.get('video_width'),
+                height=train_kwargs.get('video_height'),
+                fps=train_kwargs.get('video_fps'),
+                frame_stride=train_kwargs.get('video_frame_stride'),
+                out_name=out_name,
+                log_to_wandb=use_wandb and wandb.run is not None,
+                seed=seed,
+                num_episodes=train_kwargs.get('num_video_episodes', 1),
+            )
 
         # Finish wandb run for this safe algorithm
         if use_wandb and wandb.run is not None:

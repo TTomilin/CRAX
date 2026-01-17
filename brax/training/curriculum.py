@@ -30,10 +30,11 @@ Example usage:
     ]
 
     # Train with curriculum
-    final_params, all_metrics = curriculum.train_curriculum(
+    policy_fn, final_params, results, eval_env = curriculum.train_curriculum(
         stages=stages,
         train_fn=ppo_lag.train,
         train_kwargs={'episode_length': 1000, 'num_envs': 2048},
+        seed=42,
     )
 """
 

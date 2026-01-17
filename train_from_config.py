@@ -45,14 +45,17 @@ def main():
 
         # Create environments
         adjusted_env_kwargs = apply_difficulty(env_name, config.env_kwargs, difficulty)
-        train_environment = envs.get_environment(env_name, **adjusted_env_kwargs)
+        env = envs.get_environment(env_name, **adjusted_env_kwargs)
         eval_env = envs.get_environment(env_name, **adjusted_env_kwargs)
+
+        # Determine the episode length
+        episode_length = adjusted_env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
         print(f"Training environment '{env_name}' instantiated with difficulty {difficulty}.")
         print(f"Evaluation environment '{env_name}' instantiated with difficulty {difficulty}.")
 
         cli_cfg = vars(config)
-        runtime_cfg = {"seed": seed, "timestamp": timestamp}
+        runtime_cfg = {"seed": seed, "timestamp": timestamp, "episode_length": episode_length}
         cfg = {**cli_cfg, **runtime_cfg}
 
         if use_wandb:
@@ -92,7 +95,7 @@ def main():
         # Train the agent
         print(f"Starting {alg_name} training for {env_name}...")
         make_inference_fn, params, final_metrics, eval_env = train_fn(
-            environment=train_environment,
+            environment=env,
             eval_env=eval_env,
             progress_fn=progress_fn
         )
@@ -103,7 +106,9 @@ def main():
             final_log_data = {}
             for key, value in final_metrics.items():
                 if value is not None:
-                    final_log_data[key] = value.mean()
+                    if isinstance(value, (np.ndarray,)) and value.ndim > 0:
+                        value = value.mean()
+                    final_log_data[key] = value
             if final_log_data:
                 wandb.log(final_log_data, step=int(config.num_timesteps))
 
