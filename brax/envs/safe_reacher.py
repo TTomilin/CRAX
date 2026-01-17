@@ -25,6 +25,7 @@ class SafeReacher(PipelineEnv):
 
     def __init__(
             self,
+            episode_length: int = 2000,
             num_hazards: int = 6,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.035,
@@ -118,6 +119,9 @@ class SafeReacher(PipelineEnv):
 
         # Pass physics settings to PipelineEnv
         super().__init__(sys, backend=backend, n_frames=n_frames)
+
+        # Episode length for this task
+        self.episode_length = episode_length
 
         # Cache hazard mocap ids and static params
         self._hazard_mocap_ids = []

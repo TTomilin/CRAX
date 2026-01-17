@@ -91,7 +91,7 @@ def default_config() -> config_dict.ConfigDict:
                 ),
             ],
         ),
-
+        episode_length=2000,  # Default episode length
         base_agent_file_name="point.xml",  # Name of the agent from the assets folder
         # --- Debugging ---
         debug=False,  # Print extra diagnostics during setup/reset
@@ -204,6 +204,9 @@ class SafePointGoal(PipelineEnv):
 
         # Pass physics settings to PipelineEnv
         super().__init__(sys, backend=config.physics.backend, n_frames=config.physics.n_frames)
+
+        # Episode length for this task
+        self.episode_length = config.episode_length
 
         # Get body IDs
         self._agent_body = 1  # agent body

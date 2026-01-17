@@ -110,7 +110,9 @@ def _maybe_wrap_env(
     if not wrap_env:
         return env
     if episode_length is None:
-        raise ValueError('episode_length must be specified in p3o.train')
+        episode_length = getattr(env, 'episode_length', None)
+    if episode_length is None:
+        raise ValueError('episode_length must be specified (no env default found) in p3o.train')
     v_randomization_fn = None
     if randomization_fn is not None:
         randomization_batch_size = num_envs // device_count

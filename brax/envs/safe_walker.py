@@ -25,6 +25,7 @@ class SafeWalker(PipelineEnv):
 
     def __init__(
             self,
+            episode_length: int = 2000,
             num_hazards: int = 100,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.25,
@@ -119,6 +120,9 @@ class SafeWalker(PipelineEnv):
 
         sys = mjcf.load_model(mj_model)
         super().__init__(sys, backend=backend, n_frames=n_frames)
+
+        # Episode length for this task
+        self.episode_length = episode_length
 
         # Cache key body ids: torso, feet
         self._torso_link_id = sys.link_names.index("torso")

@@ -76,7 +76,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
 
     # --- Training Scale / Rollout ---
     parser.add_argument("--num_timesteps", type=float, default=100_000_000, help="Total training timesteps")
-    parser.add_argument("--episode_length", type=int, default=2000, help="Episode length")
+    parser.add_argument("--episode_length", type=int, default=None, help="Episode length; if None, use the task's default")
     parser.add_argument("--num_envs", type=int, default=2048, help="Number of parallel envs")
     parser.add_argument("--unroll_length", type=int, default=8, help="Unroll length")
     parser.add_argument("--batch_size", type=int, default=1024, help="Batch size")

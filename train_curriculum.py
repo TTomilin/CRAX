@@ -104,6 +104,8 @@ def main():
 
         if not config.skip_video:
             video_length = config.video_length if config.video_length else config.episode_length
+            if video_length is None:
+                video_length = getattr(eval_env, 'episode_length', None)
             record_episode_video(
                 env=eval_env,
                 make_inference_fn=policy_fn,

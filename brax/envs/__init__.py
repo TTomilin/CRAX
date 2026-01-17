@@ -148,7 +148,7 @@ def register_environment(env_name: str, env_class: Type[Env]):
 
 def create(
         env_name: str,
-        episode_length: int = 1000,
+        episode_length: Optional[int] = None,
         action_repeat: int = 1,
         auto_reset: bool = True,
         batch_size: Optional[int] = None,
@@ -175,6 +175,9 @@ def create(
 
     env = UnifiedEnvAdapter(base_env, **kwargs)
 
+    # Resolve episode length: prefer explicit, else environment default if available
+    if episode_length is None:
+        episode_length = getattr(env, 'episode_length', None)
     if episode_length is not None:
         env = training.EpisodeWrapper(env, episode_length, action_repeat)
     if batch_size:
