@@ -6,96 +6,29 @@ Features goal resetting, safety costs, and simplified lidar observations.
 """
 
 import os
-from typing import Dict
+from typing import Dict, List, Optional, Tuple
 
 import jax
 import mujoco
 from jax import numpy as jp
-from ml_collections import config_dict
 from mujoco import mjx
 
 from brax.envs.base import PipelineEnv, State
-from brax.envs.env_utils import create_hazard_manager_from_config, create_goal_manager_from_config, \
-    generate_goal_xml_from_base, safe_norm, config_merge, expand_hazard_specs, sdf_cylinder, sdf_cube, place_objects, \
-    sample_position_in_extents, base_xml_file_path, add_walls, choose_valid_position_shape_aware
+from brax.envs.env_utils import (
+    create_hazard_manager_from_specs,
+    create_goal_manager_from_params,
+    generate_goal_xml_from_base,
+    safe_norm,
+    sdf_cylinder,
+    sdf_cube,
+    place_objects,
+    sample_position_in_extents,
+    base_xml_file_path,
+    add_walls_to_specs,
+    choose_valid_position_shape_aware,
+)
 from brax.envs.hazards import _type_defaults_from_registry
 from brax.io import mjcf
-
-
-def default_config() -> config_dict.ConfigDict:
-    """Returns the default config for SafePointGoal environment."""
-    return config_dict.create(
-        # --- Physics settings ---
-        physics=config_dict.create(
-            backend='mjx',  # Use MJX backend for JAX-friendly physics
-            n_frames=4,  # Physics steps per control step
-            timestep=0.02,  # Simulation timestep
-            terminate_when_unhealthy=True,  # End episode if agent leaves healthy z-range
-            healthy_z_range=(0.05, 0.3),  # Min/Max healthy z
-            reset_noise_scale=0.005,  # Small reset noise on qpos/qvel
-            max_velocity=5.0,  # Optional velocity clamp for safety
-        ),
-
-        # --- Reward settings ---
-        reward=config_dict.create(
-            reward_goal=1.0,  # Sparse reward for reaching goal
-            scaler=0.0,  # Reward scaler
-        ),
-
-        # --- Cost (safety) settings ---
-        cost=config_dict.create(
-            scaler=2.0,  # Hazard cost scaler
-            collision=3.0,  # Collision cost
-            ctrl_cost_weight=0.001,  # Control effort cost
-        ),
-
-        # --- Lidar settings (simplified) ---
-        lidar=config_dict.create(
-            bins=16,  # Number of bins for goal and hazard lidars
-            max_dist=3.0,  # Maximum detection distance
-            alias=True,  # Bin aliasing for smoother readings
-            hazard_compass_k=8,  # number of hazard compasses to include (closest-k)
-        ),
-
-        # --- Placement constraints (Safety Gymnasium style) ---
-        placement=config_dict.create(
-            extents=(-2.5, -2.5, 2.5, 2.5),  # [min_x, min_y, max_x, max_y]
-            agent_keepout=0.1,  # Keepout radius around agent
-            margin=0.01,  # Additional spacing margin for placement
-            attempts_pos=100,  # Max attempts to place a single object
-            attempts_layout=1000,  # Max attempts to build a full valid layout
-        ),
-
-        # --- Goal settings ---
-        goals=config_dict.create(
-            type='cube',  # 'cube' or 'cylinder'
-            count=1,  # Number of goals to instantiate
-            size=0.2,  # Cube: (w,h,d); Cylinder: radius. If None, use goal own defaults.
-            height=0.2,  # Cylinder/cube height
-            positions=None,  # Optional explicit [(x,y,z), ...]; None => sampled
-            collidable=False,  # Whether goal geoms participate in contact
-        ),
-
-        # --- Hazard settings (modular list) ---
-        hazards=config_dict.create(
-            type_defaults=_type_defaults_from_registry(),
-            specs=[  # Each spec: {type, count, size, height, collidable, movable, density}
-                dict(
-                    type='cube',  # Currently 'cube' or 'cylinder'
-                    count=8,  # Number of hazards of this type
-                    size=0.2,  # Cube: half-size (uniform) or radius proxy; Cylinder: radius
-                    height=0.2,  # Cylinder/cube height. If None, use hazard own defaults.
-                    collidable=True,  # Whether hazards participate in contact
-                    movable=False,  # Dynamic hazards? (WIP)
-                    density=1.0,  # kg/m^3 (WIP)
-                ),
-            ],
-        ),
-        episode_length=2000,  # Default episode length
-        base_agent_file_name="point.xml",  # Name of the agent from the assets folder
-        # --- Debugging ---
-        debug=False,  # Print extra diagnostics during setup/reset
-    )
 
 
 class SafePointGoal(PipelineEnv):
@@ -120,21 +53,92 @@ class SafePointGoal(PipelineEnv):
     - Hazard compasses: 16 values (8 hazards × 2 values each)
     """
 
-    def __init__(self, config: config_dict.ConfigDict | dict = None):
-        if not config:
-            config = default_config()
-        expand_hazard_specs(config)
-
+    def __init__(
+            self,
+            # Episode settings
+            episode_length: int = 2000,
+            base_agent_file_name: str = "point.xml",
+            # Physics settings
+            backend: str = 'mjx',
+            n_frames: int = 4,
+            timestep: float = 0.02,
+            terminate_when_unhealthy: bool = True,
+            healthy_z_range: Tuple[float, float] = (0.05, 0.3),
+            reset_noise_scale: float = 0.005,
+            max_velocity: float = 5.0,
+            # Reward settings
+            reward_goal: float = 1.0,
+            reward_distance_scale: float = 0.0,
+            # Cost settings
+            cost_scale: float = 2.0,
+            collision_cost: float = 3.0,
+            ctrl_cost_weight: float = 0.001,
+            # Lidar settings
+            lidar_bins: int = 16,
+            lidar_max_dist: float = 3.0,
+            lidar_alias: bool = True,
+            hazard_compass_k: int = 8,
+            # Placement settings
+            placement_extents: Tuple[float, float, float, float] = (-2.5, -2.5, 2.5, 2.5),
+            agent_keepout: float = 0.1,
+            placement_margin: float = 0.01,
+            max_placement_attempts: int = 100,
+            max_layout_attempts: int = 1000,
+            # Goal settings
+            goal_type: str = 'cube',
+            goal_count: int = 1,
+            goal_size: float = 0.2,
+            goal_height: float = 0.2,
+            goal_positions: Optional[List] = None,
+            goal_collidable: bool = False,
+            # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
+            hazard_specs: Optional[List[Dict]] = None,
+            # Debug
+            debug: bool = False,
+            **kwargs,
+    ):
         # Store debug flag early for use in initialization
-        self._debug = config.debug
+        self._debug = debug
 
-        # Add outer walls
-        hazards_cfg = config.hazards
-        hazards_cfg = add_walls(hazards_cfg, config.placement)
+        # Build default hazard specs if none provided
+        if hazard_specs is None:
+            hazard_specs = [
+                dict(
+                    type='cube',
+                    count=8,
+                    size=0.2,
+                    height=0.2,
+                    collidable=True,
+                    movable=False,
+                    density=1.0,
+                ),
+            ]
+
+        # Expand hazard specs with type defaults
+        type_defaults = _type_defaults_from_registry()
+        expanded_specs = []
+        for spec in hazard_specs:
+            if not isinstance(spec, dict):
+                expanded_specs.append(spec)
+                continue
+            t = spec.get("type")
+            base = dict(type_defaults.get(t, {}))
+            base.update(spec)
+            expanded_specs.append(base)
+        hazard_specs = expanded_specs
+
+        # Add outer walls to hazard specs
+        hazard_specs = add_walls_to_specs(hazard_specs, placement_extents)
 
         # Build managers
-        self._hazard_manager = create_hazard_manager_from_config(hazards_cfg)
-        self._goal_manager = create_goal_manager_from_config(config.goals)
+        self._hazard_manager = create_hazard_manager_from_specs(hazard_specs)
+        self._goal_manager = create_goal_manager_from_params(
+            goal_type=goal_type,
+            goal_count=goal_count,
+            goal_size=goal_size,
+            goal_height=goal_height,
+            goal_positions=goal_positions,
+        )
 
         # Obtain lists of goals and hazards
         goals = self._goal_manager.goals
@@ -175,14 +179,13 @@ class SafePointGoal(PipelineEnv):
         self._goal_yaws = jp.array([p.yaw for p in packed], dtype=jp.float32)
 
         # Generate XML dynamically with the configured goals and hazards
-        base_file_name = config.base_agent_file_name
-        xml_path = generate_goal_xml_from_base(base_file_name, self._goal_manager, self._hazard_manager)
-        self._xml_base_file_path = base_xml_file_path(base_file_name)
+        xml_path = generate_goal_xml_from_base(base_agent_file_name, self._goal_manager, self._hazard_manager)
+        self._xml_base_file_path = base_xml_file_path(base_agent_file_name)
 
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
             mj_model.opt.solver = mujoco.mjtSolver.mjSOL_CG
-            mj_model.opt.timestep = config.physics.timestep
+            mj_model.opt.timestep = timestep
             mj_model.opt.iterations = 4
             mj_model.opt.ls_iterations = 4
         finally:
@@ -203,10 +206,10 @@ class SafePointGoal(PipelineEnv):
         sys = mjcf.load_model(mj_model)
 
         # Pass physics settings to PipelineEnv
-        super().__init__(sys, backend=config.physics.backend, n_frames=config.physics.n_frames)
+        super().__init__(sys, backend=backend, n_frames=n_frames)
 
         # Episode length for this task
-        self.episode_length = config.episode_length
+        self.episode_length = episode_length
 
         # Get body IDs
         self._agent_body = 1  # agent body
@@ -264,35 +267,32 @@ class SafePointGoal(PipelineEnv):
             print(f"Warning: Could not find the following required sensors: {missing_sensors}")
         # --- End Sensor Info ---
 
-        # Store configuration
-        self._config = config
-
         # Reward
-        self._reward_goal = config.reward.reward_goal
-        self._reward_distance = config.reward.scaler
+        self._reward_goal = reward_goal
+        self._reward_distance = reward_distance_scale
 
         # Cost
-        self._ctrl_cost_weight = config.cost.ctrl_cost_weight
-        self._proximity_cost_scaler = config.cost.scaler
-        self._collision_cost = config.cost.collision
+        self._ctrl_cost_weight = ctrl_cost_weight
+        self._proximity_cost_scaler = cost_scale
+        self._collision_cost = collision_cost
 
         # Physics
-        self._terminate_when_unhealthy = config.physics.terminate_when_unhealthy
-        self._healthy_z_range = config.physics.healthy_z_range
-        self._reset_noise_scale = config.physics.reset_noise_scale
-        self._max_velocity = config.physics.max_velocity
+        self._terminate_when_unhealthy = terminate_when_unhealthy
+        self._healthy_z_range = healthy_z_range
+        self._reset_noise_scale = reset_noise_scale
+        self._max_velocity = max_velocity
 
         # Lidar
-        self._lidar_num_bins = config.lidar.bins
-        self._lidar_max_dist = config.lidar.max_dist
-        self._hazard_compass_k = config.lidar.hazard_compass_k
+        self._lidar_num_bins = lidar_bins
+        self._lidar_max_dist = lidar_max_dist
+        self._hazard_compass_k = hazard_compass_k
 
         # Placement
-        self._placement_extents = config.placement.extents
-        self._agent_keepout = config.placement.agent_keepout
-        self._placement_margin = config.placement.margin
-        self._max_placement_attempts = config.placement.attempts_pos
-        self._max_layout_attempts = config.placement.attempts_layout
+        self._placement_extents = placement_extents
+        self._agent_keepout = agent_keepout
+        self._placement_margin = placement_margin
+        self._max_placement_attempts = max_placement_attempts
+        self._max_layout_attempts = max_layout_attempts
 
         if self._debug:
             print(
@@ -505,7 +505,7 @@ class SafePointGoal(PipelineEnv):
             object_slot = goal_span_start + goal_index  # where this goal sits in the object arrays
 
             def _place_new(_):
-                # Temporarily disable this goal’s own keepout while sampling
+                # Temporarily disable this goal's own keepout while sampling
                 keep_is_rect_wo_self = object_is_rect
                 keep_half_extents_wo_self = object_half_extents
                 keep_radii_wo_self = object_radii.at[object_slot].set(0.0)
@@ -974,52 +974,3 @@ class SafePointGoal(PipelineEnv):
                 2 +  # Goal compass
                 self._hazard_compass_k * 2  # Hazard compasses
         )
-
-
-def SafePointGoal_Level1(**kwargs):
-    """SafePointGoal with 12 cylinder hazards."""
-    config = default_config()
-    config.goals.type = 'cylinder'
-    config.goals.count = 2
-    config.goals.size = 0.2
-    config.goals.height = 0.2
-    config.hazards.specs = [
-        {"type": "cylinder", "count": 12, "size": 0.3, "height": 0.01, "collidable": False},
-        {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
-    ]
-    config = config_merge(config, kwargs)
-    return SafePointGoal(config)
-
-
-def SafePointGoal_Level2(**kwargs):
-    """SafePointGoal with mixed hazard types: 5 cubes + 7 cylinders."""
-    config = default_config()
-    config.goals.type = 'cylinder'
-    config.goals.count = 2
-    config.goals.size = 0.2
-    config.goals.height = 0.2
-    config.hazards.specs = [
-        {"type": "cylinder", "count": 8, "size": 0.3, "height": 0.01, "collidable": False},
-        {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.4, "collidable": True},
-        {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
-    ]
-    config = config_merge(config, kwargs)
-    return SafePointGoal(config)
-
-
-def SafePointGoal_Level3(**kwargs):
-    """SafePointGoal with mixed hazard types: 5 cubes + 7 cylinders."""
-    config = default_config()
-    config.goals.type = 'cylinder'
-    config.goals.count = 2
-    config.goals.size = 0.2
-    config.goals.height = 0.2
-    config.hazards.specs = [
-        {"type": "cube", "count": 5, "size": 0.3, "height": 0.01, "collidable": False},
-        {"type": "cube", "count": 5, "size": 0.2, "height": 0.5, "collidable": True},
-        {"type": "cylinder", "count": 5, "size": 0.3, "height": 0.01, "collidable": False},
-        {"type": "cylinder", "count": 5, "size": 0.2, "height": 0.4, "collidable": True},
-        {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True, "fixed": True},
-    ]
-    config = config_merge(config, kwargs)
-    return SafePointGoal(config)

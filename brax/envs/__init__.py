@@ -39,7 +39,7 @@ from brax.envs import safe_ant
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
-from brax.envs.SafePointGoal import SafePointGoal, SafePointGoal_Level1, SafePointGoal_Level2, SafePointGoal_Level3
+from brax.envs.SafePointGoal import SafePointGoal
 from brax.envs.SafePointGoalWeighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
@@ -66,9 +66,6 @@ _envs = {
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,
     'safe_point_goal_weighted': SafePointGoalWeighted,
-    'safe_point_goal_level_1': SafePointGoal_Level1,
-    'safe_point_goal_level_2': SafePointGoal_Level2,
-    'safe_point_goal_level_3': SafePointGoal_Level3,
 }
 
 

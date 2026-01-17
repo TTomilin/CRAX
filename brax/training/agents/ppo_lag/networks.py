@@ -12,57 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PPO networks."""
+"""PPO-Lagrange networks.
 
-from typing import Sequence, Tuple
+Extends PPO networks with an additional cost value network for constrained optimization.
+"""
+
+from typing import Sequence
 
 from brax.training import distribution
 from brax.training import networks
 from brax.training import types
-from brax.training.types import PRNGKey
+from brax.training.agents.ppo.networks import make_inference_fn
 import flax
 from flax import linen
+
+# Re-export make_inference_fn from ppo (identical implementation)
+__all__ = ['PPONetworks', 'make_inference_fn', 'make_ppo_networks']
 
 
 @flax.struct.dataclass
 class PPONetworks:
-  policy_network: networks.FeedForwardNetwork
-  value_network: networks.FeedForwardNetwork
-  cost_value_network: networks.FeedForwardNetwork
-  parametric_action_distribution: distribution.ParametricDistribution
-
-
-def make_inference_fn(ppo_networks: PPONetworks):
-  """Creates params and inference function for the PPO agent."""
-
-  def make_policy(
-      params: types.Params, deterministic: bool = False
-  ) -> types.Policy:
-    policy_network = ppo_networks.policy_network
-    parametric_action_distribution = ppo_networks.parametric_action_distribution
-
-    def policy(
-        observations: types.Observation, key_sample: PRNGKey
-    ) -> Tuple[types.Action, types.Extra]:
-      param_subset = (params[0], params[1])  # normalizer and policy params
-      logits = policy_network.apply(*param_subset, observations)
-      if deterministic:
-        return ppo_networks.parametric_action_distribution.mode(logits), {}
-      raw_actions = parametric_action_distribution.sample_no_postprocessing(
-          logits, key_sample
-      )
-      log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-      postprocessed_actions = parametric_action_distribution.postprocess(
-          raw_actions
-      )
-      return postprocessed_actions, {
-          'log_prob': log_prob,
-          'raw_action': raw_actions,
-      }
-
-    return policy
-
-  return make_policy
+    """PPO-Lagrange networks with cost value network."""
+    policy_network: networks.FeedForwardNetwork
+    value_network: networks.FeedForwardNetwork
+    cost_value_network: networks.FeedForwardNetwork
+    parametric_action_distribution: distribution.ParametricDistribution
 
 
 def make_ppo_networks(
@@ -76,36 +50,55 @@ def make_ppo_networks(
     policy_obs_key: str = 'state',
     value_obs_key: str = 'state',
 ) -> PPONetworks:
-  """Make PPO networks with preprocessor."""
-  parametric_action_distribution = distribution.NormalTanhDistribution(
-      event_size=action_size
-  )
-  policy_network = networks.make_policy_network(
-      parametric_action_distribution.param_size,
-      observation_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=policy_hidden_layer_sizes,
-      activation=activation,
-      obs_key=policy_obs_key,
-  )
-  value_network = networks.make_value_network(
-      observation_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=value_hidden_layer_sizes,
-      activation=activation,
-      obs_key=value_obs_key,
-  )
-  cost_value_network = networks.make_value_network(
-      observation_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=cost_value_hidden_layer_sizes,
-      activation=activation,
-      obs_key=value_obs_key,
-  )
+    """Make PPO-Lagrange networks with preprocessor.
 
-  return PPONetworks(
-      policy_network=policy_network,
-      value_network=value_network,
-      cost_value_network=cost_value_network,
-      parametric_action_distribution=parametric_action_distribution,
-  )
+    Extends standard PPO networks with an additional cost value network
+    for estimating expected cumulative costs.
+
+    Args:
+        observation_size: Size of the observation space.
+        action_size: Size of the action space.
+        preprocess_observations_fn: Function to preprocess observations.
+        policy_hidden_layer_sizes: Hidden layer sizes for policy network.
+        value_hidden_layer_sizes: Hidden layer sizes for value network.
+        cost_value_hidden_layer_sizes: Hidden layer sizes for cost value network.
+        activation: Activation function for hidden layers.
+        policy_obs_key: Key for policy observations in dict observations.
+        value_obs_key: Key for value observations in dict observations.
+
+    Returns:
+        PPONetworks dataclass with policy, value, cost_value networks and
+        action distribution.
+    """
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+    policy_network = networks.make_policy_network(
+        parametric_action_distribution.param_size,
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=policy_hidden_layer_sizes,
+        activation=activation,
+        obs_key=policy_obs_key,
+    )
+    value_network = networks.make_value_network(
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=value_hidden_layer_sizes,
+        activation=activation,
+        obs_key=value_obs_key,
+    )
+    cost_value_network = networks.make_value_network(
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=cost_value_hidden_layer_sizes,
+        activation=activation,
+        obs_key=value_obs_key,
+    )
+
+    return PPONetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        cost_value_network=cost_value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )

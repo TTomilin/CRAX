@@ -97,7 +97,7 @@ def _maybe_wrap_env(
         env: envs.Env,
         wrap_env: bool,
         num_envs: int,
-        episode_length: Optional[int],
+        episode_length: int,
         action_repeat: int,
         device_count: int,
         key_env: PRNGKey,
@@ -110,9 +110,7 @@ def _maybe_wrap_env(
     if not wrap_env:
         return env
     if episode_length is None:
-        episode_length = getattr(env, 'episode_length', None)
-    if episode_length is None:
-        raise ValueError('episode_length must be specified (no env default found) in ppo.train')
+        raise ValueError('episode_length must be specified')
     v_randomization_fn = None
     if randomization_fn is not None:
         randomization_batch_size = num_envs // device_count
@@ -195,6 +193,7 @@ def _remove_pixels(
 def train(
         environment: envs.Env,
         num_timesteps: int,
+        episode_length: int,
         max_devices_per_host: Optional[int] = None,
         # high-level control flow
         wrap_env: bool = True,
@@ -202,7 +201,6 @@ def train(
         augment_pixels: bool = False,
         # environment wrapper
         num_envs: int = 1,
-        episode_length: Optional[int] = None,
         action_repeat: int = 1,
         wrap_env_fn: Optional[Callable[[Any], Any]] = None,
         randomization_fn: Optional[

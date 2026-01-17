@@ -112,12 +112,18 @@ def train_curriculum(
         level_kwargs = apply_difficulty(env_name, level_kwargs, level)
 
         # Create the environment with base name and merged kwargs
-        environment = envs.get_environment(env_name, **env_creation_kwargs, **level_kwargs)
+        env = envs.get_environment(env_name, **env_creation_kwargs, **level_kwargs)
+        eval_env = envs.get_environment(env_name, **env_creation_kwargs, **level_kwargs)
+
+        # Determine the episode length
+        episode_length = stage_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
         # Set environment and steps for this stage
-        stage_kwargs['environment'] = environment
+        stage_kwargs['environment'] = env
+        stage_kwargs['eval_env'] = eval_env
         stage_kwargs['num_timesteps'] = stage.num_steps
         stage_kwargs['seed'] = seed + stage_idx
+        stage_kwargs['episode_length'] = episode_length
 
         # Remove env_name if present (use 'environment' instead)
         stage_kwargs.pop('env_name', None)

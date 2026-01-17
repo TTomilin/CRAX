@@ -56,6 +56,117 @@ def create_goal_manager_from_config(goals_cfg) -> GoalManager:
     return manager
 
 
+def create_hazard_manager_from_specs(hazard_specs) -> HazardManager:
+    """Create a HazardManager from a list of hazard spec dicts.
+
+    hazard_specs: list of dicts with keys:
+      - type, count, size, height, collidable, fixed, density, positions/centers
+    """
+    manager = HazardManager()
+    for spec in hazard_specs:
+        if not isinstance(spec, dict):
+            continue
+        manager.add_hazards(
+            hazard_type=spec.get("type", "cube"),
+            count=spec.get("count", 0),
+            positions=spec.get("positions") or spec.get("centers"),
+            size=spec.get("size"),
+            height=spec.get("height"),
+            collidable=spec.get("collidable", True),
+            fixed=spec.get("fixed", False),
+            density=spec.get("density"),
+        )
+    return manager
+
+
+def create_goal_manager_from_params(
+    goal_type: str = "cube",
+    goal_count: int = 1,
+    goal_size: float = 0.2,
+    goal_height: float = 0.2,
+    goal_positions=None,
+) -> GoalManager:
+    """Create a GoalManager from flat parameters."""
+    manager = GoalManager()
+    manager.add_goals(
+        goal_type=goal_type,
+        count=goal_count,
+        positions=goal_positions,
+        size=goal_size,
+        height=goal_height,
+    )
+    return manager
+
+
+def add_walls_to_specs(hazard_specs, placement_extents) -> list:
+    """Process hazard specs and expand outer_wall types into rect hazards.
+
+    Args:
+        hazard_specs: list of hazard spec dicts
+        placement_extents: (min_x, min_y, max_x, max_y) tuple
+
+    Returns:
+        New list with outer_wall specs expanded into rect specs
+    """
+    resolved = []
+    for spec in hazard_specs:
+        if not isinstance(spec, dict):
+            resolved.append(spec)
+            continue
+
+        if spec.get("type") == "outer_wall":
+            # world half-extents
+            min_x, min_y, max_x, max_y = placement_extents
+            hx = 0.5 * (max_x - min_x)
+            hy = 0.5 * (max_y - min_y)
+
+            # defaults
+            offset = float(spec.get("offset", 0.0))
+            thickness_h = float(spec.get("thickness", 0.1))  # half-thickness
+            height = float(spec.get("height", 0.1))
+            collidable = bool(spec.get("collidable", True))
+            density = float(spec.get("density", 1.0))
+            fixed = bool(spec.get("fixed", True))
+
+            # centers for the four sides
+            wx = hx + offset
+            wy = hy + offset
+
+            # half-extents for each rectangle (axis-aligned)
+            vertical_size = (thickness_h, wy)
+            horizontal_size = (wx, thickness_h)
+
+            # center z at height/2
+            zc = height * 0.5
+
+            def _wall_rect(size, center):
+                return dict(
+                    type="rect",
+                    count=1,
+                    size=size,
+                    height=height,
+                    collidable=collidable,
+                    fixed=fixed,
+                    density=density,
+                    centers=[center],
+                    positions=[center],
+                )
+
+            rect_specs = [
+                _wall_rect(vertical_size, (-wx, 0.0, zc)),    # left
+                _wall_rect(vertical_size, (wx, 0.0, zc)),     # right
+                _wall_rect(horizontal_size, (0.0, -wy, zc)),  # bottom
+                _wall_rect(horizontal_size, (0.0, wy, zc)),   # top
+            ]
+            resolved.extend(rect_specs)
+            continue
+
+        # Regular hazards: keep as-is
+        resolved.append(spec)
+
+    return resolved
+
+
 def generate_point_goal_xml(
         goal_manager: GoalManager,
         hazard_manager: HazardManager,

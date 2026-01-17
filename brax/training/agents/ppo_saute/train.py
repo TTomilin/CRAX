@@ -32,6 +32,7 @@ def _apply_saute(env: envs.Env, **kwargs) -> envs.Env:
 def train(
     environment: envs.Env,
     num_timesteps: int,
+    episode_length: int,
     # Saute parameters:
     safety_bound: float = 25.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
@@ -40,7 +41,6 @@ def train(
     # Standard PPO args:
     wrap_env: bool = True,
     num_envs: int = 1,
-    episode_length: Optional[int] = None,
     action_repeat: int = 1,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,

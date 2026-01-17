@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Checkpointing for P3O - reuses PPO-Lagrange checkpoint structure."""
+"""Checkpointing for P3O."""
 
-from brax.training.agents.ppo_lag.checkpoint import (
+from brax.training.agents.ppo.checkpoint import (
     save,
     load,
     network_config,

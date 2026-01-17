@@ -26,7 +26,7 @@ from jax import numpy as jp
 
 def wrap(
     env: Env,
-    episode_length: int = 1000,
+    episode_length: int = None,
     action_repeat: int = 1,
     randomization_fn: Optional[
         Callable[[System], Tuple[System, System]]

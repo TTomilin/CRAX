@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PPO-Lagrange training algorithm."""
+"""PPO-Lagrange training algorithm.
+
+This module extends PPO with Lagrangian-based constrained optimization
+for safe reinforcement learning.
+
+Provides PPO-Lagrange specific components:
+  - networks: PPONetworks with cost_value_network
+  - losses: PPO-Lagrange loss with Lagrange multiplier
+  - train: Training loop with Lagrange multiplier updates
+"""
 
 from brax.training.agents.ppo_lag.train import train
 from brax.training.agents.ppo_lag import networks
 from brax.training.agents.ppo_lag import losses
+from brax.training.agents.ppo import checkpoint
 
+__all__ = ['train', 'networks', 'losses', 'checkpoint']
