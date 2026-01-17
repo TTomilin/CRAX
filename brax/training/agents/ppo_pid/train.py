@@ -742,7 +742,8 @@ def train(
     if effective_restore_params is not None:
         logging.info('Restoring TrainingState from pretrained/restore params.')
         # Handle transfer from PPO (no cost_value) or legacy checkpoints
-        # Params tuple structure: (normalizer[0], policy[1], value[2], cost_value[3], lambda_lagr[4])
+        # Params tuple structure: (normalizer[0], policy[1], value[2], cost_value[3],
+        #                          lambda_lagr[4], pid_integral[5], pid_prev_violation[6], pid_deriv_ema[7])
         has_cost_value = len(effective_restore_params) > 3
 
         if has_cost_value:
@@ -757,6 +758,11 @@ def train(
         value_params = effective_restore_params[2] if restore_value_fn else init_params.value
         lambda_lagr_value = effective_restore_params[4] if len(effective_restore_params) > 4 else jnp.array([initial_lambda_lagr],
                                                                                         dtype=jnp.float32)
+        # Restore PID state if available, otherwise use initial values
+        pid_integral_value = effective_restore_params[5] if len(effective_restore_params) > 5 else jnp.array([0.0], dtype=jnp.float32)
+        pid_prev_violation_value = effective_restore_params[6] if len(effective_restore_params) > 6 else jnp.array([0.0], dtype=jnp.float32)
+        pid_deriv_ema_value = effective_restore_params[7] if len(effective_restore_params) > 7 else jnp.array([0.0], dtype=jnp.float32)
+
         training_state = training_state.replace(
             normalizer_params=effective_restore_params[0],
             params=training_state.params.replace(
@@ -765,6 +771,9 @@ def train(
                 cost_value=cost_value_params
             ),
             lambda_lagr=lambda_lagr_value,
+            pid_integral=pid_integral_value,
+            pid_prev_violation=pid_prev_violation_value,
+            pid_deriv_ema=pid_deriv_ema_value,
         )
 
     if num_timesteps == 0:
@@ -775,8 +784,13 @@ def train(
                 training_state.params.policy,
                 training_state.params.value,
                 training_state.params.cost_value,
+                training_state.lambda_lagr,
+                training_state.pid_integral,
+                training_state.pid_prev_violation,
+                training_state.pid_deriv_ema,
             ),
             {},
+            None,  # eval_env
         )
 
     training_state = jax.device_put_replicated(
@@ -863,10 +877,15 @@ def train(
                 normalize_observations=normalize_observations,
                 network_factory=network_factory,
             )
-            # Include cost_value and lambda_lagr in saved params
-            full_params = params + (_unpmap(training_state.params.cost_value), _unpmap(training_state.lambda_lagr))
+            # Add lambda_lagr and PID state to params for checkpoint
+            ckpt_params = params + (
+                _unpmap(training_state.lambda_lagr),
+                _unpmap(training_state.pid_integral),
+                _unpmap(training_state.pid_prev_violation),
+                _unpmap(training_state.pid_deriv_ema),
+            )
             checkpoint.save(
-                save_checkpoint_path, current_step, full_params, ckpt_config
+                save_checkpoint_path, current_step, ckpt_params, ckpt_config
             )
 
         # Only run evaluation if enabled
@@ -888,11 +907,16 @@ def train(
     # If there was no mistakes the training_state should still be identical on all
     # devices.
     pmap.assert_is_replicated(training_state)
+    # Include lambda_lagr and PID state for curriculum/transfer learning
     params = _unpmap((
         training_state.normalizer_params,
         training_state.params.policy,
         training_state.params.value,
         training_state.params.cost_value,
+        training_state.lambda_lagr,
+        training_state.pid_integral,
+        training_state.pid_prev_violation,
+        training_state.pid_deriv_ema,
     ))
 
     # If no evaluation was run, create basic final metrics

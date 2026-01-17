@@ -749,8 +749,10 @@ def train(
                 training_state.params.policy,
                 training_state.params.value,
                 training_state.params.cost_value,
+                training_state.lambda_lagr,
             ),
             {},
+            None,  # eval_env
         )
 
     training_state = jax.device_put_replicated(
@@ -837,10 +839,10 @@ def train(
                 normalize_observations=normalize_observations,
                 network_factory=network_factory,
             )
-            # Include cost_value and lambda_lagr in saved params
-            full_params = params + (_unpmap(training_state.params.cost_value), _unpmap(training_state.lambda_lagr))
+            # Add lambda_lagr to params for checkpoint (params here only has network params)
+            ckpt_params = params + (_unpmap(training_state.lambda_lagr),)
             checkpoint.save(
-                save_checkpoint_path, current_step, full_params, ckpt_config
+                save_checkpoint_path, current_step, ckpt_params, ckpt_config
             )
 
         # Only run evaluation if enabled
@@ -862,11 +864,13 @@ def train(
     # If there was no mistakes the training_state should still be identical on all
     # devices.
     pmap.assert_is_replicated(training_state)
+    # Include lambda_lagr in params for curriculum/transfer learning
     params = _unpmap((
         training_state.normalizer_params,
         training_state.params.policy,
         training_state.params.value,
         training_state.params.cost_value,
+        training_state.lambda_lagr,
     ))
 
     # If no evaluation was run, create basic final metrics

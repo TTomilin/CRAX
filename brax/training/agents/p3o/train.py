@@ -719,8 +719,10 @@ def train(
                 training_state.params.policy,
                 training_state.params.value,
                 training_state.params.cost_value,
+                training_state.kappa,
             ),
             {},
+            None,  # eval_env
         )
 
     training_state = jax.device_put_replicated(
@@ -802,9 +804,10 @@ def train(
                 normalize_observations=normalize_observations,
                 network_factory=network_factory,
             )
-            full_params = params + (_unpmap(training_state.params.cost_value), _unpmap(training_state.kappa))
+            # Add kappa (penalty coefficient) to params for checkpoint
+            ckpt_params = params + (_unpmap(training_state.kappa),)
             checkpoint.save(
-                save_checkpoint_path, current_step, full_params, ckpt_config
+                save_checkpoint_path, current_step, ckpt_params, ckpt_config
             )
 
         if num_evals > 0 and evaluator is not None:
@@ -823,11 +826,13 @@ def train(
         )
 
     pmap.assert_is_replicated(training_state)
+    # Include kappa (penalty coefficient) for curriculum/transfer learning
     params = _unpmap((
         training_state.normalizer_params,
         training_state.params.policy,
         training_state.params.value,
         training_state.params.cost_value,
+        training_state.kappa,
     ))
 
     if not metrics:

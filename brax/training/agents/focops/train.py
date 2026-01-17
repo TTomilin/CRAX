@@ -606,8 +606,10 @@ def train(
                 training_state.params.policy,
                 training_state.params.value,
                 training_state.params.cost_value,
+                training_state.nu,
             ),
             {},
+            None,  # eval_env
         )
 
     training_state = jax.device_put_replicated(
@@ -689,9 +691,10 @@ def train(
                 normalize_observations=normalize_observations,
                 network_factory=network_factory,
             )
-            full_params = params + (_unpmap(training_state.nu),)
+            # Add nu (Lagrange multiplier) to params for checkpoint
+            ckpt_params = params + (_unpmap(training_state.nu),)
             checkpoint.save(
-                save_checkpoint_path, current_step, full_params, ckpt_config
+                save_checkpoint_path, current_step, ckpt_params, ckpt_config
             )
 
         if num_evals > 0 and evaluator is not None:
@@ -706,11 +709,13 @@ def train(
     assert total_steps >= num_timesteps
 
     pmap.assert_is_replicated(training_state)
+    # Include nu (Lagrange multiplier) for curriculum/transfer learning
     params = _unpmap((
         training_state.normalizer_params,
         training_state.params.policy,
         training_state.params.value,
         training_state.params.cost_value,
+        training_state.nu,
     ))
 
     if not metrics:
