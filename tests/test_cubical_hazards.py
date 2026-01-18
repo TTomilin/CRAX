@@ -1,8 +1,7 @@
 import os
 
-from brax.envs.SafePointGoal import default_config, SafePointGoal
-from train_from_config import record_episode_video
-from utils import make_circular_policy
+from brax.envs.safe_point_goal import default_config, SafePointGoal
+from utils import make_circular_policy, record_episode_video
 
 
 def test_record_video_cubical():

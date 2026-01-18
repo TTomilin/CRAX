@@ -89,6 +89,9 @@ class PipelineEnv(Env):
       backend: str = 'mjx',
       n_frames: int = 1,
       debug: bool = False,
+      physics: dict = None,
+      reward: dict = None,
+      cost: dict = None,
   ):
     """Initializes PipelineEnv.
 

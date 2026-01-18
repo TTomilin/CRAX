@@ -14,8 +14,8 @@
     <site size="0.032" type="sphere"/>  
   </default>  
   <worldbody>
-    <geom name="floor" type="plane" size="10 10 0.1" condim="6" />
-    <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1" mode="fixed"/>
+    <geom name="floor" type="plane" size="10 10 0.1" condim="6" rgba="0.7 0.7 0.7 1" />
+    <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1.15" mode="fixed"/>
     <body name="agent" pos="0 0 .1">
       <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
       <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>

@@ -178,7 +178,7 @@ class HumanoidStandup(PipelineEnv):
 
 
   def __init__(self, backend='generalized', **kwargs):
-    path = epath.resource_path('brax') / 'envs/assets/humanoidstandup.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/humanoidstandup.xml'
     sys = mjcf.load(path)
 
     n_frames = 5

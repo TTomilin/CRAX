@@ -126,3 +126,4 @@ sysinfo.txt
 *.unitypackage
 
 UnitySDK.log
+/tests/videos/

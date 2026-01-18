@@ -155,10 +155,11 @@ class Ant(PipelineEnv):
       contact_force_range=(-1.0, 1.0),
       reset_noise_scale=0.1,
       exclude_current_positions_from_observation=True,
+      episode_length: int = 2000,
       backend='generalized',
       **kwargs,
   ):
-    path = epath.resource_path('brax') / 'envs/assets/ant.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/ant.xml'
     sys = mjcf.load(path)
 
     n_frames = 5
@@ -187,6 +188,7 @@ class Ant(PipelineEnv):
 
     super().__init__(sys=sys, backend=backend, **kwargs)
 
+    self.episode_length = episode_length
     self._ctrl_cost_weight = ctrl_cost_weight
     self._use_contact_forces = use_contact_forces
     self._contact_cost_weight = contact_cost_weight

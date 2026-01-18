@@ -15,10 +15,12 @@
 # pylint:disable=g-multiple-import
 """Environments for training and evaluating policies."""
 
-import functools
 from typing import Optional, Type
 
-from brax.envs import ant
+import jax
+from jax import numpy as jp
+
+from brax.envs import ant, humanoid_hop
 from brax.envs import ant_velocity_constrained
 from brax.envs import fast
 from brax.envs import half_cheetah
@@ -30,13 +32,15 @@ from brax.envs import inverted_double_pendulum
 from brax.envs import inverted_pendulum
 from brax.envs import pusher
 from brax.envs import reacher
+from brax.envs import safe_reacher
 from brax.envs import swimmer
 from brax.envs import walker2d
-from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
+from brax.envs import safe_ant
+from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
-from brax.envs.SafePointGoal import SafePointGoal, SafePointGoal_12Cubes, SafePointGoal_12Cylinders, \
-    SafePointGoal_MixedHazards
-from brax.envs.SafePointGoalWeighted import SafePointGoalWeighted
+from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
+from brax.envs.safe_point_goal import SafePointGoal
+from brax.envs.safe_point_goal_weighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
 
@@ -47,76 +51,136 @@ _envs = {
     'halfcheetah': half_cheetah.Halfcheetah,
     'hopper': hopper.Hopper,
     'humanoid': humanoid.Humanoid,
+    'humanoid_hop': humanoid_hop.Humanoid,
     'humanoid_height_constrained': humanoid_height_constrained.HumanoidHeightConstrained,
     'humanoidstandup': humanoidstandup.HumanoidStandup,
     'inverted_pendulum': inverted_pendulum.InvertedPendulum,
     'inverted_double_pendulum': inverted_double_pendulum.InvertedDoublePendulum,
     'pusher': pusher.Pusher,
     'reacher': reacher.Reacher,
+    'safe_reacher': safe_reacher.SafeReacher,
     'swimmer': swimmer.Swimmer,
     'walker2d': walker2d.Walker2d,
+    'safe_walker': safe_walker.SafeWalker,
+    'safe_ant': safe_ant.SafeAnt,
     'point_resetting_goal_random_hazard_sensor_obs': PointResettingGoalRandomHazardSensorObs,
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,
     'safe_point_goal_weighted': SafePointGoalWeighted,
-    'safe_point_goal_12_cubes': SafePointGoal_12Cubes,
-    'safe_point_goal_12_cylinders': SafePointGoal_12Cylinders,
-    'safe_point_goal_mixed_hazards': SafePointGoal_MixedHazards,
 }
 
 
+class UnifiedEnvAdapter(Wrapper):
+    """A wrapper that provides a unified safety-compatible interface.
+
+    - Ensures a 'cost' signal is present in state.info and state.metrics.
+    - Preserves original reward as 'raw_reward' in state.info and metrics.
+    - Adds 'shaped_reward' (identical to reward unless inner env sets it).
+    - Stores any arbitrary kwargs for future use; does not change inner env.
+    """
+
+    def __init__(self, env: Env, **unified_kwargs):
+        super().__init__(env)
+        # Store unified kwargs for forward compatibility (e.g., physics/cost/reward specs)
+        self._unified_kwargs = unified_kwargs or {}
+
+    def _ensure_unified_fields(self, state: State) -> State:
+        # Ensure cost exists in info and metrics
+        cost = state.info.get('cost', state.metrics.get('cost', None))
+        if cost is None:
+            cost = jp.zeros_like(state.reward)
+        # mutate copies of dicts
+        info = dict(state.info)
+        metrics = dict(state.metrics)
+        info.setdefault('cost', cost)
+        metrics.setdefault('cost', cost)
+
+        # Preserve rewards metadata
+        info.setdefault('raw_reward', state.reward)
+        info.setdefault('shaped_reward', state.reward)
+
+        # Recreate a new State with updated dicts
+        return State(
+            pipeline_state=state.pipeline_state,
+            obs=state.obs,
+            reward=state.reward,
+            done=state.done,
+            metrics=metrics,
+            info=info,
+        )
+
+    def reset(self, rng: jax.Array) -> State:
+        state = self.env.reset(rng)
+        return self._ensure_unified_fields(state)
+
+    def step(self, state: State, action: jax.Array) -> State:
+        next_state = self.env.step(state, action)
+        return self._ensure_unified_fields(next_state)
+
 
 def get_environment(env_name: str, **kwargs) -> Env:
-  """Returns an environment from the environment registry.
+    """Returns an environment from the environment registry.
 
-  Args:
-    env_name: environment name string
-    **kwargs: keyword arguments that get passed to the Env class constructor
+    Args:
+      env_name: environment name string
+      **kwargs: keyword arguments that get passed to the Env class constructor
 
-  Returns:
-    env: an environment
-  """
-  return _envs[env_name](**kwargs)
+    Returns:
+      env: an environment
+    """
+    env_cls = _envs[env_name]
+    base_env = env_cls(**kwargs)
+    # Always wrap with unified adapter so downstream code can rely on cost/info fields
+    return UnifiedEnvAdapter(base_env, **kwargs)
 
 
 def register_environment(env_name: str, env_class: Type[Env]):
-  """Adds an environment to the registry.
+    """Adds an environment to the registry.
 
-  Args:
-    env_name: environment name string
-    env_class: the Env class to add to the registry
-  """
-  _envs[env_name] = env_class
+    Args:
+      env_name: environment name string
+      env_class: the Env class to add to the registry
+    """
+    _envs[env_name] = env_class
 
 
 def create(
-    env_name: str,
-    episode_length: int = 1000,
-    action_repeat: int = 1,
-    auto_reset: bool = True,
-    batch_size: Optional[int] = None,
-    **kwargs,
+        env_name: str,
+        episode_length: Optional[int] = None,
+        action_repeat: int = 1,
+        auto_reset: bool = True,
+        batch_size: Optional[int] = None,
+        **kwargs,
 ) -> Env:
-  """Creates an environment from the registry.
+    """Creates an environment from the registry.
 
-  Args:
-    env_name: environment name string
-    episode_length: length of episode
-    action_repeat: how many repeated actions to take per environment step
-    auto_reset: whether to auto reset the environment after an episode is done
-    batch_size: the number of environments to batch together
-    **kwargs: keyword argments that get passed to the Env class constructor
+    Args:
+      env_name: environment name string
+      episode_length: length of episode
+      action_repeat: how many repeated actions to take per environment step
+      auto_reset: whether to auto reset the environment after an episode is done
+      batch_size: the number of environments to batch together
+      **kwargs: keyword argments that get passed to the Env class constructor
 
-  Returns:
-    env: an environment
-  """
-  env = _envs[env_name](**kwargs)
+    Returns:
+      env: an environment
+    """
+    env_cls = _envs[env_name]
+    try:
+        base_env = env_cls(**kwargs)
+    except TypeError:
+        base_env = env_cls()
 
-  if episode_length is not None:
-    env = training.EpisodeWrapper(env, episode_length, action_repeat)
-  if batch_size:
-    env = training.VmapWrapper(env, batch_size)
-  if auto_reset:
-    env = training.AutoResetWrapper(env)
+    env = UnifiedEnvAdapter(base_env, **kwargs)
 
-  return env
+    # Resolve episode length: prefer explicit, else environment default if available
+    if episode_length is None:
+        episode_length = getattr(env, 'episode_length', None)
+    if episode_length is not None:
+        env = training.EpisodeWrapper(env, episode_length, action_repeat)
+    if batch_size:
+        env = training.VmapWrapper(env, batch_size)
+    if auto_reset:
+        env = training.AutoResetWrapper(env)
+
+    return env

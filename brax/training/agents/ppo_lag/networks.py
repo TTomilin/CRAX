@@ -1,5 +1,4 @@
-# Copyright 2024 The Brax Authors.
-# Re-export from base PPO networks for backward compatibility.
+"""PPO-Lagrange networks - re-exports from ppo.networks for backward compatibility."""
 from brax.training.agents.ppo.networks import (
     PPONetworks,
     make_inference_fn,

@@ -154,8 +154,8 @@ class Reacher(PipelineEnv):
   # pyformat: enable
 
 
-  def __init__(self, backend='generalized', **kwargs):
-    path = epath.resource_path('brax') / 'envs/assets/reacher.xml'
+  def __init__(self, episode_length: int = 2000, backend='generalized', **kwargs):
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/reacher.xml'
     sys = mjcf.load(path)
 
     n_frames = 2
@@ -170,6 +170,7 @@ class Reacher(PipelineEnv):
     kwargs['n_frames'] = kwargs.get('n_frames', n_frames)
 
     super().__init__(sys=sys, backend=backend, **kwargs)
+    self.episode_length = episode_length
 
   def reset(self, rng: jax.Array) -> State:
     rng, rng1, rng2 = jax.random.split(rng, 3)

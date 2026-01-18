@@ -1,17 +1,3 @@
-# Copyright 2024 The Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """PPO-PID Lagrange training.
 
 Thin wrapper around the base PPO trainer with PID-based Lagrangian constraint handling.
@@ -26,8 +12,8 @@ from brax import base
 from brax import envs
 from brax.training import types
 from brax.training.agents.ppo import train as ppo_train
-from brax.training.agents.ppo import losses as ppo_losses
 from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo_lag import losses as ppo_lag_losses
 
 Metrics = types.Metrics
 TrainingState = ppo_train.TrainingState
@@ -36,12 +22,12 @@ TrainingState = ppo_train.TrainingState
 def train(
         environment: envs.Env,
         num_timesteps: int,
+        episode_length: int,
         max_devices_per_host: Optional[int] = None,
         wrap_env: bool = True,
         madrona_backend: bool = False,
         augment_pixels: bool = False,
         num_envs: int = 1,
-        episode_length: Optional[int] = None,
         action_repeat: int = 1,
         wrap_env_fn: Optional[Callable[[Any], Any]] = None,
         randomization_fn: Optional[
@@ -84,6 +70,8 @@ def train(
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
+        pretrained_params: Optional[Any] = None,
+        init_cost_value_from: str = 'value',
 ):
     """PPO-PID Lagrange training."""
     per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
@@ -109,7 +97,7 @@ def train(
                          reward_scaling=1.0, gae_lambda=0.95, clipping_epsilon=0.3,
                          normalize_advantage=True):
         lambda_lagr = aux_state[0] if aux_state else jnp.array([0.0])
-        return ppo_losses.compute_ppo_lagrange_loss(
+        return ppo_lag_losses.compute_ppo_lagrange_loss(
             params=params, normalizer_params=normalizer_params, data=data, rng=rng,
             ppo_network=ppo_network, lambda_lagr=lambda_lagr, safety_bound=per_step_safety_bound,
             entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
@@ -117,6 +105,8 @@ def train(
 
     def init_aux_state_fn():
         return (jnp.array([initial_lambda_lagr]), jnp.zeros((1,)), jnp.zeros((1,)), jnp.zeros((1,)))
+
+    effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
 
     return ppo_train.train(
         environment=environment, num_timesteps=num_timesteps, max_devices_per_host=max_devices_per_host,
@@ -132,7 +122,7 @@ def train(
         deterministic_eval=deterministic_eval, buffer_size=buffer_size, log_training_metrics=log_training_metrics,
         training_metrics_steps=training_metrics_steps, progress_fn=progress_fn, policy_params_fn=policy_params_fn,
         save_checkpoint_path=save_checkpoint_path, restore_checkpoint_path=restore_checkpoint_path,
-        restore_params=restore_params, restore_value_fn=restore_value_fn,
+        restore_params=effective_restore_params, restore_value_fn=restore_value_fn,
         loss_fn=lagrange_loss_fn, post_step_fn=post_step_fn,
         extra_fields=("truncation", "episode_metrics", "episode_done", "cost"),
         init_aux_state_fn=init_aux_state_fn)

@@ -141,7 +141,7 @@ class Pusher(PipelineEnv):
 
 
   def __init__(self, backend='generalized', **kwargs):
-    path = epath.resource_path('brax') / 'envs/assets/pusher.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/pusher.xml'
     sys = mjcf.load(path)
 
     n_frames = 5

@@ -154,6 +154,7 @@ class Hopper(PipelineEnv):
       healthy_angle_range=(-0.2, 0.2),
       reset_noise_scale=5e-3,
       exclude_current_positions_from_observation=True,
+      episode_length: int = 2000,
       backend='generalized',
       **kwargs
   ):
@@ -175,7 +176,7 @@ class Hopper(PipelineEnv):
       backend: str, the physics backend to use
       **kwargs: Arguments that are passed to the base class.
     """
-    path = epath.resource_path('brax') / 'envs/assets/hopper.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/hopper.xml'
     sys = mjcf.load(path)
 
     n_frames = 4
@@ -183,6 +184,7 @@ class Hopper(PipelineEnv):
 
     super().__init__(sys=sys, backend=backend, **kwargs)
 
+    self.episode_length = episode_length
     self._forward_reward_weight = forward_reward_weight
     self._ctrl_cost_weight = ctrl_cost_weight
     self._healthy_reward = healthy_reward

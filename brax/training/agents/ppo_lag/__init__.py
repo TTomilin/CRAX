@@ -1,19 +1,17 @@
-# Copyright 2024 The Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""PPO-Lagrange training algorithm.
 
-"""PPO-Lagrange training algorithm."""
+This module extends PPO with Lagrangian-based constrained optimization
+for safe reinforcement learning.
 
-from brax.training.agents.ppo_lag import train
+Provides PPO-Lagrange specific components:
+  - networks: PPONetworks with cost_value_network
+  - losses: PPO-Lagrange loss with Lagrange multiplier
+  - train: Training loop with Lagrange multiplier updates
+"""
+
+from brax.training.agents.ppo_lag.train import train
 from brax.training.agents.ppo_lag import networks
 from brax.training.agents.ppo_lag import losses
+from brax.training.agents.ppo import checkpoint
+
+__all__ = ['train', 'networks', 'losses', 'checkpoint']

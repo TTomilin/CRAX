@@ -5,20 +5,20 @@ from __future__ import annotations
 import jax
 from jax import numpy as jp
 
-from brax.envs.humanoid_hop import HumanoidHop
 from brax.envs.base import State
+from brax.envs.humanoid_hop import HumanoidHop
 
 
 class HumanoidHopAirtime(HumanoidHop):
     """Extends ``HumanoidHop`` with an airtime bonus in the reward."""
 
     def __init__(
-        self,
-        *,
-        airtime_reward_weight: float = 5.0,
-        airtime_exponent: float = 1.0,
-        enable_contact_metrics: bool = True,
-        **kwargs,
+            self,
+            *,
+            airtime_reward_weight: float = 5.0,
+            airtime_exponent: float = 1.0,
+            enable_contact_metrics: bool = True,
+            **kwargs,
     ):
         """Initialise the airtime-augmented humanoid hop environment.
 
@@ -137,5 +137,3 @@ class HumanoidHopAirtime(HumanoidHop):
             done=done,
             info=new_info,
         )
-
-

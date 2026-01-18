@@ -1,17 +1,3 @@
-# Copyright 2025 Safe-Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """PPO-Saute trainer shim.
 
 Pre-wraps the environment with SauteWrapper and delegates to standard PPO.
@@ -32,15 +18,15 @@ def _apply_saute(env: envs.Env, **kwargs) -> envs.Env:
 def train(
     environment: envs.Env,
     num_timesteps: int,
+    episode_length: int,
     # Saute parameters:
-    safety_bound: float = 15.0,
+    safety_bound: float = 25.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
     violation_penalty: float = 0.0,
     normalize_budget_obs: bool = True,
     # Standard PPO args:
     wrap_env: bool = True,
     num_envs: int = 1,
-    episode_length: Optional[int] = None,
     action_repeat: int = 1,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
@@ -59,6 +45,7 @@ def train(
     restore_checkpoint_path: Optional[str] = None,
     restore_params: Optional[Any] = None,
     restore_value_fn: bool = True,
+    pretrained_params: Optional[Any] = None,
     eval_env: Optional[envs.Env] = None,
     training_metrics_steps: Optional[float] = None,
     **kwargs,
@@ -106,7 +93,7 @@ def train(
       progress_fn=progress_fn,
       save_checkpoint_path=save_checkpoint_path,
       restore_checkpoint_path=restore_checkpoint_path,
-      restore_params=restore_params,
+      restore_params=pretrained_params if pretrained_params is not None else restore_params,
       restore_value_fn=restore_value_fn,
       eval_env=eval_env,
       training_metrics_steps=training_metrics_steps,

@@ -226,7 +226,51 @@ class GoalManager:
         return [g for g in self.goals if g.goal_type == goal_type]
 
 
+class SphereGoal(BaseGoal):
+    """Sphere-shaped goal (mocap)."""
+
+    def __init__(self, goal_id: int, position: tuple = (0.0, 0.0, 0.0), size: float = 0.1, height: float = 0.0):
+        """Initialize a sphere goal.
+
+        Args:
+            goal_id: Unique identifier for this goal
+            position: (x, y, z) position of the goal center
+            size: Radius of the sphere
+            height: Unused for sphere, kept for interface consistency
+        """
+        super().__init__(goal_id, position, size, height)
+
+    def get_xml_body(self) -> str:
+        """Generate XML body for sphere goal."""
+        x, y, z = self.position
+        return f'''    
+        <body name="goal{self.goal_id}" pos="{x} {y} {z}" mocap="true">
+            <geom type="sphere" name="goal{self.goal_id}" size="{self.size}" 
+                rgba="0 1 0 0.8" contype="0" conaffinity="0" solref="0.01 1"/>
+        </body>'''
+
+    @property
+    def goal_type(self) -> str:
+        return "sphere"
+
+    @property
+    def type_id(self) -> int:
+        return 2
+
+    def get_keepout_radius(self) -> float:
+        return float(self.size)
+
+    def encode_static_params(self) -> PackedGoalParams:
+        return PackedGoalParams(
+            type_id=self.type_id,
+            radius=float(self.size),
+            half_extents_xy=(0.0, 0.0),
+            yaw=0.0,
+        )
+
+
 GOAL_REGISTRY: Dict[str, Type[BaseGoal]] = {
     "cube": CubeGoal,
     "cylinder": CylinderGoal,
+    "sphere": SphereGoal,
 }

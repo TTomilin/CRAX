@@ -1,4 +1,4 @@
-# Safe-Brax Setup Instructions
+# CRAX Setup Instructions
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ pip install -e .
 
 ```bash
 python -c "from brax import envs; print('✓ Brax imports successfully!')"
-python -c "from brax.training.agents.ppo_lagrange_v3 import train; print('✓ PPO-Lagrange V3 available!')"
+python -c "from brax.training.agents.ppo_lag import train; print('✓ PPO-Lagrange available!')"
 ```
 
 ## GPU Setup
@@ -66,8 +66,10 @@ pip install jax[cpu]
 ### Basic Usage
 
 ```bash
-python train_from_config.py \
-  --config configs/experimental_results_safe_point_goal/pointgoal_baselines_ppol.json \
+python train_env.py \
+  --env_name safe_point_goal \
+  --alg ppo_lag \
+  --difficulty 1 \
   --seeds 0
 ```
 
@@ -75,7 +77,7 @@ python train_from_config.py \
 
 ```bash
 # Start training in background
-tmux new -s training "python train_from_config.py --config CONFIG.json --seeds 0"
+tmux new -s training "python train_env.py --env_name safe_point_goal --alg ppo_lag --difficulty 1 --seeds 0"
 
 # Detach: Ctrl+b, then d
 # Reattach: tmux attach -t training
@@ -84,13 +86,17 @@ tmux new -s training "python train_from_config.py --config CONFIG.json --seeds 0
 
 ## Algorithm Versions
 
-Safe-Brax supports multiple PPO variants:
+CRAX supports multiple algorithms via the --alg flag:
 
-- **PPO** (`"alg": "ppo"`) - Vanilla PPO
-- **PPO-Cost** (`"alg": "ppo_cost"`) - PPO with cost penalty
-- **PPO-Lagrange V2** (`"alg": "ppo_lagrange_v2"`) - Up-to-date PPO-Lagrangian
+- PPO ("alg": "ppo") — Vanilla PPO
+- PPO-Cost ("alg": "ppo_cost") — PPO with cost penalty
+- PPO-Lagrange ("alg": "ppo_lag") — Lagrangian constraint handling
+- PPO-PID ("alg": "ppo_pid") — PID-controlled Lagrange multiplier
+- P3O ("alg": "p3o") — Penalized Proximal Policy Optimization
+- FOCOPS ("alg": "focops") — First-Order Constrained Optimization in Policy Space
+- PPO-Saute ("alg": "ppo_saute") — State augmentation approach for safety
 
-The training script automatically prints which version is being used.
+The training script prints the selected algorithm on startup.
 
 ## Troubleshooting
 
@@ -108,11 +114,10 @@ The `safety-gymnasium` package requires `mujoco==2.3.3`, but Safe-Brax uses `muj
 ### GPU Out of Memory
 
 Reduce the number of parallel environments:
-```json
-{
-  "num_envs": 1024,  // Try reducing from 2048
-  "num_eval_envs": 64  // Try reducing from 128
-}
+```bash
+# Example:
+python train_env.py --env_name safe_point_goal --alg ppo_lag --difficulty 1 \
+  --num_envs 1024 --num_eval_envs 64
 ```
 
 ## File Structure
@@ -120,12 +125,15 @@ Reduce the number of parallel environments:
 ```
 requirements.txt         # Flexible versions (for development)
 requirements-pinned.txt  # Exact versions (for reproducibility)
-pyproject.toml          # Package configuration
-train_from_config.py    # Main training script
-configs/                # Training configurations
+pyproject.toml           # Package configuration
+train_env.py             # Main training script (CLI)
+configs/
+  training_config.py     # Shared CLI/argument definitions
   experimental_results_safe_point_goal/
-    pointgoal_baselines_ppol.json  # PPO-Lagrange config
-    pointgoal_baselines_ppo.json   # Vanilla PPO config
+    pointgoal_baselines_ppol.json  # (legacy) example config
+    pointgoal_baselines_ppo.json   # (legacy) example config
+scripts/
+  run_from_config.py     # Legacy: run experiments from a JSON config
 ```
 
 ## Updating Dependencies
@@ -136,15 +144,22 @@ pip install --upgrade -r requirements.txt
 pip freeze > requirements-pinned.txt  # Save new versions
 ```
 
-## Wandb Configuration
+## Weights & Biases (wandb)
 
 Login to Weights & Biases for experiment tracking:
 ```bash
 wandb login
 ```
 
-Or run without wandb:
+By default, training enables wandb logging (use_wandb=True). You can disable it or set project/group/tags:
 ```bash
-python train_from_config.py --config CONFIG.json --seeds 0 --no-wandb
+# Disable wandb
+python train_env.py --env_name safe_point_goal --alg ppo_lag --use_wandb False
+
+# Set project, group, and tags
+python train_env.py --env_name safe_point_goal --alg ppo_lag \
+  --wandb_project safe-brax-experimental-results \
+  --wandb_group safe_point_goal \
+  --wandb_tags tag1 tag2
 ```
 

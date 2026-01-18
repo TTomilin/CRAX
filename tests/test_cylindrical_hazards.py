@@ -1,8 +1,7 @@
 import os
 
-from brax.envs.SafePointGoal import SafePointGoal_12Cylinders
-from train_from_config import record_episode_video
-from utils import make_multi_directional_policy
+from brax.envs.safe_point_goal import SafePointGoal_Level1
+from utils import make_multi_directional_policy, record_episode_video
 
 
 def test_record_video_circular_cylinders():
@@ -14,7 +13,7 @@ def test_record_video_circular_cylinders():
     start_time = os.times()
 
     # Create an environment with cylinder hazards
-    env = SafePointGoal_12Cylinders()
+    env = SafePointGoal_Level1()
     print(f"Environment creation took {os.times()[4] - start_time[4]:.2f} seconds with {env._num_hazards} hazards")
     start_time = os.times()
     steps = 1000

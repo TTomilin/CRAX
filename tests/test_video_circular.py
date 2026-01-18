@@ -5,7 +5,7 @@ from pathlib import Path
 import jax.numpy as jnp
 
 from brax.envs.SafePointGoal import SafePointGoal_8Hazards
-from train_from_config import record_episode_video
+from train_env import record_episode_video
 
 
 # --- Dummy circular policy maker ---

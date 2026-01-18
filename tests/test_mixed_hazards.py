@@ -1,8 +1,7 @@
 import os
 
-from brax.envs.SafePointGoal import SafePointGoal_MixedHazards
-from train_from_config import record_episode_video
-from utils import make_multi_directional_policy
+from brax.envs.safe_point_goal import SafePointGoal_Level2
+from utils import make_multi_directional_policy, record_episode_video
 
 
 def test_record_video_mixed_hazards():
@@ -11,7 +10,7 @@ def test_record_video_mixed_hazards():
     start_time = os.times()
 
     # Create an environment with cylinder hazards
-    env = SafePointGoal_MixedHazards()
+    env = SafePointGoal_Level2()
     cube_hazards = env._hazard_manager.get_hazards_by_type("cube")
     cylinder_hazards = env._hazard_manager.get_hazards_by_type("cylinder")
     print(f"✓ Environment created in {os.times()[4] - start_time[4]:.2f} seconds with {env._num_hazards} hazards "

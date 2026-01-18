@@ -1,6 +1,6 @@
 import os
 
-from brax.envs.SafePointGoal import default_config
+from brax.envs.safe_point_goal import default_config
 from brax.envs.env_utils import create_hazard_manager_from_config, create_goal_manager_from_config, \
     generate_point_goal_xml
 

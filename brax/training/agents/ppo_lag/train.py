@@ -1,17 +1,3 @@
-# Copyright 2024 The Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """PPO-Lagrange training.
 
 Thin wrapper around the base PPO trainer with Lagrangian constraint handling.
@@ -26,9 +12,9 @@ import jax.numpy as jnp
 from brax import base
 from brax import envs
 from brax.training import types
-from brax.training.agents.ppo import train as ppo_train
-from brax.training.agents.ppo import losses as ppo_losses
+from brax.training.agents.ppo_lag import losses as ppo_lag_losses
 from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo import train as ppo_train
 
 Metrics = types.Metrics
 
@@ -39,20 +25,17 @@ TrainingState = ppo_train.TrainingState
 def train(
         environment: envs.Env,
         num_timesteps: int,
+        episode_length: int,
         max_devices_per_host: Optional[int] = None,
-        # high-level control flow
         wrap_env: bool = True,
         madrona_backend: bool = False,
         augment_pixels: bool = False,
-        # environment wrapper
         num_envs: int = 1,
-        episode_length: Optional[int] = None,
         action_repeat: int = 1,
         wrap_env_fn: Optional[Callable[[Any], Any]] = None,
         randomization_fn: Optional[
             Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
         ] = None,
-        # ppo params
         learning_rate: float = 1e-4,
         entropy_cost: float = 1e-4,
         discounting: float = 0.9,
@@ -67,9 +50,7 @@ def train(
         gae_lambda: float = 0.95,
         max_grad_norm: Optional[float] = None,
         normalize_advantage: bool = True,
-        network_factory: types.NetworkFactory[
-            ppo_networks.PPONetworks
-        ] = None,  # Will be created with cost value network
+        network_factory: types.NetworkFactory[ppo_networks.PPONetworks] = None,
         seed: int = 0,
         # ppo-lagrange specific params
         safety_bound: float = 0.0,
@@ -80,18 +61,18 @@ def train(
         eval_env: Optional[envs.Env] = None,
         num_eval_envs: int = 128,
         deterministic_eval: bool = False,
-        # training metrics
         buffer_size: int = 1000,
         log_training_metrics: bool = True,
         training_metrics_steps: Optional[int] = None,
-        # callbacks
         progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
         policy_params_fn: Callable[..., None] = lambda *args: None,
-        # checkpointing
         save_checkpoint_path: Optional[str] = None,
         restore_checkpoint_path: Optional[str] = None,
         restore_params: Optional[Any] = None,
         restore_value_fn: bool = True,
+        # transfer learning / curriculum support
+        pretrained_params: Optional[Any] = None,
+        init_cost_value_from: str = 'value',
 ):
     """PPO-Lagrange training.
 
@@ -99,8 +80,7 @@ def train(
       environment: the environment to train
       num_timesteps: the total number of environment steps to use during training
       max_devices_per_host: maximum number of chips to use per host process
-      wrap_env: If True, wrap the environment for training. Otherwise use the
-        environment as is.
+      wrap_env: If True, wrap the environment for training.
       madrona_backend: whether to use Madrona backend for training
       augment_pixels: whether to add image augmentation to pixel inputs
       num_envs: the number of parallel environments to use for rollouts
@@ -140,6 +120,13 @@ def train(
       restore_checkpoint_path: the path used to restore previous model params
       restore_params: raw network parameters to restore the TrainingState from.
       restore_value_fn: whether to restore the value function from the checkpoint
+        or use a random initialization
+      pretrained_params: alias for restore_params, used for curriculum/transfer learning.
+        Takes precedence over restore_params if both are specified.
+      init_cost_value_from: how to initialize cost_value network when transferring
+        from an algorithm without cost_value (e.g., PPO). Options:
+        - 'value': copy from value network (often works well for transfer)
+        - 'random': use random initialization
 
     Returns:
       Tuple of (make_policy function, network params, metrics, eval_env)
@@ -151,66 +138,30 @@ def train(
     if network_factory is None:
         def network_factory(obs_size, action_size, **kwargs):
             return ppo_networks.make_ppo_networks(
-                obs_size,
-                action_size,
-                cost_value_hidden_layer_sizes=(256,) * 5,
-                **kwargs
-            )
+                obs_size, action_size, cost_value_hidden_layer_sizes=(256,) * 5, **kwargs)
 
     # Define the Lagrange multiplier update function
     def post_step_fn(training_state: TrainingState, metrics: Metrics) -> Tuple[TrainingState, Metrics]:
         """Updates the Lagrange multiplier based on constraint violation."""
-        # Get mean cost from the last minibatch
         avg_cost = jnp.mean(metrics['mean_cost'][-1])
         cost_violation = avg_cost - per_step_safety_bound
-        
-        # Update Lagrange multiplier
         delta_lambda = cost_violation * lagrangian_coef_rate
         updated_lambda_lagr = jax.nn.relu(training_state.aux_state + delta_lambda)
-        
-        # Update training state with new lambda
         new_training_state = training_state.replace(aux_state=updated_lambda_lagr)
-        
-        # Return extra metrics
-        extra_metrics = {
-            'lambda_lagr': updated_lambda_lagr,
-            'cost_violation': cost_violation,
-        }
-        return new_training_state, extra_metrics
+        return new_training_state, {'lambda_lagr': updated_lambda_lagr, 'cost_violation': cost_violation}
 
     # Define the custom loss function for PPO-Lagrange
-    # This is a partial that will be completed inside the base trainer
-    def lagrange_loss_fn(
-        params,
-        normalizer_params,
-        data,
-        rng,
-        aux_state=None,
-        ppo_network=None,
-        entropy_cost=1e-4,
-        discounting=0.9,
-        reward_scaling=1.0,
-        gae_lambda=0.95,
-        clipping_epsilon=0.3,
-        normalize_advantage=True,
-    ):
+    def lagrange_loss_fn(params, normalizer_params, data, rng, aux_state=None,
+                         ppo_network=None, entropy_cost=1e-4, discounting=0.9,
+                         reward_scaling=1.0, gae_lambda=0.95, clipping_epsilon=0.3,
+                         normalize_advantage=True):
         """PPO-Lagrange loss function."""
         lambda_lagr = aux_state if aux_state is not None else jnp.array([0.0])
-        return ppo_losses.compute_ppo_lagrange_loss(
-            params=params,
-            normalizer_params=normalizer_params,
-            data=data,
-            rng=rng,
-            ppo_network=ppo_network,
-            lambda_lagr=lambda_lagr,
-            safety_bound=per_step_safety_bound,
-            entropy_cost=entropy_cost,
-            discounting=discounting,
-            reward_scaling=reward_scaling,
-            gae_lambda=gae_lambda,
-            clipping_epsilon=clipping_epsilon,
-            normalize_advantage=normalize_advantage,
-        )
+        return ppo_lag_losses.compute_ppo_lagrange_loss(
+            params=params, normalizer_params=normalizer_params, data=data, rng=rng,
+            ppo_network=ppo_network, lambda_lagr=lambda_lagr, safety_bound=per_step_safety_bound,
+            entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
 
     # Initialize aux_state with the initial Lagrange multiplier
     def init_aux_state_fn():
@@ -218,6 +169,9 @@ def train(
 
     # Extra fields to collect during rollout (including cost)
     extra_fields = ('truncation', 'episode_metrics', 'episode_done', 'cost')
+
+    # Handle pretrained_params taking precedence over restore_params
+    effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
 
     # Call base PPO trainer with hooks
     return ppo_train.train(
@@ -259,7 +213,7 @@ def train(
         policy_params_fn=policy_params_fn,
         save_checkpoint_path=save_checkpoint_path,
         restore_checkpoint_path=restore_checkpoint_path,
-        restore_params=restore_params,
+        restore_params=effective_restore_params,
         restore_value_fn=restore_value_fn,
         # Constrained RL hooks
         loss_fn=lagrange_loss_fn,

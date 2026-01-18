@@ -128,10 +128,11 @@ class Halfcheetah(PipelineEnv):
       ctrl_cost_weight=0.1,
       reset_noise_scale=0.1,
       exclude_current_positions_from_observation=True,
+      episode_length: int = 2000,
       backend='generalized',
       **kwargs
   ):
-    path = epath.resource_path('brax') / 'envs/assets/half_cheetah.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safegoal/half_cheetah.xml'
     sys = mjcf.load(path)
 
     n_frames = 5
@@ -146,6 +147,7 @@ class Halfcheetah(PipelineEnv):
 
     super().__init__(sys=sys, backend=backend, **kwargs)
 
+    self.episode_length = episode_length
     self._forward_reward_weight = forward_reward_weight
     self._ctrl_cost_weight = ctrl_cost_weight
     self._reset_noise_scale = reset_noise_scale
