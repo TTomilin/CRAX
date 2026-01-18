@@ -39,21 +39,34 @@ def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool 
     """
     global metrics_buffer
 
+    def _mean_value(val):
+        # Convert JAX/NumPy arrays or lists/tuples to a scalar by averaging
+        arr = np.asarray(val)
+        # If it's already scalar, return item; otherwise mean
+        if arr.ndim == 0 or arr.size == 1:
+            return arr.reshape(-1)[0].item()
+        return arr.reshape(-1).mean().item()
+
     if verbose:
         print(f"Step {num_steps}:")
 
     log_data = {}
     for key, value in metrics.items():
+        value = _mean_value(value)
+        # Print only key categories to keep console light
         if verbose and any(tok in key for tok in ("lambda", "cost", "constraint", "reward")):
             print(f"  {key}: {value}")
         log_data[key] = value
 
+    # If nothing to log, exit early
+    if not log_data:
+        return
+
     metrics_buffer.append({"step": num_steps, **log_data})
 
-    if use_wandb and wandb.run is not None and log_data:
+    if use_wandb and wandb.run is not None:
         for row in metrics_buffer:
-            wandb.log(log_data, step=row["step"])
-
+            wandb.log({k: row[k] for k in log_data.keys()}, step=row["step"])  # log summarized scalars only
         # clear the logged history from the buffer
         metrics_buffer.clear()
 
