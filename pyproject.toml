@@ -51,6 +51,9 @@ dependencies = [
     "tensorboardX",
     "trimesh",
     "typing-extensions",
+    "wandb",
+    "imageio",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
