@@ -2,7 +2,7 @@ import imageio.v3 as iio
 import jax
 import numpy as np
 
-from brax.envs.SafePointGoal import default_config, SafePointGoal_Level2, SafePointGoal_Level3
+from brax.envs.safe_point_goal import default_config, SafePointGoal_Level2, SafePointGoal_Level3
 
 
 def run_random_episode(env, jit_step, jit_reset, steps: int = 100):

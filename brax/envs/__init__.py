@@ -39,8 +39,8 @@ from brax.envs import safe_ant
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
-from brax.envs.SafePointGoal import SafePointGoal
-from brax.envs.SafePointGoalWeighted import SafePointGoalWeighted
+from brax.envs.safe_point_goal import SafePointGoal
+from brax.envs.safe_point_goal_weighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
 

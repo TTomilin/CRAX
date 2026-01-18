@@ -1,6 +1,6 @@
 import os
 
-from brax.envs.SafePointGoal import default_config, SafePointGoal
+from brax.envs.safe_point_goal import default_config, SafePointGoal
 from utils import make_circular_policy, record_episode_video
 
 

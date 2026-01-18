@@ -1,6 +1,6 @@
 import os
 
-from brax.envs.SafePointGoal import SafePointGoal_Level1
+from brax.envs.safe_point_goal import SafePointGoal_Level1
 from utils import make_multi_directional_policy, record_episode_video
 
 
