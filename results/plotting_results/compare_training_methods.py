@@ -9,7 +9,7 @@ For curriculum and transfer, data from different stages/phases are connected.
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -189,7 +189,12 @@ def load_transfer_runs(
         if pretrain_fp.exists():
             pretrain_df = pd.read_parquet(pretrain_fp, engine="pyarrow")
             if "_step" not in pretrain_df.columns:
+                print(f"  Warning: Pretrain file missing _step column: {pretrain_fp}")
                 pretrain_df = None
+            else:
+                print(f"  Loaded PPO pretrain for seed {seed}: {len(pretrain_df)} rows")
+        else:
+            print(f"  PPO pretrain not found for seed {seed}: {pretrain_fp}")
 
         for metric in metrics:
             frames = []
@@ -382,9 +387,13 @@ def plot_final_comparison(
         args: argparse.Namespace,
 ) -> None:
     """
-    One figure for all envs.
-    Columns = len(envs) * len(metrics)  (env-major, metric-minor).
-    Bars: algo = color, training type = hatch.
+    Plot final results as grouped bars, similar to alg_comp_bars.py.
+
+    Layout: rows of envs, each env has len(metrics) columns (reward, cost side-by-side).
+    X-axis: training methods (normal, curriculum, transfer) as groups.
+    Bars within each group: algorithms (colored).
+    Single legend at bottom for algorithms.
+    Env title centered above each env's subplots (not repeated per metric).
     """
     set_mpl_style()
 
@@ -393,118 +402,125 @@ def plot_final_comparison(
     algos = args.algos
     methods = ["normal", "curriculum", "transfer"]
 
-    ncols = len(envs) * len(metrics)
-    fig_w = args.panel_w * ncols
-    fig_h = args.panel_h
-    fig, axs = plt.subplots(1, ncols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.08, right=0.98, top=0.86, bottom=0.28, wspace=0.50)
+    n_env = len(envs)
+    nrows_env, ncols_env = nice_grid(n_env, max_cols=args.max_cols)
 
-    # Legend handles
-    algo_handles = {}
-    method_handles = {}
+    # Each env occupies len(metrics) columns (reward+cost side-by-side)
+    m = len(metrics)
+    total_rows = nrows_env
+    total_cols = ncols_env * m
 
-    col = 0
-    for env in envs:
+    fig_w = args.panel_w * total_cols
+    fig_h = args.panel_h * total_rows
+    fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+
+    legend_handles: Dict[str, Any] = {}
+
+    # x positions: methods as groups, algos as bars within each group
+    M = len(methods)
+    A = len(algos)
+    x = np.arange(M)
+
+    group_width = 0.82
+    bar_w = group_width / max(A, 1)
+    offsets = (np.arange(A) - (A - 1) / 2.0) * bar_w
+
+    def get_ax(env_i: int, metric_i: int):
+        """Return axis for a given env and metric index (metric side-by-side)."""
+        gr = env_i // ncols_env
+        gc = env_i % ncols_env
+        r = gr
+        c = gc * m + metric_i
+        return axs[r, c]
+
+    # Plot per env
+    for env_i, env in enumerate(envs):
         env_pack = data_by_env.get(env, {})
-        for metric in metrics:
-            ax = axs[0, col]
-            col += 1
+        env_title = TRANSLATIONS.get(env, env.replace("_", " ").title())
 
-            ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
-            ax.set_title(f"{env.replace('_',' ').title()}\n{TRANSLATIONS.get(metric, metric)}", fontsize=11)
+        # Plot each metric into its side-by-side axis
+        for metric_i, metric in enumerate(metrics):
+            ax = get_ax(env_i, metric_i)
+            ylab = TRANSLATIONS.get(metric, metric.capitalize())
 
-            # compute finals per algo per method
-            # finals[algo][method] -> (mean, ci, n)
+            # Compute finals: finals[method][algo] -> (mean, ci, n)
             finals: Dict[str, Dict[str, Tuple[float, float, int]]] = {}
-            for algo in algos:
-                finals[algo] = {}
-                for method in methods:
+            for method in methods:
+                finals[method] = {}
+                for algo in algos:
                     runs = env_pack.get(algo, {}).get(method, {}).get(metric, [])
                     tmp = {metric: runs}
                     res = compute_final_values(tmp, [metric], args.last_k)[metric]
-                    finals[algo][method] = res
+                    finals[method][algo] = res
 
-            # x positions per algo, with within-algo offsets for methods
-            x0 = np.arange(len(algos))
-            total_width = 0.80
-            w = total_width / len(methods)
-            offsets = (np.arange(len(methods)) - (len(methods) - 1) / 2.0) * w
-
-            for mi, method in enumerate(methods):
-                xs = x0 + offsets[mi]
-                means = []
-                cis = []
-                colors = []
-                for algo in algos:
-                    mean, ci, _n = finals[algo][method]
-                    means.append(mean)
-                    cis.append(ci)
-                    colors.append(ALGO_COLORS.get(algo, None))
-
-                    if algo not in algo_handles:
-                        algo_handles[algo] = plt.Line2D([0], [0], color=ALGO_COLORS.get(algo, "black"), lw=6)
-                    if method not in method_handles:
-                        # patch-like handle via Line2D is fine for legend text; hatch shown by label
-                        method_handles[method] = plt.Line2D([0], [0], color="black", lw=2)
+            # Plot bars: algos within each method group
+            for a_i, algo in enumerate(algos):
+                ys = []
+                es = []
+                for method in methods:
+                    mean, ci, _n = finals[method][algo]
+                    ys.append(mean)
+                    es.append(ci)
 
                 bars = ax.bar(
-                    xs, means,
-                    width=w * 0.95,
-                    yerr=cis,
-                    capsize=3,
-                    color=colors,
-                    edgecolor="black",
-                    linewidth=0.6,
+                    x + offsets[a_i], ys,
+                    width=bar_w,
+                    yerr=es,
+                    capsize=2,
+                    color=ALGO_COLORS.get(algo, None),
+                    label=algo,
                 )
-                for b in bars:
-                    b.set_hatch(METHOD_HATCHES[method])
 
-            ax.set_xticks(x0)
-            ax.set_xticklabels([TRANSLATIONS.get(a, a.upper()) for a in algos], rotation=35, ha="right")
+                if algo not in legend_handles:
+                    legend_handles[algo] = bars[0]
 
-            # threshold
+            ax.set_xticks(x)
+            ax.set_xticklabels([TRANSLATIONS.get(m, m.capitalize()) for m in methods],
+                               rotation=30, ha="right")
+            ax.set_ylabel(ylab)
+
+            # Threshold only on cost axis
             if metric == "cost" and not args.no_threshold:
                 thr = SAFETY_THRESHOLDS.get(env, None)
                 if thr is not None:
-                    ax.axhline(thr, linestyle="--", color="red", linewidth=1.6)
+                    thr_line = ax.axhline(thr, linestyle="--", color="red")
+                    if "Threshold" not in legend_handles:
+                        legend_handles["Threshold"] = thr_line
 
             if args.grid:
                 ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.4)
 
-    fig.suptitle("Final Comparison (Level 3)", fontsize=14, y=0.98)
+        # Center env title above the reward+cost pair (spans m subplots)
+        left_bbox = get_ax(env_i, 0).get_position()
+        right_bbox = get_ax(env_i, m - 1).get_position()
+        mid_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
+        top_y = max(left_bbox.y1, right_bbox.y1) + 0.01
+        fig.text(mid_x, top_y, env_title, ha="center", va="bottom", fontsize=13)
 
-    # Legends
-    if algo_handles:
-        algo_labels = [TRANSLATIONS.get(a, a.upper()) for a in algo_handles.keys()]
+    # Hide unused env slots (all metric columns for that env cell)
+    for env_i in range(n_env, nrows_env * ncols_env):
+        for metric_i in range(m):
+            ax = get_ax(env_i, metric_i)
+            ax.axis("off")
+
+    # Global legend at bottom
+    if legend_handles:
+        labels = list(legend_handles.keys())
+        handles = [legend_handles[k] for k in labels]
+        labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
         fig.legend(
-            list(algo_handles.values()),
-            algo_labels,
+            handles, labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, 0.08),
-            ncol=min(len(algo_labels), 6),
+            bbox_to_anchor=(0.5, -0.08),
+            ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
-            title="Algo (color)",
-        )
-    if method_handles:
-        method_labels = [
-            f"{TRANSLATIONS.get(m, m.capitalize())} (hatch={METHOD_HATCHES[m] or 'none'})"
-            for m in method_handles.keys()
-        ]
-        fig.legend(
-            list(method_handles.values()),
-            method_labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, -0.02),
-            ncol=len(method_labels),
-            fancybox=True,
-            shadow=True,
-            title="Training type (hatch)",
         )
 
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_final_all_envs.pdf"
+    out_path = out_dir / f"{args.out_name}_final.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved final comparison: {out_path}")
@@ -596,8 +612,9 @@ def build_args() -> argparse.ArgumentParser:
                    help="Number of final values to average for final comparison")
 
     # Figure sizing
-    p.add_argument("--panel_w", type=float, default=4.0)
-    p.add_argument("--panel_h", type=float, default=3.0)
+    p.add_argument("--panel_w", type=float, default=3.1)
+    p.add_argument("--panel_h", type=float, default=2.5)
+    p.add_argument("--max_cols", type=int, default=3, help="Max env columns in grid.")
 
     # Output
     p.add_argument("--output_fig_dir", type=str, default="figures")

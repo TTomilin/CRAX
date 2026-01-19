@@ -134,7 +134,7 @@ def build_args() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+',
-                        default=["ppo_lag", "ppo_pid", "focops", "p3o"],
+                        default=["ppo", "ppo_lag", "ppo_pid", "focops", "p3o"],
                         help="Algorithms to download")
     parser.add_argument("--envs", type=str, nargs='+', help="Environments to download")
     parser.add_argument("--output", type=str, default='data', help="Base output directory")
@@ -148,8 +148,10 @@ def build_args() -> argparse.ArgumentParser:
                         help="Overwrite existing files")
     parser.add_argument("--include_runs", type=str, nargs="+", default=[],
                         help="Include specific runs by display name")
-    parser.add_argument("--include_unsafe_phase", default=False, action='store_true',
-                        help="Also download unsafe PPO phase for transfer runs")
+    parser.add_argument("--include_unsafe_phase", default=True, action='store_true',
+                        help="Download unsafe PPO phase for transfer runs (default: True)")
+    parser.add_argument("--no_unsafe_phase", dest='include_unsafe_phase', action='store_false',
+                        help="Skip downloading unsafe PPO phase for transfer runs")
     return parser
 
 
