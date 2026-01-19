@@ -181,7 +181,7 @@ def main():
 
     # Environment options
     parser.add_argument("--difficulty", type=int, default=None, help="Environment difficulty level")
-    parser.add_argument("--episode_length", type=int, default=100, help="Episode length")
+    parser.add_argument("--episode_length", type=int, default=1000, help="Episode length")
     parser.add_argument("--env_kwargs", type=str, default=None, help="JSON string of extra env kwargs")
 
     # Output options
