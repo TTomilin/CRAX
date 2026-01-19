@@ -214,6 +214,7 @@ def benchmark_safety_transfer(
         wandb.init(
             project=wandb_config.get('project', 'safety-transfer'),
             name=f"{base_name}_ppo",
+            id=f"{base_name}_ppo",
             group=wandb_config.get('group', env_name),
             tags=wandb_config.get('tags', []),
             config=run_config,
@@ -298,6 +299,7 @@ def benchmark_safety_transfer(
             wandb.init(
                 project=wandb_config.get('project', 'safety-transfer'),
                 name=f"{base_name}_{algo_name}",
+                id=f"{base_name}_{algo_name}",
                 group=wandb_config.get('group', env_name),
                 tags=wandb_config.get('tags', []),
                 config=run_config,
