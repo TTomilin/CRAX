@@ -57,11 +57,16 @@ For a complete safety transfer benchmark:
 """
 
 import copy
+import os
+import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from brax import envs
 from brax.envs.difficulty import apply_difficulty
+from brax.training.agents.ppo import checkpoint as ppo_checkpoint
 from run_utils import filter_kwargs_for_fn, record_episode_video
 
 # Optional wandb import - only used if wandb_config is provided
@@ -147,6 +152,8 @@ def benchmark_safety_transfer(
         progress_fn: Optional[Callable] = None,
         seed: int = 0,
         wandb_config: Optional[Dict[str, Any]] = None,
+        use_checkpoint_transfer: bool = True,
+        checkpoint_dir: Optional[str] = None,
 ) -> Tuple[Any, Dict[str, TransferResult]]:
     """Benchmark safety transfer across multiple safe RL algorithms.
 
@@ -170,12 +177,32 @@ def benchmark_safety_transfer(
             - tags: list, wandb tags
             - base_name: str, base run name (algorithm name will be appended)
             - config: dict, config to log to wandb
+        use_checkpoint_transfer: If True (default), save the unsafe model to a
+            checkpoint file and load it using restore_checkpoint_path for safe
+            fine-tuning. If False, forward params directly via pretrained_params.
+        checkpoint_dir: Directory to save checkpoint files. If None, uses a
+            temporary directory (cleaned up after transfer) or the directory
+            from train_kwargs['save_checkpoint_path'] if provided.
 
     Returns:
         Tuple of (unsafe_params, dict mapping algorithm names to TransferResult).
     """
     train_kwargs = train_kwargs or {}
     unsafe_train_kwargs = unsafe_train_kwargs or {}
+
+    # Setup checkpoint directory for transfer
+    temp_checkpoint_dir = None
+    if use_checkpoint_transfer:
+        if checkpoint_dir is not None:
+            transfer_checkpoint_dir = Path(checkpoint_dir)
+        elif train_kwargs.get('save_checkpoint_path'):
+            transfer_checkpoint_dir = Path(train_kwargs['save_checkpoint_path']) / 'transfer'
+        else:
+            # Create a temporary directory that will be cleaned up after transfer
+            temp_checkpoint_dir = tempfile.mkdtemp(prefix='transfer_checkpoint_')
+            transfer_checkpoint_dir = Path(temp_checkpoint_dir)
+        transfer_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Transfer checkpoint directory: {transfer_checkpoint_dir}")
 
     # Determine if wandb is enabled
     use_wandb = (wandb_config is not None and
@@ -254,6 +281,30 @@ def benchmark_safety_transfer(
     if 'eval/episode_cost' in unsafe_final_metrics:
         print(f"  Final cost: {unsafe_final_metrics['eval/episode_cost']:.2f}")
 
+    # Save checkpoint for transfer if using checkpoint-based transfer
+    unsafe_checkpoint_path = None
+    if use_checkpoint_transfer:
+        from brax.training.agents.ppo import networks as ppo_networks
+        unsafe_checkpoint_path = transfer_checkpoint_dir / 'unsafe_ppo'
+        # Get observation and action sizes from environment
+        obs_size = env.observation_size
+        action_size = env.action_size
+        # Create checkpoint config
+        ckpt_config = ppo_checkpoint.network_config(
+            observation_size=obs_size,
+            action_size=action_size,
+            normalize_observations=train_kwargs.get('normalize_observations', True),
+            network_factory=ppo_networks.make_ppo_networks,
+        )
+        # Save the checkpoint
+        ppo_checkpoint.save(
+            path=str(unsafe_checkpoint_path),
+            step=unsafe_steps,
+            params=unsafe_params,
+            config=ckpt_config,
+        )
+        print(f"  Saved unsafe checkpoint to: {unsafe_checkpoint_path}")
+
     # Record unsafe rollout video if requested
     if not train_kwargs.get('skip_video', False):
         video_env = returned_eval_env or eval_env
@@ -312,7 +363,24 @@ def benchmark_safety_transfer(
         base_safe_kwargs['num_timesteps'] = safe_steps
         base_safe_kwargs['seed'] = seed
         base_safe_kwargs['episode_length'] = episode_length
-        base_safe_kwargs['pretrained_params'] = unsafe_params
+
+        # Transfer parameters: either via checkpoint file or direct params
+        if use_checkpoint_transfer and unsafe_checkpoint_path is not None:
+            # Use checkpoint-based transfer (default): load from saved file
+            # Find the checkpoint subdirectory (orbax saves with step number)
+            ckpt_subdirs = list(unsafe_checkpoint_path.glob('*'))
+            if ckpt_subdirs:
+                # Use the checkpoint with the highest step number
+                latest_ckpt = max(ckpt_subdirs, key=lambda p: int(p.name) if p.name.isdigit() else 0)
+                base_safe_kwargs['restore_checkpoint_path'] = str(latest_ckpt)
+                print(f"    Using checkpoint transfer from: {latest_ckpt}")
+            else:
+                # Fallback to direct params if checkpoint not found
+                print(f"    Warning: Checkpoint not found at {unsafe_checkpoint_path}, using direct params")
+                base_safe_kwargs['pretrained_params'] = unsafe_params
+        else:
+            # Direct parameter forwarding (legacy mode)
+            base_safe_kwargs['pretrained_params'] = unsafe_params
 
         # Filter kwargs for the specific safe algorithm signature
         safe_kwargs = filter_kwargs_for_fn(safe_train_fn, base_safe_kwargs)
@@ -398,6 +466,14 @@ def benchmark_safety_transfer(
         reward = result.safe_final_metrics.get('eval/episode_reward', float('nan'))
         cost = result.safe_final_metrics.get('eval/episode_cost', float('nan'))
         print(f"  {algo_name}: reward={reward:.2f}, cost={cost:.2f}")
+
+    # Clean up temporary checkpoint directory if it was created
+    if temp_checkpoint_dir is not None:
+        try:
+            shutil.rmtree(temp_checkpoint_dir)
+            print(f"\nCleaned up temporary checkpoint directory: {temp_checkpoint_dir}")
+        except Exception as e:
+            print(f"\nWarning: Failed to clean up temporary directory {temp_checkpoint_dir}: {e}")
 
     return unsafe_params, results
 

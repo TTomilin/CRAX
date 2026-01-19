@@ -27,6 +27,13 @@ def main():
     parser.add_argument('--safe_steps', type=float, default=1e8, help='Steps for safe fine-tuning per algorithm')
     parser.add_argument('--algorithms', type=str, nargs='+', default=['ppo_lag', 'ppo_pid', 'focops', 'p3o'],
                         help='Safe algorithms to test')
+    parser.add_argument('--use_checkpoint_transfer', type=bool, default=True,
+                        help='If True, save unsafe model to checkpoint and load via restore_checkpoint_path. '
+                             'If False, forward params directly (legacy mode).')
+    parser.add_argument('--no_checkpoint_transfer', dest='use_checkpoint_transfer', action='store_false',
+                        help='Disable checkpoint-based transfer (use direct param forwarding)')
+    parser.add_argument('--transfer_checkpoint_dir', type=str, default="models",
+                        help='Directory to save transfer checkpoint')
     args = parser.parse_args()
 
     # Setup GPU environment
@@ -79,6 +86,8 @@ def main():
             progress_fn=progress,
             seed=seed,
             wandb_config=wandb_config,
+            use_checkpoint_transfer=args.use_checkpoint_transfer,
+            checkpoint_dir=args.transfer_checkpoint_dir,
         )
 
         # Detailed results
