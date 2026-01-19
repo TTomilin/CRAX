@@ -321,6 +321,7 @@ class SafeReacher(PipelineEnv):
         metrics = {
             'reward_dist': zero,
             'reward_ctrl': zero,
+            'reward_bonus': zero,
             'cost': zero,
             'dist': dist,
         }
