@@ -21,7 +21,7 @@ pip install -r requirements.txt
 pip install -r requirements-pinned.txt
 ```
 
-### 3. Install Safe-Brax in Editable Mode
+### 3. Install CRAX in Editable Mode
 
 ```bash
 pip install -e .
@@ -30,8 +30,10 @@ pip install -e .
 ### 4. Verify Installation
 
 ```bash
-python -c "from brax import envs; print('✓ Brax imports successfully!')"
-python -c "from brax.training.agents.ppo_lag import train; print('✓ PPO-Lagrange available!')"
+python -c "from brax import envs; print('CRAX imports successfully!')"
+python -c "from brax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
+python -c "from brax.training.agents.focops import train; print('FOCOPS available!')"
+python -c "from brax.training.agents.p3o import train; print('P3O available!')"
 ```
 
 ## GPU Setup
@@ -45,15 +47,15 @@ The requirements include `jax-cuda12-plugin` which requires:
 
 To verify GPU is detected:
 ```bash
-python -c "import jax; print(f'GPUs available: {jax.devices()}')"
+python -c "import jax; print(f'Devices: {jax.devices()}')"
 ```
 
 ### CPU-only Installation
 
 If you don't have a GPU, remove these lines from requirements.txt:
 ```
-jax-cuda12-plugin==0.6.0
-jax-cuda12-pjrt==0.6.0
+jax-cuda12-plugin
+jax-cuda12-pjrt
 ```
 
 Then install CPU-only JAX:
@@ -73,6 +75,12 @@ python train_env.py \
   --seeds 0
 ```
 
+### Using a Config File
+
+```bash
+python scripts/run_from_config.py configs/pointgoal_lidar/ppol_bound_0.05.json
+```
+
 ### Using tmux for Long Training Runs
 
 ```bash
@@ -84,19 +92,32 @@ tmux new -s training "python train_env.py --env_name safe_point_goal --alg ppo_l
 # Kill: tmux kill-session -t training
 ```
 
-## Algorithm Versions
+## Available Algorithms
 
-CRAX supports multiple algorithms via the --alg flag:
+CRAX supports multiple constrained RL algorithms via the `--alg` flag:
 
-- PPO ("alg": "ppo") — Vanilla PPO
-- PPO-Cost ("alg": "ppo_cost") — PPO with cost penalty
-- PPO-Lagrange ("alg": "ppo_lag") — Lagrangian constraint handling
-- PPO-PID ("alg": "ppo_pid") — PID-controlled Lagrange multiplier
-- P3O ("alg": "p3o") — Penalized Proximal Policy Optimization
-- FOCOPS ("alg": "focops") — First-Order Constrained Optimization in Policy Space
-- PPO-Saute ("alg": "ppo_saute") — State augmentation approach for safety
+| Algorithm | Flag | Description |
+|-----------|------|-------------|
+| **PPO** | `ppo` | Vanilla PPO (unconstrained baseline) |
+| **PPO-Cost** | `ppo_cost` | PPO with cost penalty in reward |
+| **PPO-Lagrange** | `ppo_lag` | PPO with Lagrangian constraint relaxation |
+| **PPO-PID** | `ppo_pid` | PPO with PID-controlled Lagrange multiplier |
+| **FOCOPS** | `focops` | First Order Constrained Optimization in Policy Space |
+| **P3O** | `p3o` | Penalized Proximal Policy Optimization |
+| **PPO-Saute** | `ppo_saute` | State Augmentation for Safe RL |
 
 The training script prints the selected algorithm on startup.
+
+## Available Environments
+
+| Environment | Description |
+|-------------|-------------|
+| `safe_point_goal` | Point mass navigation with hazard avoidance |
+| `safe_ant` | Ant locomotion with safety constraints |
+| `safe_walker` | Walker2D with boundary constraints |
+| `safe_reacher` | Reacher with obstacle avoidance |
+
+Most environments support a `--difficulty` parameter (1-3) that controls hazard density.
 
 ## Troubleshooting
 
@@ -104,36 +125,50 @@ The training script prints the selected algorithm on startup.
 
 If you see `ModuleNotFoundError: No module named 'mujoco.introspect'`:
 ```bash
-pip install --upgrade mujoco==3.3.2 mujoco-mjx==3.3.2
+pip install --upgrade mujoco mujoco-mjx
 ```
-
-### Version Conflicts with safety-gymnasium
-
-The `safety-gymnasium` package requires `mujoco==2.3.3`, but Safe-Brax uses `mujoco==3.3.2`. This is fine - Safe-Brax doesn't use safety-gymnasium environments, so the warning can be ignored.
 
 ### GPU Out of Memory
 
 Reduce the number of parallel environments:
 ```bash
-# Example:
 python train_env.py --env_name safe_point_goal --alg ppo_lag --difficulty 1 \
   --num_envs 1024 --num_eval_envs 64
+```
+
+### Rendering Issues (Headless Server)
+
+Set the MuJoCo rendering backend:
+```bash
+export MUJOCO_GL=egl  # or osmesa
 ```
 
 ## File Structure
 
 ```
-requirements.txt         # Flexible versions (for development)
-requirements-pinned.txt  # Exact versions (for reproducibility)
-pyproject.toml           # Package configuration
-train_env.py             # Main training script (CLI)
-configs/
-  training_config.py     # Shared CLI/argument definitions
-  experimental_results_safe_point_goal/
-    pointgoal_baselines_ppol.json  # (legacy) example config
-    pointgoal_baselines_ppo.json   # (legacy) example config
-scripts/
-  run_from_config.py     # Legacy: run experiments from a JSON config
+CRAX/
+├── brax/
+│   ├── envs/                    # Environment definitions
+│   │   ├── safe_point_goal.py
+│   │   ├── safe_ant.py
+│   │   ├── safe_walker.py
+│   │   ├── safe_reacher.py
+│   │   ├── hazards.py           # Hazard generation
+│   │   └── goals.py             # Goal sampling
+│   └── training/
+│       └── agents/
+│           ├── ppo/             # Base PPO with hooks
+│           ├── ppo_lag/         # PPO-Lagrange
+│           ├── ppo_pid/         # PPO-PID
+│           ├── focops/          # FOCOPS
+│           ├── p3o/             # P3O
+│           └── ppo_saute/       # Saute wrapper
+├── configs/                     # Training configurations
+├── scripts/                     # Utility scripts
+├── train_env.py                 # Main training script (CLI)
+├── requirements.txt             # Flexible versions
+├── requirements-pinned.txt      # Exact versions
+└── pyproject.toml               # Package configuration
 ```
 
 ## Updating Dependencies
@@ -151,15 +186,14 @@ Login to Weights & Biases for experiment tracking:
 wandb login
 ```
 
-By default, training enables wandb logging (use_wandb=True). You can disable it or set project/group/tags:
+By default, training enables wandb logging. You can disable it or configure it:
 ```bash
 # Disable wandb
 python train_env.py --env_name safe_point_goal --alg ppo_lag --use_wandb False
 
 # Set project, group, and tags
 python train_env.py --env_name safe_point_goal --alg ppo_lag \
-  --wandb_project safe-brax-experimental-results \
+  --wandb_project crax-experiments \
   --wandb_group safe_point_goal \
   --wandb_tags tag1 tag2
 ```
-
