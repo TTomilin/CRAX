@@ -35,10 +35,10 @@ class SafeReacher(PipelineEnv):
             hazard_radius: float = 0.035,
             rect_half_extent: float = 0.03,
             hazard_height: float = 0.01,
-            reach_radius: Optional[float] = None,  # Auto-computed from arm geometry if None
+            hazard_placement_radius: float = 0.27,  # Hazards can be placed further than arm reach
             samples_per_link: int = 5,
             lidar_bins: int = 16,
-            lidar_max_dist: float = 0.25,
+            lidar_max_dist: float = 0.30,
             lidar_alias: bool = True,
             **kwargs,
     ):
@@ -48,11 +48,10 @@ class SafeReacher(PipelineEnv):
         self._hazard_radius = hazard_radius
         self._rect_half_extent = rect_half_extent
         self._hazard_height = hazard_height
-        # Compute reach radius from arm geometry if not specified
-        # Max reach = l1 + l2, with small margin for safety
-        self._reach_radius = reach_radius if reach_radius is not None else (
-            self._LINK1_LENGTH + self._LINK2_LENGTH - 0.01
-        )
+        # Arm's actual reach (for goal placement)
+        self._arm_reach = self._LINK1_LENGTH + self._LINK2_LENGTH - 0.01
+        # Hazard placement radius (can be larger than arm reach)
+        self._hazard_placement_radius = hazard_placement_radius
         self._samples_per_link = samples_per_link
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
@@ -186,8 +185,8 @@ class SafeReacher(PipelineEnv):
             margin = jp.asarray(0.005, dtype=jp.float32)
             goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
 
-            # Outer bound: keep the goal center reachable by the tip
-            r_max = jp.asarray(self._reach_radius, dtype=jp.float32) - goal_r - margin
+            # Outer bound: keep the goal center reachable by the arm tip
+            r_max = jp.asarray(self._arm_reach, dtype=jp.float32) - goal_r - margin
 
             # Inner bound: avoid "too close to base" where fingertip cannot physically get
             r_min = jp.asarray(0.04, dtype=jp.float32) + goal_r + margin
@@ -254,13 +253,16 @@ class SafeReacher(PipelineEnv):
             base_keepout = haz_r[i] + hazard_margin
             return d > base_keepout
 
+        # Maximum placement attempts per hazard - increase for more hazards
+        max_attempts = 1000
+
         def place_one(i, carry):
             rng_k, placed = carry
 
             rng_k, sub0 = jax.random.split(rng_k)
 
-            # outer radius: must fit inside reach disc
-            r_max_i = jp.asarray(self._reach_radius, jp.float32) - haz_r[i] - hazard_margin
+            # outer radius: hazards can be placed beyond arm reach
+            r_max_i = jp.asarray(self._hazard_placement_radius, jp.float32) - haz_r[i] - hazard_margin
             # inner radius: keep away from base
             r_min_i = haz_r[i] + hazard_margin
 
@@ -287,7 +289,7 @@ class SafeReacher(PipelineEnv):
                 ok = ok | ok_cand
                 return (rng_t, ok, cur)
 
-            rng_k, ok, chosen = jax.lax.fori_loop(0, 400, attempt, (rng_k, ok0, cand0))
+            rng_k, ok, chosen = jax.lax.fori_loop(0, max_attempts, attempt, (rng_k, ok0, cand0))
             placed = placed.at[i].set(chosen)
             return (rng_k, placed)
 
@@ -343,7 +345,7 @@ class SafeReacher(PipelineEnv):
 
         # Reward based on distance to goal with configurable power for non-linear scaling
         # Higher distance_power = more reward differentiation when close to goal
-        max_dist = jp.asarray(self._reach_radius * 2.0, jp.float32)
+        max_dist = jp.asarray(self._arm_reach * 2.0, jp.float32)
         normalized_closeness = jp.maximum(0.0, 1.0 - dist / max_dist)
         # Apply power to emphasize closeness (e.g., power=2 makes reward quadratic in closeness)
         weighted_closeness = normalized_closeness ** self._reward_distance_power
