@@ -15,9 +15,9 @@ from typing import Any, Dict
 
 _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
     "safe_reacher": {
-        1: {"num_hazards": 3},
-        2: {"num_hazards": 6},
-        3: {"num_hazards": 9},
+        1: {"num_hazards": 4},
+        2: {"num_hazards": 7},
+        3: {"num_hazards": 10},
     },
     "safe_walker": {
         1: {"max_gap": 6.0},

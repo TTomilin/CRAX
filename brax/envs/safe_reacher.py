@@ -23,18 +23,22 @@ class SafeReacher(PipelineEnv):
       additively.
     """
 
+    # Arm link lengths (from reacher.xml geometry)
+    _LINK1_LENGTH = 0.1
+    _LINK2_LENGTH = 0.11  # includes fingertip
+
     def __init__(
             self,
             episode_length: int = 200,
-            num_hazards: int = 6,
+            num_hazards: int = 10,
             hazard_types: Optional[List[str]] = None,
             hazard_radius: float = 0.035,
             rect_half_extent: float = 0.03,
             hazard_height: float = 0.01,
-            reach_radius: float = 0.27,
+            reach_radius: Optional[float] = None,  # Auto-computed from arm geometry if None
             samples_per_link: int = 5,
             lidar_bins: int = 16,
-            lidar_max_dist: float = 0.30,
+            lidar_max_dist: float = 0.25,
             lidar_alias: bool = True,
             **kwargs,
     ):
@@ -44,7 +48,11 @@ class SafeReacher(PipelineEnv):
         self._hazard_radius = hazard_radius
         self._rect_half_extent = rect_half_extent
         self._hazard_height = hazard_height
-        self._reach_radius = reach_radius
+        # Compute reach radius from arm geometry if not specified
+        # Max reach = l1 + l2, with small margin for safety
+        self._reach_radius = reach_radius if reach_radius is not None else (
+            self._LINK1_LENGTH + self._LINK2_LENGTH - 0.01
+        )
         self._samples_per_link = samples_per_link
         self._lidar_bins = lidar_bins
         self._lidar_max_dist = lidar_max_dist
@@ -52,6 +60,12 @@ class SafeReacher(PipelineEnv):
 
         self._cost_scale = kwargs.get("cost", {}).get("scaler", 1.0)
         self._reward_scale = kwargs.get("reward", {}).get("scaler", 0.1)
+        # Distance weighting for reward: higher values = more emphasis on being close to goal
+        # 1.0 = linear, 2.0 = quadratic, etc.
+        self._reward_distance_power = kwargs.get("reward", {}).get("distance_power", 2.0)
+        # Optional: add a bonus reward when within a threshold of the goal
+        self._reward_goal_bonus = kwargs.get("reward", {}).get("goal_bonus", 5.0)
+        self._reward_goal_threshold = kwargs.get("reward", {}).get("goal_threshold", 0.02)
 
         # Build hazards as MJCF geoms/bodies (mocap)
         cyl_r = self._hazard_radius
@@ -323,13 +337,23 @@ class SafeReacher(PipelineEnv):
 
         # --- distance to goal ---
         tip_pos, _, target_pos = self._tip_target(pipeline_state)
-        dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
+        # Use Euclidean distance for more accurate distance measurement
+        diff_xy = tip_pos[:2] - target_pos[:2]
+        dist = jp.sqrt(jp.sum(diff_xy ** 2) + 1e-8)
 
-        # Positive reward for being close to the goal (0 when far, positive when close)
-        # Normalized so reward is in [0, reward_scale] range
-        max_dist = jp.asarray(self._reach_radius * 2.0, jp.float32)  # Maximum possible distance
+        # Reward based on distance to goal with configurable power for non-linear scaling
+        # Higher distance_power = more reward differentiation when close to goal
+        max_dist = jp.asarray(self._reach_radius * 2.0, jp.float32)
         normalized_closeness = jp.maximum(0.0, 1.0 - dist / max_dist)
-        reward = jp.asarray(self._reward_scale, jp.float32) * normalized_closeness
+        # Apply power to emphasize closeness (e.g., power=2 makes reward quadratic in closeness)
+        weighted_closeness = normalized_closeness ** self._reward_distance_power
+        reward_dist = jp.asarray(self._reward_scale, jp.float32) * weighted_closeness
+
+        # Bonus reward for reaching the goal (within threshold)
+        goal_reached = dist < self._reward_goal_threshold
+        reward_bonus = jp.where(goal_reached, jp.asarray(self._reward_goal_bonus, jp.float32), 0.0)
+
+        reward = reward_dist + reward_bonus
 
         # --- safety cost ---
         cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
@@ -338,6 +362,8 @@ class SafeReacher(PipelineEnv):
         state.metrics.update(
             dist=dist,
             cost=cost,
+            reward_dist=reward_dist,
+            reward_bonus=reward_bonus,
         )
         info = dict(state.info)
         info['cost'] = cost
@@ -447,7 +473,8 @@ class SafeReacher(PipelineEnv):
 
         # --- sample arm points in XY ---
         theta1, theta2 = pipeline_state.q[0], pipeline_state.q[1]
-        l1, l2 = 0.1, 0.1
+        l1 = self._LINK1_LENGTH
+        l2 = self._LINK2_LENGTH
 
         n = max(1, self._samples_per_link)
         frac = jp.linspace(1.0 / (n + 1), n / (n + 1), n)
