@@ -194,13 +194,13 @@ def benchmark_safety_transfer(
     temp_checkpoint_dir = None
     if use_checkpoint_transfer:
         if checkpoint_dir is not None:
-            transfer_checkpoint_dir = Path(checkpoint_dir)
+            transfer_checkpoint_dir = Path(checkpoint_dir).resolve()
         elif train_kwargs.get('save_checkpoint_path'):
-            transfer_checkpoint_dir = Path(train_kwargs['save_checkpoint_path']) / 'transfer'
+            transfer_checkpoint_dir = Path(train_kwargs['save_checkpoint_path']).resolve() / 'transfer'
         else:
             # Create a temporary directory that will be cleaned up after transfer
             temp_checkpoint_dir = tempfile.mkdtemp(prefix='transfer_checkpoint_')
-            transfer_checkpoint_dir = Path(temp_checkpoint_dir)
+            transfer_checkpoint_dir = Path(temp_checkpoint_dir).resolve()
         transfer_checkpoint_dir.mkdir(parents=True, exist_ok=True)
         print(f"Transfer checkpoint directory: {transfer_checkpoint_dir}")
 

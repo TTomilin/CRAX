@@ -123,7 +123,12 @@ def save(
         config_fname: str = 'config.json',
 ):
     """Saves a checkpoint."""
-    ckpt_path = epath.Path(path) / f'{step:012d}'
+    # Ensure absolute path (orbax requires absolute paths)
+    path = epath.Path(path)
+    if not path.is_absolute():
+        from pathlib import Path as StdPath
+        path = epath.Path(StdPath(path).resolve())
+    ckpt_path = path / f'{step:012d}'
     logging.info('saving checkpoint to %s', ckpt_path.as_posix())
 
     if not ckpt_path.exists():
@@ -141,7 +146,11 @@ def load(
         path: Union[str, epath.Path],
 ):
     """Loads checkpoint."""
+    # Ensure absolute path (orbax requires absolute paths)
     path = epath.Path(path)
+    if not path.is_absolute():
+        from pathlib import Path as StdPath
+        path = epath.Path(StdPath(path).resolve())
     if not path.exists():
         raise ValueError(f'checkpoint path does not exist: {path.as_posix()}')
 
@@ -164,7 +173,11 @@ def load_config(
         config_path: Union[str, epath.Path],
 ) -> config_dict.ConfigDict:
     """Loads config from config path."""
+    # Ensure absolute path (orbax requires absolute paths)
     config_path = epath.Path(config_path)
+    if not config_path.is_absolute():
+        from pathlib import Path as StdPath
+        config_path = epath.Path(StdPath(config_path).resolve())
     if not config_path.exists():
         raise ValueError(f'Config file not found at {config_path.as_posix()}')
     return config_dict.create(**json.loads(config_path.read_text()))
