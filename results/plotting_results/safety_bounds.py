@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import FormatStrFormatter
 
-from common import align_and_stack, set_mpl_style, nice_grid
+from common import align_and_stack, set_mpl_style, nice_grid, moving_average
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
@@ -118,7 +118,7 @@ def plot_metrics(
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.45, hspace=0.55)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.0, wspace=0.45, hspace=0.75)
 
     def get_ax(env_i: int, metric_i: int):
         gr = env_i // ncols_env
@@ -170,7 +170,11 @@ def plot_metrics(
                 x_max_for_axis = x[-1] if x_max_for_axis is None else max(x_max_for_axis, x[-1])
 
                 mean = vals.mean(axis=0)
+                if args.smoothing_window:
+                    mean = moving_average(mean, args.smoothing_window)
                 ci = 1.96 * vals.std(axis=0) / np.sqrt(max(vals.shape[0], 1))
+                if args.smoothing_window:
+                    ci = moving_average(ci, args.smoothing_window)
 
                 bound_val = bound_vals[bound]
                 label_key = f"{bound_val:g}" if not np.isnan(bound_val) else str(bound)
@@ -221,7 +225,7 @@ def plot_metrics(
             handles,
             labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, -0.4),
+            bbox_to_anchor=(0.5, -0.3),
             ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
@@ -320,6 +324,7 @@ def build_args() -> argparse.ArgumentParser:
         help="Turn on grid.",
     )
 
+    p.add_argument("--smoothing_window", type=int, default=1, help="Moving average window size for smoothing.")
     p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=2.6, help="Width per metric subplot.")
     p.add_argument("--panel_h", type=float, default=1.8, help="Height per env row.")

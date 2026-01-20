@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 # Default mapping matching most scripts in this repo
 DEFAULT_METRIC_COLS: Dict[str, str] = {
@@ -55,10 +54,10 @@ def nice_grid(n: int, max_cols: int = 3) -> Tuple[int, int]:
 
 
 def get_series(
-    df: pd.DataFrame,
-    algo: str,
-    metric: str,
-    metric_cols: Optional[Dict[str, str]] = None,
+        df: pd.DataFrame,
+        algo: str,
+        metric: str,
+        metric_cols: Optional[Dict[str, str]] = None,
 ) -> Optional[pd.Series]:
     """Return a numeric pandas Series for the requested metric, with corrections.
 
@@ -93,6 +92,13 @@ def get_series(
         return None
 
     return df[col].astype(np.float32)
+
+
+def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
+    """Smooth data with a simple moving average."""
+    if window_size <= 1:
+        return data
+    return np.convolve(data, np.ones(window_size) / window_size, mode='same')
 
 
 def align_and_stack(dfs: List[pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:

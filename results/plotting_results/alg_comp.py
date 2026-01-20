@@ -13,6 +13,7 @@ from common import (
     align_and_stack,
     set_mpl_style,
     nice_grid,
+    moving_average,
 )
 
 # Pretty labels (edit if you care)
@@ -71,8 +72,6 @@ def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], met
             }).dropna()
             out[key].append(d)
     return out
-
-
 
 
 def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: argparse.Namespace) -> None:
@@ -136,7 +135,11 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                 x_max_for_axis = x[-1] if x_max_for_axis is None else max(x_max_for_axis, x[-1])
 
                 mean = vals.mean(axis=0)
+                if args.smoothing_window:
+                    mean = moving_average(mean, args.smoothing_window)
                 ci = 1.96 * vals.std(axis=0) / np.sqrt(max(vals.shape[0], 1))
+                if args.smoothing_window:
+                    ci = moving_average(ci, args.smoothing_window)
 
                 line, = ax.plot(x, mean, label=algo)
                 # make CI visible
@@ -189,7 +192,8 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.1), ncol=min(len(labels), 10), fancybox=True,
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.1), ncol=min(len(labels), 10),
+                   fancybox=True,
                    shadow=True)
 
     out_dir = Path(args.output_fig_dir)
@@ -216,21 +220,20 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
+    p.add_argument("--algos", type=str, nargs="+",
+                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=1)
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],
-                   choices=list(METRIC_COLS.keys()))
+    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
     p.add_argument("--x_max", type=int, default=5e8)
     p.add_argument("--total_iterations", type=float, default=None,
                    help="If set, x-axis is rescaled to this many env steps.")
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines.")
     p.add_argument("--grid", action="store_true")
-
+    p.add_argument("--smoothing_window", type=int, default=1, help="Moving average window size for smoothing.")
     p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
     p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
-
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="baselines")
     return p
