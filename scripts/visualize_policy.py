@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualize a trained policy by running a rollout and saving video + snapshots.
+"""Visualize a trained policy by running rollouts and saving video + snapshots.
 
 Usage:
     python scripts/visualize_policy.py --checkpoint path/to/checkpoint --env safe_point_goal
@@ -8,8 +8,9 @@ Usage:
     python scripts/visualize_policy.py \
         --checkpoint results/ppo_lag/checkpoint_10000000 \
         --env safe_point_goal \
-        --difficulty 2 \
+        --level 2 \
         --episode_length 1000 \
+        --num_episodes 3 \
         --output_dir visualizations \
         --snapshot_interval 20 \
         --video_fps 30 \
@@ -19,9 +20,10 @@ Usage:
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import jax
+import numpy as np
 
 
 # Select rendering backend before importing mujoco
@@ -64,43 +66,78 @@ def load_policy(checkpoint_path: str, deterministic: bool = True):
     return ppo_checkpoint.load_policy(path)
 
 
-def run_rollout(env, policy, episode_length: int, seed: int = 0):
-    """Run a single episode rollout and collect states."""
+def run_rollout(
+        env,
+        policy,
+        num_episodes: int,
+        episode_length: int,
+        seed: int = 0
+) -> Tuple[List, List[dict]]:
+    """Run multiple episode rollouts and collect states.
+
+    Args:
+        env: The environment
+        policy: The policy function
+        num_episodes: Number of episodes to run
+        episode_length: Maximum steps per episode
+        seed: Random seed
+
+    Returns:
+        Tuple of (all_states, episode_metrics) where episode_metrics is a list
+        of dicts with per-episode reward/cost/length.
+    """
     jit_step = jax.jit(env.step)
     jit_reset = jax.jit(env.reset)
     jit_policy = jax.jit(policy)
 
     key = jax.random.PRNGKey(seed)
-    key, reset_key = jax.random.split(key)
 
-    # Reset environment
-    state = jit_reset(reset_key)
+    all_states = []
+    episode_metrics = []
 
-    # Collect trajectory
-    states = [state]
-    total_reward = 0.0
-    total_cost = 0.0
+    for ep in range(num_episodes):
+        key, reset_key = jax.random.split(key)
 
-    for step in range(episode_length):
-        key, action_key = jax.random.split(key)
+        # Reset environment for each episode
+        state = jit_reset(reset_key)
+        episode_states = [state]
+        episode_reward = 0.0
+        episode_cost = 0.0
+        episode_steps = 0
 
-        # Get action from policy
-        action, _ = jit_policy(state.obs, action_key)
+        for step in range(episode_length):
+            key, action_key = jax.random.split(key)
 
-        # Step environment
-        state = jit_step(state, action)
-        states.append(state)
+            # Get action from policy
+            action, _ = jit_policy(state.obs, action_key)
 
-        # Accumulate metrics
-        total_reward += float(state.reward)
-        if hasattr(state, 'info') and 'cost' in state.info:
-            total_cost += float(state.info['cost'])
+            # Step environment
+            state = jit_step(state, action)
+            episode_states.append(state)
+            episode_steps += 1
 
-        # Check for done
-        if state.done:
-            break
+            # Accumulate metrics
+            episode_reward += float(state.reward)
+            if hasattr(state, 'info') and 'cost' in state.info:
+                episode_cost += float(state.info['cost'])
 
-    return states, total_reward, total_cost
+            # Check for done
+            if state.done:
+                break
+
+        # Store episode data
+        all_states.extend(episode_states)
+        episode_metrics.append({
+            'episode': ep + 1,
+            'reward': episode_reward,
+            'cost': episode_cost,
+            'length': episode_steps,
+        })
+
+        print(f"  Episode {ep + 1}/{num_episodes}: "
+              f"reward={episode_reward:.2f}, cost={episode_cost:.2f}, steps={episode_steps}")
+
+    return all_states, episode_metrics
 
 
 def save_video(
@@ -180,8 +217,10 @@ def main():
     parser.add_argument("--env", required=True, help="Environment name (e.g., safe_point_goal)")
 
     # Environment options
-    parser.add_argument("--difficulty", type=int, default=None, help="Environment difficulty level")
-    parser.add_argument("--episode_length", type=int, default=1000, help="Episode length")
+    parser.add_argument("--level", type=int, default=None, help="Environment difficulty level (1, 2, or 3)")
+    parser.add_argument("--episode_length", type=int, default=None,
+                        help="Episode length (default: use env default)")
+    parser.add_argument("--num_episodes", type=int, default=1, help="Number of episodes to run")
     parser.add_argument("--env_kwargs", type=str, default=None, help="JSON string of extra env kwargs")
 
     # Output options
@@ -214,36 +253,55 @@ def main():
         name = args.name
     else:
         checkpoint_name = Path(args.checkpoint).name
-        name = f"{args.env}_{checkpoint_name}"
+        level_str = f"_level_{args.level}" if args.level else ""
+        name = f"{args.env}{level_str}_{checkpoint_name}"
 
     # Build environment kwargs
     env_kwargs = {}
-    if args.difficulty is not None:
-        env_kwargs["difficulty"] = args.difficulty
     if args.env_kwargs:
         env_kwargs.update(json.loads(args.env_kwargs))
 
     print(f"Creating environment: {args.env}")
+    if args.level:
+        print(f"  Difficulty level: {args.level}")
     if env_kwargs:
-        print(f"  kwargs: {env_kwargs}")
+        print(f"  Extra kwargs: {env_kwargs}")
 
-    # Create environment
-    env = envs.get_environment(args.env, **env_kwargs)
+    # Create environment with difficulty level
+    env = envs.get_environment(args.env, level=args.level, **env_kwargs)
+
+    # Determine episode length
+    episode_length = args.episode_length
+    if episode_length is None:
+        episode_length = getattr(env, 'episode_length', 1000)
+    print(f"  Episode length: {episode_length}")
 
     # Load policy
     print(f"Loading policy from: {args.checkpoint}")
     policy = load_policy(args.checkpoint, deterministic=args.deterministic)
 
     # Run rollout
-    print(f"Running rollout for {args.episode_length} steps...")
-    states, total_reward, total_cost = run_rollout(
-        env, policy, args.episode_length, seed=args.seed
+    print(f"Running {args.num_episodes} episode(s) for up to {episode_length} steps each...")
+    states, episode_metrics = run_rollout(
+        env, policy,
+        num_episodes=args.num_episodes,
+        episode_length=episode_length,
+        seed=args.seed
     )
 
-    print(f"Rollout complete:")
-    print(f"  Steps: {len(states)}")
-    print(f"  Total reward: {total_reward:.2f}")
-    print(f"  Total cost: {total_cost:.2f}")
+    # Compute aggregate metrics
+    total_reward = sum(ep['reward'] for ep in episode_metrics)
+    total_cost = sum(ep['cost'] for ep in episode_metrics)
+    avg_reward = total_reward / len(episode_metrics)
+    avg_cost = total_cost / len(episode_metrics)
+    avg_length = sum(ep['length'] for ep in episode_metrics) / len(episode_metrics)
+
+    print(f"\nRollout complete:")
+    print(f"  Total frames: {len(states)}")
+    print(f"  Episodes: {len(episode_metrics)}")
+    print(f"  Average reward: {avg_reward:.2f}")
+    print(f"  Average cost: {avg_cost:.2f}")
+    print(f"  Average length: {avg_length:.1f}")
 
     # Save video
     if not args.no_video:
@@ -267,11 +325,17 @@ def main():
     metadata = {
         "checkpoint": args.checkpoint,
         "env": args.env,
+        "level": args.level,
         "env_kwargs": env_kwargs,
-        "episode_length": args.episode_length,
-        "actual_steps": len(states),
+        "episode_length": episode_length,
+        "num_episodes": args.num_episodes,
+        "total_frames": len(states),
         "total_reward": total_reward,
         "total_cost": total_cost,
+        "avg_reward": avg_reward,
+        "avg_cost": avg_cost,
+        "avg_length": avg_length,
+        "episode_metrics": episode_metrics,
         "deterministic": args.deterministic,
         "seed": args.seed,
     }
