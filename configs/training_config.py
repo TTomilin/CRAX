@@ -149,7 +149,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
 
     # --- WandB ---
     parser.add_argument("--use_wandb", type=bool, default=True, help="Enable wandb logging")
-    parser.add_argument("--wandb_project", type=str, default="safe-brax-experimental-results", help="W&B project")
+    parser.add_argument("--wandb_project", type=str, default="crax", help="W&B project")
     parser.add_argument("--wandb_group", type=str, default=None, help="W&B group")
     parser.add_argument("--wandb_tags", type=str, nargs='+', help="JSON list or path of tags")
 
