@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 import jax
-import numpy as np
 
 
 # Select rendering backend before importing mujoco

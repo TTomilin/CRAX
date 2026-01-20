@@ -89,7 +89,7 @@ def common_dl_args() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+',
-                        default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o"],
+                        default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o", "focops"],
                         help="Algorithms to download/plot")
     parser.add_argument("--envs", type=str, nargs='+', help="Environments to download/plot")
     parser.add_argument("--levels", type=str, nargs='+', default=[1, 2, 3], help="Levels to download/plot")
