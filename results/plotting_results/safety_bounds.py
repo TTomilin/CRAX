@@ -22,6 +22,13 @@ TRANSLATIONS = {
     "ppo_pid": "PPOPID",
 }
 
+# Per-env x-axis limits (env steps)
+ENV_X_MAX: Dict[str, int] = {
+    "safe_point_goal": 1_000_000_00,
+    "safe_reacher": 5_000_000_00,
+    "safe_walker": 5_000_000_00,
+}
+
 
 def _bound_value(bound) -> float:
     """Extract numeric value from a bound identifier.
@@ -184,9 +191,11 @@ def plot_metrics(
             # format y-axis ticks as integers without thousands separators
             ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
 
-            x_max = args.x_max if args.x_max is not None else x_max_for_axis
-            if x_max is not None:
-                ax.set_xlim(0.0, x_max)
+            # Per-env x max takes priority, then CLI x_max, then data-driven max
+            x_max = ENV_X_MAX.get(env, None)
+            if x_max is None:
+                x_max = args.x_max if args.x_max is not None else x_max_for_axis
+            ax.set_xlim(0.0, x_max)
 
             if args.grid:
                 ax.grid(True, linestyle="--", linewidth=0.9, alpha=0.45)

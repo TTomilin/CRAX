@@ -49,10 +49,10 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         2: {
             "goal_type": "cylinder",
             "goal_count": 2,
-            "goal_size": 0.2,
+            "goal_size": 0.18,
             "goal_height": 0.2,
             "hazard_specs": [
-                {"type": "cylinder", "count": 8, "size": 0.5, "height": 0.01, "collidable": False},
+                {"type": "cylinder", "count": 8, "size": 0.4, "height": 0.01, "collidable": False},
                 {"type": "cylinder", "count": 8, "size": 0.3, "height": 0.4, "collidable": True},
                 {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True,
                  "fixed": True},
@@ -61,12 +61,12 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         3: {
             "goal_type": "cylinder",
             "goal_count": 2,
-            "goal_size": 0.2,
+            "goal_size": 0.16,
             "goal_height": 0.2,
             "hazard_specs": [
                 {"type": "cube", "count": 6, "size": 0.3, "height": 0.01, "collidable": False},
                 {"type": "cube", "count": 4, "size": 0.25, "height": 0.5, "collidable": True},
-                {"type": "cylinder", "count": 6, "size": 0.4, "height": 0.01, "collidable": False},
+                {"type": "cylinder", "count": 6, "size": 0.35, "height": 0.01, "collidable": False},
                 {"type": "cylinder", "count": 4, "size": 0.25, "height": 0.4, "collidable": True},
                 {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True,
                  "fixed": True},
