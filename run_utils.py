@@ -123,6 +123,7 @@ def collect_rollout_metrics(env_name: str, make_inference_fn, params,
                             num_steps: int = 5000, seed: int = None,
                             save_trajectory: bool = True,
                             save_plots: bool = True,
+                            level: Optional[int] = None,
                             env_kwargs: Optional[Dict[str, Any]] = None) -> Dict[str, List]:
     """
     Collect detailed metrics during a rollout.
@@ -130,8 +131,8 @@ def collect_rollout_metrics(env_name: str, make_inference_fn, params,
     Returns:
         Dictionary containing all collected metrics
     """
-    # Create evaluation environment (respect env_kwargs)
-    eval_environment = envs.get_environment(env_name, **(env_kwargs or {}))
+    # Create evaluation environment (with optional difficulty level)
+    eval_environment = envs.get_environment(env_name, level=level, **(env_kwargs or {}))
 
     # JIT compile reset and step
     jit_eval_reset = jax.jit(eval_environment.reset)

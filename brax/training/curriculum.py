@@ -42,7 +42,6 @@ import time
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from brax import envs
-from brax.envs.difficulty import apply_difficulty
 
 
 class Stage(NamedTuple):
@@ -103,18 +102,16 @@ def train_curriculum(
         if stage.kwargs_override:
             stage_kwargs.update(stage.kwargs_override)
 
-        # Create environment from name, supporting difficulty levels via apply_difficulty
+        # Create environment from name with difficulty level
         # Extract env creation kwargs (e.g., backend) that should not be merged into config
         env_creation_kwargs = {k: v for k, v in stage_kwargs.items() if k in ['backend']}
 
         env_name = stage.env_name
         level = stage.level
-        level_kwargs: Dict[str, Any] = {}
-        level_kwargs = apply_difficulty(env_name, level_kwargs, level)
 
-        # Create the environment with base name and merged kwargs
-        env = envs.get_environment(env_name, **env_creation_kwargs, **level_kwargs)
-        eval_env = envs.get_environment(env_name, **env_creation_kwargs, **level_kwargs)
+        # Create the environment with difficulty level
+        env = envs.get_environment(env_name, level=level, **env_creation_kwargs)
+        eval_env = envs.get_environment(env_name, level=level, **env_creation_kwargs)
 
         # Determine the episode length
         episode_length = stage_kwargs.get('episode_length') or getattr(env, 'episode_length', None)

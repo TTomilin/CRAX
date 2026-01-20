@@ -43,6 +43,7 @@ from brax.envs.safe_point_goal import SafePointGoal
 from brax.envs.safe_point_goal_weighted import SafePointGoalWeighted
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
+from brax.envs.difficulty import apply_difficulty, get_supported_levels, supports_difficulty
 
 _envs = {
     'ant': ant.Ant,
@@ -118,16 +119,22 @@ class UnifiedEnvAdapter(Wrapper):
         return self._ensure_unified_fields(next_state)
 
 
-def get_environment(env_name: str, **kwargs) -> Env:
+def get_environment(env_name: str, level: Optional[int] = None, **kwargs) -> Env:
     """Returns an environment from the environment registry.
 
     Args:
       env_name: environment name string
+      level: optional difficulty level (1, 2, 3). If provided, applies difficulty
+             overrides for supported environments.
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
       env: an environment
     """
+    # Apply difficulty overrides if level is specified
+    if level is not None:
+        kwargs = apply_difficulty(env_name, kwargs, level)
+
     env_cls = _envs[env_name]
     base_env = env_cls(**kwargs)
     # Always wrap with unified adapter so downstream code can rely on cost/info fields
@@ -150,6 +157,7 @@ def create(
         action_repeat: int = 1,
         auto_reset: bool = True,
         batch_size: Optional[int] = None,
+        level: Optional[int] = None,
         **kwargs,
 ) -> Env:
     """Creates an environment from the registry.
@@ -160,11 +168,17 @@ def create(
       action_repeat: how many repeated actions to take per environment step
       auto_reset: whether to auto reset the environment after an episode is done
       batch_size: the number of environments to batch together
-      **kwargs: keyword argments that get passed to the Env class constructor
+      level: optional difficulty level (1, 2, 3). If provided, applies difficulty
+             overrides for supported environments.
+      **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
       env: an environment
     """
+    # Apply difficulty overrides if level is specified
+    if level is not None:
+        kwargs = apply_difficulty(env_name, kwargs, level)
+
     env_cls = _envs[env_name]
     try:
         base_env = env_cls(**kwargs)

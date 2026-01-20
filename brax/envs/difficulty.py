@@ -88,6 +88,25 @@ def _merge_dict(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
     return dst
 
 
+def get_supported_levels(env_name: str) -> list[int]:
+    """Returns the list of supported difficulty levels for an environment.
+
+    Args:
+        env_name: Name of the environment
+
+    Returns:
+        List of supported levels (e.g., [1, 2, 3]) or empty list if not supported
+    """
+    if env_name not in _DIFFICULTY_OVERRIDES:
+        return []
+    return sorted(_DIFFICULTY_OVERRIDES[env_name].keys())
+
+
+def supports_difficulty(env_name: str) -> bool:
+    """Check if an environment supports difficulty levels."""
+    return env_name in _DIFFICULTY_OVERRIDES
+
+
 def apply_difficulty(env_name: str, env_kwargs: dict[str, Any] | None, level: int) -> dict[str, Any]:
     """Apply difficulty-level overrides to environment kwargs.
 

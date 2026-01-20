@@ -12,7 +12,6 @@ import numpy as np
 
 import wandb
 from brax import envs
-from brax.envs.difficulty import apply_difficulty
 from configs.training_config import build_base_parser
 from run_utils import collect_rollout_metrics, record_episode_video, setup_gpu_environment, get_algorithm_train_fn, \
     filter_kwargs_for_fn, custom_progress_fn
@@ -40,13 +39,13 @@ def main():
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         run_name = f"{env_name}_Level_{difficulty}_{alg_name}_seed{seed}_{timestamp}"
 
-        # Create environments
-        adjusted_env_kwargs = apply_difficulty(env_name, config.env_kwargs, difficulty)
-        env = envs.get_environment(env_name, **adjusted_env_kwargs)
-        eval_env = envs.get_environment(env_name, **adjusted_env_kwargs)
+        # Create environments with difficulty level
+        env_kwargs = config.env_kwargs or {}
+        env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
+        eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
 
         # Determine the episode length
-        episode_length = adjusted_env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
+        episode_length = env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
         print(f"Training environment '{env_name}' instantiated with difficulty {difficulty}.")
         print(f"Evaluation environment '{env_name}' instantiated with difficulty {difficulty}.")
@@ -119,7 +118,8 @@ def main():
                 seed=seed,
                 save_trajectory=True,
                 save_plots=True,
-                env_kwargs=apply_difficulty(env_name, config.env_kwargs, config.difficulty)
+                level=config.difficulty,
+                env_kwargs=config.env_kwargs,
             )
 
         if not config.skip_video:

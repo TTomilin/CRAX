@@ -65,7 +65,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from brax import envs
-from brax.envs.difficulty import apply_difficulty
 from brax.training.agents.ppo import checkpoint as ppo_checkpoint
 from run_utils import filter_kwargs_for_fn, record_episode_video
 
@@ -218,12 +217,11 @@ def benchmark_safety_transfer(
     print(f"Safe algorithms to test: {list(safe_train_fns.keys())}")
     print()
 
-    # Create environment using difficulty mapping if provided
-    env_kwargs = train_kwargs.get('env_kwargs', None)
+    # Create environment using difficulty level if provided
+    env_kwargs = train_kwargs.get('env_kwargs', None) or {}
     difficulty = train_kwargs.get('difficulty', None)
-    adjusted_env_kwargs = apply_difficulty(env_name, env_kwargs, difficulty) if difficulty is not None else (env_kwargs or {})
-    env = envs.get_environment(env_name, **adjusted_env_kwargs)
-    eval_env = envs.get_environment(env_name, **adjusted_env_kwargs)
+    env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
+    eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
 
     # Determine the episode length
     episode_length = train_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
