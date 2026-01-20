@@ -49,9 +49,8 @@ class SauteWrapper(Wrapper):
         # Augment observation
         obs = self._augment_obs(state.obs, b)
 
-        # Initialize metrics
+        # Initialize metrics (only include metrics that make sense when summed)
         metrics = state.metrics.copy()
-        metrics['saute_budget'] = b
         metrics['saute_violated'] = jnp.zeros_like(b)
 
         return state.replace(obs=obs, info=info, metrics=metrics)
@@ -102,8 +101,10 @@ class SauteWrapper(Wrapper):
         obs = self._augment_obs(next_state.obs, b_next)
 
         # Update metrics
+        # Note: only include metrics that make sense when summed over episode
+        # saute_violated: sum = total violation count (useful)
+        # saute_budget: don't include - summing budget is meaningless (use info for final value)
         metrics = next_state.metrics.copy()
-        metrics['saute_budget'] = b_next
         metrics['saute_violated'] = violated.astype(jnp.float32)
 
         return next_state.replace(

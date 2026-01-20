@@ -145,7 +145,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     # --- P3O ---
     parser.add_argument("--initial_kappa", type=float, default=0.01, help="P3O: initial kappa (cost penalty)")
     parser.add_argument("--kappa_increase_factor", type=float, default=1.5, help="P3O: multiplicative factor for kappa when constraint violated")
-    parser.add_argument("--kappa_max", type=float, default=1000.0, help="P3O: maximum kappa value")
+    parser.add_argument("--kappa_max", type=float, default=100.0, help="P3O: maximum kappa value")
 
     # --- WandB ---
     parser.add_argument("--use_wandb", type=bool, default=True, help="Enable wandb logging")

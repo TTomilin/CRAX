@@ -22,7 +22,7 @@ def train(
     # Saute parameters:
     safety_bound: float = 25.0,
     gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
-    violation_penalty: float = 0.0,
+    violation_penalty: float = -1.0,  # Negative penalty when safety budget depleted
     normalize_budget_obs: bool = True,
     # Standard PPO args:
     wrap_env: bool = True,
