@@ -88,3 +88,7 @@ class MetricsLogger:
 
         logging.info(log_string)
         self._progress_fn(int(self._num_steps), mean_metrics)
+
+        # Clear buffers after logging to avoid re-averaging the same data
+        for key in list(self._metrics_buffer.keys()):
+            self._metrics_buffer[key].clear()
