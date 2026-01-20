@@ -37,7 +37,7 @@ class SafeWalker(PipelineEnv):
             ctrl_cost_weight: float = 1e-3,
             healthy_reward: float = 1.0,
             terminate_when_unhealthy: bool = True,
-            unhealthy_termination_cost: float = 5.0,
+            unhealthy_termination_cost: float = 3.0,
             healthy_z_range: Tuple[float, float] = (0.8, 2.0),
             healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
             reset_noise_scale: float = 5e-3,
@@ -49,7 +49,7 @@ class SafeWalker(PipelineEnv):
             **kwargs,
     ):
         self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
-        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.2)
+        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.15)
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
