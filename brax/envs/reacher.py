@@ -155,7 +155,7 @@ class Reacher(PipelineEnv):
 
 
   def __init__(self, episode_length: int = 2000, backend='generalized', **kwargs):
-    path = epath.resource_path('brax') / 'envs/assets/safegoal/reacher.xml'
+    path = epath.resource_path('brax') / 'envs/assets/safe/reacher.xml'
     sys = mjcf.load(path)
 
     n_frames = 2

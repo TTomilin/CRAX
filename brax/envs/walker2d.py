@@ -155,7 +155,7 @@ class Walker2d(PipelineEnv):
           backend: str, the physics backend to use
           **kwargs: Arguments that are passed to the base class.
         """
-        path = epath.resource_path('brax') / 'envs/assets/safegoal/walker2d.xml'
+        path = epath.resource_path('brax') / 'envs/assets/safe/walker2d.xml'
         sys = mjcf.load(path)
 
         n_frames = 4

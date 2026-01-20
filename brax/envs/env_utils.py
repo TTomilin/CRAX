@@ -214,7 +214,7 @@ def generate_goal_xml_from_base(
 
 def base_xml_file_path(base_xml_name: str) -> str:
     return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "assets", "safegoal", base_xml_name
+        os.path.dirname(os.path.abspath(__file__)), "assets", "safe", base_xml_name
     )
 
 

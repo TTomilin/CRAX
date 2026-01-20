@@ -115,7 +115,7 @@ class Swimmer(PipelineEnv):
             backend='generalized',
             **kwargs,
     ):
-        path = epath.resource_path('brax') / 'envs/assets/safegoal/swimmer.xml'
+        path = epath.resource_path('brax') / 'envs/assets/safe/swimmer.xml'
         sys = mjcf.load(path)
 
         n_frames = 4

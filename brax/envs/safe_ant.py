@@ -72,7 +72,7 @@ class SafeAnt(PipelineEnv):
     ):
         assert difficulty in [1, 2, 3], "Difficulty must be 1, 2, or 3"
 
-        path = epath.resource_path('brax') / 'envs/assets/safegoal/ant.xml'
+        path = epath.resource_path('brax') / 'envs/assets/safe/ant.xml'
         mj_model = mujoco.MjModel.from_xml_path(str(path))
         sys = mjcf.load_model(mj_model)
 

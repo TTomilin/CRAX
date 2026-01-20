@@ -14,7 +14,7 @@
     <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
     <!-- Arena -->
     <geom conaffinity="0" contype="0" name="ground" pos="0 0 0" size="1 1 10" type="plane" rgba="1 1 1 1"/>
-    <camera name="fixedfar" pos="0 -0.8 0.8" zaxis="0 -1 1" mode="fixed"/>
+    <camera name="fixedfar" pos="0 -0.6 0.6" zaxis="0 -1 1" mode="fixed"/>
     <geom conaffinity="0" fromto="-.3 -.3 .01 .3 -.3 .01" name="sideS" size=".02" type="capsule"/>
     <geom conaffinity="0" fromto=" .3 -.3 .01 .3  .3 .01" name="sideE" size=".02" type="capsule"/>
     <geom conaffinity="0" fromto="-.3  .3 .01 .3  .3 .01" name="sideN" size=".02" type="capsule"/>
