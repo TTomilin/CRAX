@@ -83,12 +83,12 @@ class MetricsLogger:
                     mean_metrics[metric_name] = avg
                     log_string += (f"{f'Training {metric_name}:':>{pad}} {avg:.4f}\n")
 
+                    # Clear buffers after logging to avoid re-averaging the same data
+                    for key in list(self._metrics_buffer.keys()):
+                        self._metrics_buffer[key].clear()
+
         # Clear the updated episodic metrics set after logging
         self._episodic_metrics_updated.clear()
 
         logging.info(log_string)
         self._progress_fn(int(self._num_steps), mean_metrics)
-
-        # Clear buffers after logging to avoid re-averaging the same data
-        for key in list(self._metrics_buffer.keys()):
-            self._metrics_buffer[key].clear()
