@@ -5,7 +5,7 @@
     <geom contype="0" conaffinity="0" friction="0.7 0.1 0.1" rgba="0.75 0.65 0.55 0.8"/>
   </default>
   <!-- Removed RK4 integrator for brax. -->
-  <option timestep="0.002" iterations="4" gravity="0 0 -8.0"/>
+  <option timestep="0.002" iterations="4" gravity="0 0 -7.5"/>
   <custom>
     <!-- brax custom params -->
     <numeric data="5000" name="constraint_limit_stiffness"/>

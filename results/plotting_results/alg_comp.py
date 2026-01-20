@@ -35,6 +35,13 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
     "safe_walker": 25.0,
 }
 
+# Per-env x-axis limits (env steps)
+ENV_X_MAX: Dict[str, int] = {
+    "safe_point_goal": 3_000_000_00,
+    "safe_reacher": 1_000_000_00,
+    "safe_walker": 5_000_000_00,
+}
+
 
 def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], metrics: List[str]) -> Dict[
     Tuple[str, str, str], List[pd.DataFrame]]:
@@ -153,8 +160,12 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                     if "Threshold" not in legend_handles:
                         legend_handles["Threshold"] = thr_line
 
-            x_max = args.x_max if args.x_max is not None else x_max_for_axis
+            # Per-env x max takes priority, then CLI x_max, then data-driven max
+            x_max = ENV_X_MAX.get(env, None)
+            if x_max is None:
+                x_max = args.x_max if args.x_max is not None else x_max_for_axis
             ax.set_xlim(0.0, x_max)
+
             if env == "safe_reacher":
                 ax.set_ylim(-15, None)
 

@@ -56,7 +56,7 @@ class SafePointGoal(PipelineEnv):
     def __init__(
             self,
             # Episode settings
-            episode_length: int = 2000,
+            episode_length: int = 1000,
             base_agent_file_name: str = "point.xml",
             # Physics settings
             backend: str = 'mjx',
