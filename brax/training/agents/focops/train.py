@@ -52,8 +52,8 @@ def train(
         seed: int = 0,
         # FOCOPS specific params
         safety_bound: float = 0.0,
-        initial_nu: float = 1.0,
-        nu_lr: float = 0.05,
+        initial_nu: float = 0.01,
+        nu_lr: float = 10.0,
         nu_max: float = 200.0,
         focops_lam: float = 1.5,
         focops_eta: float = 0.02,
