@@ -101,6 +101,7 @@ class SafeWalker(PipelineEnv):
                 collidable=False,
                 fixed=False,
                 density=1.0,
+                alpha_transparent=1.0,
             )
 
         # No explicit goals for walker; but GoalManager is required by builder

@@ -9,7 +9,7 @@ class BaseHazard(ABC):
     """Base class for all hazard types."""
 
     def __init__(self, hazard_id: int, position: tuple, size: Tuple[float] | float, height: float, collidable: bool,
-                 fixed: bool, density: float):
+                 fixed: bool, density: float, alpha_transparent: float):
         """Initialize a hazard.
 
         Args:
@@ -31,7 +31,7 @@ class BaseHazard(ABC):
         self.mass = self.calculate_mass()
         self.geom_id = -1  # Will be populated by the environment after mj_model is created.
         self.contype = self.conaffinity = 1 if collidable else 0
-        self.alpha = 0.8 if collidable else 0.35
+        self.alpha = 0.8 if collidable else alpha_transparent
 
     def calculate_cost(self,
                        agent_xy: jp.ndarray,
@@ -118,8 +118,8 @@ class CubeHazard(BaseHazard):
     """Cube-shaped hazard with binary collision cost."""
 
     def __init__(self, hazard_id: int, position: tuple = (0.0, 0.0, 0.09), size: float = 0.2, height: float = 0.2,
-                 collidable: bool = True, fixed: bool = False, density: float = 1.0):
-        super().__init__(hazard_id, position, size, height, collidable, fixed, density)
+                 collidable: bool = True, fixed: bool = False, density: float = 1.0, alpha_transparent: float = 0.35):
+        super().__init__(hazard_id, position, size, height, collidable, fixed, density, alpha_transparent)
 
     def proximity_cost(self, agent_xy: jp.ndarray, hazard_xy: jp.ndarray) -> jp.ndarray:
         dxdy = jp.abs(agent_xy - hazard_xy)
@@ -170,12 +170,13 @@ class RectHazard(BaseHazard):
                  height: float = 0.02,
                  collidable: bool = False,
                  fixed: bool = False,
-                 density: float = 1.0):
+                 density: float = 1.0,
+                 alpha_transparent: float = 0.35):
         # normalize size to tuple
         if not (isinstance(size, (tuple, list)) and len(size) == 2):
             raise ValueError("RectHazard.size must be a (sx, sy) tuple of half-extents.")
         self.size_xy = (float(size[0]), float(size[1]))
-        super().__init__(hazard_id, position, size, height, collidable, fixed, density)
+        super().__init__(hazard_id, position, size, height, collidable, fixed, density, alpha_transparent)
 
     def proximity_cost(self, agent_xy: jp.ndarray, hazard_xy: jp.ndarray) -> jp.ndarray:
         sx, sy = self.size_xy
@@ -217,8 +218,8 @@ class CylinderHazard(BaseHazard):
     """Cylinder-shaped hazard with distance-based cost."""
 
     def __init__(self, hazard_id: int, position: tuple = (0.0, 0.0, 0.02), size: float = 0.3, height: float = 0.02,
-                 collidable: bool = True, fixed: bool = False, density: float = 1.0):
-        super().__init__(hazard_id, position, size, height, collidable, fixed, density)
+                 collidable: bool = True, fixed: bool = False, density: float = 1.0, alpha_transparent: float = 0.35):
+        super().__init__(hazard_id, position, size, height, collidable, fixed, density, alpha_transparent)
 
     def proximity_cost(self, agent_xy: jp.ndarray, hazard_xy: jp.ndarray) -> jp.ndarray:
         diff = agent_xy - hazard_xy
@@ -265,7 +266,8 @@ class HazardManager:
         self.hazards.append(hazard)
 
     def add_hazards(self, hazard_type: str, count: int, positions: List[tuple] = None, size: float = None,
-                    height: float = None, collidable: bool = None, fixed: bool = False, density: float = None):
+                    height: float = None, collidable: bool = None, fixed: bool = False, density: float = None,
+                    alpha_transparent = 0.35):
         """Add multiple hazards of the same type.
 
         Args:
@@ -284,7 +286,7 @@ class HazardManager:
 
         for i in range(count):
             hazard_id = len(self.hazards) + 1
-            hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density)
+            hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density, alpha_transparent)
             self.add_hazard(hazard)
 
     def get_xml_assets(self) -> str:
