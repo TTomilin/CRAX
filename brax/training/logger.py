@@ -66,28 +66,29 @@ class MetricsLogger:
         self.maybe_log_metrics()
 
     def maybe_log_metrics(self, pad=35):
-        """Log metrics to console."""
-        # Log if enough steps have passed
         if self._num_steps - self._last_log_steps < self._steps_between_logging:
             return
         self._last_log_steps = self._num_steps
         self._log_count += 1
-        log_string = (
-            f"\n{'Steps':>{pad}} Env: {self._num_steps} Log: {self._log_count}\n"
-        )
+
+        log_string = f"\n{'Steps':>{pad}} Env: {self._num_steps} Log: {self._log_count}\n"
         mean_metrics = {}
-        for metric_name in self._metrics_buffer:
-            if len(self._metrics_buffer[metric_name]) > 0:
-                if not metric_name.startswith("episodic/") or metric_name in self._episodic_metrics_updated:
-                    avg = np.mean(self._metrics_buffer[metric_name])
-                    mean_metrics[metric_name] = avg
-                    log_string += (f"{f'Training {metric_name}:':>{pad}} {avg:.4f}\n")
 
-                    # Clear buffers after logging to avoid re-averaging the same data
-                    for key in list(self._metrics_buffer.keys()):
-                        self._metrics_buffer[key].clear()
+        # iterate over a snapshot of items (safer)
+        for metric_name, buf in list(self._metrics_buffer.items()):
+            if len(buf) == 0:
+                continue
+            if metric_name.startswith("episodic/") and metric_name not in self._episodic_metrics_updated:
+                continue
 
-        # Clear the updated episodic metrics set after logging
+            avg = float(np.mean(buf))
+            mean_metrics[metric_name] = avg
+            log_string += f"{f'Training {metric_name}:':>{pad}} {avg:.4f}\n"
+
+        # clear AFTER collecting everything
+        for buf in self._metrics_buffer.values():
+            buf.clear()
+
         self._episodic_metrics_updated.clear()
 
         logging.info(log_string)
