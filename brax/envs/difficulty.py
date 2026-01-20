@@ -52,10 +52,8 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "goal_size": 0.2,
             "goal_height": 0.2,
             "hazard_specs": [
-                {"type": "cube", "count": 3, "size": 0.3, "height": 0.01, "collidable": False},
-                {"type": "cube", "count": 2, "size": 0.2, "height": 0.5, "collidable": True},
-                {"type": "cylinder", "count": 4, "size": 0.4, "height": 0.01, "collidable": False},
-                {"type": "cylinder", "count": 3, "size": 0.2, "height": 0.4, "collidable": True},
+                {"type": "cylinder", "count": 8, "size": 0.4, "height": 0.01, "collidable": False},
+                {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.4, "collidable": True},
                 {"type": "outer_wall", "offset": 0.5, "thickness": 0.06, "height": 0.1, "collidable": True,
                  "fixed": True},
             ],
