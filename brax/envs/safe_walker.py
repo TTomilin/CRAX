@@ -37,7 +37,7 @@ class SafeWalker(PipelineEnv):
             ctrl_cost_weight: float = 1e-3,
             healthy_reward: float = 1.0,
             terminate_when_unhealthy: bool = True,
-            unhealthy_termination_cost: float = 5.0,
+            unhealthy_termination_cost: float = 1.0,
             healthy_z_range: Tuple[float, float] = (0.8, 2.0),
             healthy_angle_range: Tuple[float, float] = (-1.0, 1.0),
             reset_noise_scale: float = 5e-3,
@@ -67,6 +67,8 @@ class SafeWalker(PipelineEnv):
         self._hazard_radius = hazard_radius
         self._cube_half_extent = cube_half_extent
         self._hazard_height = hazard_height
+        self._track_surface_z = 0.003  # Track surface is at z ~= 0.0022; place hazard centers above it
+        self._hazard_z = self._track_surface_z + self._hazard_height
         self._min_gap = min_gap
         self._max_gap = max_gap
         self._lateral_jitter = lateral_jitter
@@ -184,7 +186,7 @@ class SafeWalker(PipelineEnv):
                 gap = jax.random.uniform(kg, (), minval=self._min_gap, maxval=self._max_gap)
                 cur = cur + gap
                 y = jax.random.uniform(ky, (), minval=-self._lateral_jitter, maxval=self._lateral_jitter)
-                xs.append(jp.array([cur, y, self._hazard_height], dtype=jp.float32))
+                xs.append(jp.array([cur, y, self._hazard_z], dtype=jp.float32))
             return jp.stack(xs) if n_h > 0 else jp.zeros((0, 3), dtype=jp.float32)
 
         hazard_positions = sample_positions(r_h)
