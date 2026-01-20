@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 import jax
+import numpy as np
+import imageio.v3 as iio
+from PIL import Image, ImageDraw, ImageFont
 
 
 # Select rendering backend before importing mujoco
@@ -71,7 +74,7 @@ def run_rollout(
         num_episodes: int,
         episode_length: int,
         seed: int = 0
-) -> Tuple[List, List[dict]]:
+) -> Tuple[List, List[dict], List[Tuple[float, float]], List[Tuple[float, float]]]:
     """Run multiple episode rollouts and collect states.
 
     Args:
@@ -82,8 +85,9 @@ def run_rollout(
         seed: Random seed
 
     Returns:
-        Tuple of (all_states, episode_metrics) where episode_metrics is a list
-        of dicts with per-episode reward/cost/length.
+        Tuple of (all_states, episode_metrics, all_rewards, all_costs) where episode_metrics is a list
+        of dicts with per-episode reward/cost/length, and all_rewards/all_costs are lists of (step_val, cumulative_val)
+        for every step across all episodes.
     """
     jit_step = jax.jit(env.step)
     jit_reset = jax.jit(env.reset)
@@ -93,6 +97,8 @@ def run_rollout(
 
     all_states = []
     episode_metrics = []
+    all_rewards_per_step: List[Tuple[float, float]] = []
+    all_costs_per_step: List[Tuple[float, float]] = []
 
     for ep in range(num_episodes):
         key, reset_key = jax.random.split(key)
@@ -103,6 +109,10 @@ def run_rollout(
         episode_reward = 0.0
         episode_cost = 0.0
         episode_steps = 0
+
+        # Store the initial state's reward/cost (always 0 at reset)
+        all_rewards_per_step.append((0.0, 0.0))
+        all_costs_per_step.append((0.0, 0.0))
 
         for step in range(episode_length):
             key, action_key = jax.random.split(key)
@@ -116,9 +126,20 @@ def run_rollout(
             episode_steps += 1
 
             # Accumulate metrics
-            episode_reward += float(state.reward)
+            current_reward = float(state.reward)
+            episode_reward += current_reward
+
+            current_cost = 0.0
             if hasattr(state, 'info') and 'cost' in state.info:
-                episode_cost += float(state.info['cost'])
+                current_cost = float(state.info['cost'])
+            # Brax uses metrics for costs (e.g. episodic/cost)
+            elif hasattr(state, 'metrics') and 'cost' in state.metrics:
+                current_cost = float(state.metrics['cost'])
+
+            episode_cost += current_cost
+
+            all_rewards_per_step.append((current_reward, episode_reward))
+            all_costs_per_step.append((current_cost, episode_cost))
 
             # Check for done
             if state.done:
@@ -136,39 +157,69 @@ def run_rollout(
         print(f"  Episode {ep + 1}/{num_episodes}: "
               f"reward={episode_reward:.2f}, cost={episode_cost:.2f}, steps={episode_steps}")
 
-    return all_states, episode_metrics
+    return all_states, episode_metrics, all_rewards_per_step, all_costs_per_step
 
 
 def save_video(
         sys,
         states,
+        rewards_per_step: List[Tuple[float, float]],
+        costs_per_step: List[Tuple[float, float]],
         output_path: str,
         fps: int = 100,
         width: int = 640,
         height: int = 480,
         camera: Optional[str] = None,
+        show_metrics: bool = True,
+        font: str = "DejaVuSans-Bold",
 ):
-    """Save a video of the trajectory."""
-    try:
-        import imageio
-    except ImportError:
-        print("Warning: imageio not installed. Skipping video save.")
-        print("Install with: pip install imageio imageio-ffmpeg")
-        return False
-
+    """Save a video of the trajectory with optional metric overlay."""
     # Get pipeline states for rendering
     pipeline_states = [s.pipeline_state for s in states]
 
     # Render all frames
     print(f"Rendering {len(pipeline_states)} frames...")
-    frames = brax_image.render_array(sys, pipeline_states, height=height, width=width, camera=camera)
+    frames_np = brax_image.render_array(sys, pipeline_states, height=height, width=width, camera=camera)
+
+    frames_to_write = []
+
+    if show_metrics:
+        try:
+            # Try to load specified font
+            font_obj = ImageFont.truetype(f"{font}.ttf", 14)
+        except (OSError, IOError):
+            # Fallback to default font if not found
+            font_obj = ImageFont.load_default()
+            print(f"Warning: Could not load font '{font}'. Using default font.")
+
+        for i, frame_array in enumerate(frames_np):
+            img = Image.fromarray(frame_array.astype(np.uint8))
+            draw = ImageDraw.Draw(img)
+
+            # Metrics for current frame (skip first state which is reset state)
+            if i > 0 and i - 1 < len(rewards_per_step):
+                # rewards_per_step and costs_per_step are 0-indexed for steps,
+                # but states is 0-indexed for states (includes initial state), so offset
+                _, r_cum = rewards_per_step[i - 1]
+                _, c_cum = costs_per_step[i - 1]
+            else:
+                r_cum = 0.0
+                c_cum = 0.0
+
+            reward_text = f"Reward: {r_cum:.2f}"
+            cost_text = f"Cost: {c_cum:.2f}"
+
+            draw.text((10, 10), reward_text, font=font_obj, fill=(50, 220, 50),
+                      stroke_width=2, stroke_fill=(0, 0, 0))
+            draw.text((10, 40), cost_text, font=font_obj, fill=(230, 60, 60),
+                      stroke_width=2, stroke_fill=(0, 0, 0))
+            frames_to_write.append(np.array(img))
+    else:
+        frames_to_write = frames_np
 
     # Save as mp4
     print(f"Saving video to {output_path}...")
-    writer = imageio.get_writer(output_path, fps=fps)
-    for frame in frames:
-        writer.append_data(frame)
-    writer.close()
+    iio.imwrite(output_path, np.stack(frames_to_write), fps=fps)
 
     return True
 
@@ -240,6 +291,9 @@ def main():
     # Output control
     parser.add_argument("--no_video", action="store_true", help="Skip video generation")
     parser.add_argument("--no_snapshots", action="store_true", help="Skip snapshot generation")
+    parser.add_argument("--show_metrics", action="store_true", help="Overlay reward and cost on video frames")
+    parser.add_argument("--font", type=str, default="DejaVuSans-Bold", help="Font for metric overlay")
+
 
     args = parser.parse_args()
 
@@ -281,7 +335,7 @@ def main():
 
     # Run rollout
     print(f"Running {args.num_episodes} episode(s) for up to {episode_length} steps each...")
-    states, episode_metrics = run_rollout(
+    states, episode_metrics, all_rewards_per_step, all_costs_per_step = run_rollout(
         env, policy,
         num_episodes=args.num_episodes,
         episode_length=episode_length,
@@ -306,9 +360,9 @@ def main():
     if not args.no_video:
         video_path = output_dir / f"{name}.mp4"
         save_video(
-            env.sys, states, str(video_path),
+            env.sys, states, all_rewards_per_step, all_costs_per_step, str(video_path),
             fps=args.video_fps, width=args.width, height=args.height,
-            camera=args.camera,
+            camera=args.camera, show_metrics=args.show_metrics, font=args.font
         )
 
     # Save snapshots

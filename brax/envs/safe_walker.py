@@ -49,7 +49,7 @@ class SafeWalker(PipelineEnv):
             **kwargs,
     ):
         self._reward_scaler = kwargs.get("reward", {}).get("scaler", 0.01)
-        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.15)
+        self._cost_scaler = kwargs.get("cost", {}).get("scaler", 0.5)
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
@@ -350,6 +350,15 @@ class SafeWalker(PipelineEnv):
     # ---------------- Safety logic ----------------
 
     def _calculate_safety_cost(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
+        """Calculate safety cost with gradient based on distance from hazard center.
+
+        Cost is scaled by how deep into the hazard the foot is:
+        - At center: cost = 1.0
+        - At edge: cost ≈ 0.0
+        - Outside: cost = 0.0
+
+        Uses quadratic scaling so edge contact is penalized much less than center.
+        """
         n_h = hazard_positions.shape[0]
         if n_h == 0:
             return jp.array(0.0, dtype=jp.float32)
@@ -364,20 +373,47 @@ class SafeWalker(PipelineEnv):
         # distance feet->hazard centers
         d = jp.sqrt(jp.sum((feet_xy[:, None, :] - centers[None, :, :]) ** 2, axis=2) + 1e-8)  # (2,N)
 
-        # cylinder membership: any foot within radius
-        cyl_inside = (d <= self._hazard_radii[None, :])  # (2,N)
-        cyl_any_per_h = jp.any(cyl_inside, axis=0).astype(jp.float32)  # (N,)
+        # --- Cylinder hazards: gradient based on distance from center ---
+        # normalized_dist = d / radius: 0 at center, 1 at edge
+        # cost = (1 - normalized_dist)^2 when inside, 0 when outside
+        radii = self._hazard_radii[None, :]  # (1,N)
+        radii_safe = jp.maximum(radii, 1e-6)  # avoid div by zero
+        normalized_cyl_dist = d / radii_safe  # (2,N)
+        cyl_inside = normalized_cyl_dist <= 1.0  # (2,N)
+        # Quadratic falloff: full cost at center, near-zero at edge
+        cyl_penetration = jp.maximum(0.0, 1.0 - normalized_cyl_dist)  # (2,N)
+        cyl_cost_per_foot = cyl_penetration ** 2  # (2,N) - quadratic scaling
+        cyl_cost_per_foot = jp.where(cyl_inside, cyl_cost_per_foot, 0.0)
+        # Take max cost across feet for each hazard (worst penetration)
+        cyl_cost_per_h = jp.max(cyl_cost_per_foot, axis=0)  # (N,)
 
-        # rect/cube (axis-aligned in world): |dx|<=hx & |dy|<=hy
+        # --- Rect/cube hazards: gradient based on distance from center ---
         dxdy = jp.abs(feet_xy[:, None, :] - centers[None, :, :])  # (2,N,2)
-        rect_inside = jp.logical_and(
-            dxdy[:, :, 0] <= self._hazard_half_extents[None, :, 0],
-            dxdy[:, :, 1] <= self._hazard_half_extents[None, :, 1],
-        )  # (2,N)
-        rect_any_per_h = jp.any(rect_inside, axis=0).astype(jp.float32)
+        half_extents = self._hazard_half_extents[None, :, :]  # (1,N,2)
+        half_extents_safe = jp.maximum(half_extents, 1e-6)
 
+        # Normalized distance in each axis (0 at center, 1 at edge)
+        normalized_rect_dist = dxdy / half_extents_safe  # (2,N,2)
+
+        # Inside if both dx <= hx and dy <= hy
+        rect_inside = jp.logical_and(
+            normalized_rect_dist[:, :, 0] <= 1.0,
+            normalized_rect_dist[:, :, 1] <= 1.0,
+        )  # (2,N)
+
+        # Use max of normalized distances (Chebyshev distance to edge)
+        # This gives 0 at center, 1 at any edge
+        max_normalized_dist = jp.max(normalized_rect_dist, axis=2)  # (2,N)
+        rect_penetration = jp.maximum(0.0, 1.0 - max_normalized_dist)  # (2,N)
+        rect_cost_per_foot = rect_penetration ** 2  # quadratic scaling
+        rect_cost_per_foot = jp.where(rect_inside, rect_cost_per_foot, 0.0)
+        # Take max cost across feet for each hazard
+        rect_cost_per_h = jp.max(rect_cost_per_foot, axis=0)  # (N,)
+
+        # Combine cylinder and rect costs
         is_rect = self._hazard_is_rect.astype(jp.float32)
         is_cyl = 1.0 - is_rect
-        per_hazard_cost = cyl_any_per_h * is_cyl + rect_any_per_h * is_rect  # (N,)
+        per_hazard_cost = cyl_cost_per_h * is_cyl + rect_cost_per_h * is_rect  # (N,)
+
         total_cost = jp.sum(per_hazard_cost)
         return jp.asarray(self._cost_scaler, dtype=jp.float32) * total_cost
