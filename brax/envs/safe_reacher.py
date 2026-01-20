@@ -63,7 +63,7 @@ class SafeReacher(PipelineEnv):
         # 1.0 = linear, 2.0 = quadratic, etc.
         self._reward_distance_power = kwargs.get("reward", {}).get("distance_power", 2.0)
         # Optional: add a bonus reward when within a threshold of the goal
-        self._reward_goal_bonus = kwargs.get("reward", {}).get("goal_bonus", 5.0)
+        self._reward_goal_bonus = kwargs.get("reward", {}).get("goal_bonus", 1.0)
         self._reward_goal_threshold = kwargs.get("reward", {}).get("goal_threshold", 0.02)
 
         # Build hazards as MJCF geoms/bodies (mocap)
