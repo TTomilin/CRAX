@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple, Optional
 
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 
@@ -10,6 +11,19 @@ import pandas as pd
 DEFAULT_METRIC_COLS: Dict[str, str] = {
     "reward": "episodic/sum_reward",
     "cost": "episodic/cost",
+}
+
+# Define a consistent color palette for baselines across all plots
+# Using matplotlib's tab10 colormap
+_tab10_colors = cm.get_cmap("tab10").colors
+BASELINES_COLORS: Dict[str, str] = {
+    "ppo": _tab10_colors[0],
+    "ppo_cost": _tab10_colors[1],
+    "ppo_lag": _tab10_colors[2],
+    "ppo_pid": _tab10_colors[3],
+    "ppo_saute": _tab10_colors[4],
+    "p3o": _tab10_colors[5],
+    "focops": _tab10_colors[6],
 }
 
 

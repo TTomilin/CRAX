@@ -11,6 +11,7 @@ from common import (
     get_series,
     set_mpl_style,
     nice_grid as _nice_grid,
+    BASELINES_COLORS,
 )
 
 # Pretty labels
@@ -174,7 +175,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         ys.append(float(sub["mean"].iloc[0]))
                         es.append(float(sub["ci"].iloc[0]))
 
-                bars = ax.bar(x + offsets[a_i], ys, width=bar_w, yerr=es, capsize=2, label=algo)
+                bars = ax.bar(x + offsets[a_i], ys, width=bar_w, yerr=es, capsize=2, label=algo, color=BASELINES_COLORS.get(algo))
 
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
