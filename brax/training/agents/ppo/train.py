@@ -680,11 +680,37 @@ def train(
         aux_state=initial_aux_state,
     )
 
+    def _check_normalizer_shape_compatible(loaded_normalizer, current_normalizer):
+        """Check if loaded normalizer has compatible shape with current env."""
+        loaded_mean = loaded_normalizer.mean
+        current_mean = current_normalizer.mean
+        # Handle both array and nested dict observations
+        if isinstance(loaded_mean, dict) and isinstance(current_mean, dict):
+            for key in current_mean:
+                if key not in loaded_mean:
+                    return False
+                if loaded_mean[key].shape != current_mean[key].shape:
+                    return False
+            return True
+        elif isinstance(loaded_mean, jnp.ndarray) and isinstance(current_mean, jnp.ndarray):
+            return loaded_mean.shape == current_mean.shape
+        return False
+
     if restore_checkpoint_path is not None:
         params = checkpoint.load(restore_checkpoint_path)
         value_params = params[2] if restore_value_fn else init_params.value
+        # Check if normalizer shapes are compatible
+        if _check_normalizer_shape_compatible(params[0], training_state.normalizer_params):
+            normalizer_to_use = params[0]
+        else:
+            logging.warning(
+                'Checkpoint normalizer shape does not match current observation shape. '
+                'Using freshly initialized normalizer. This may happen when transferring '
+                'between environments with different observation sizes.'
+            )
+            normalizer_to_use = training_state.normalizer_params
         training_state = training_state.replace(
-            normalizer_params=params[0],
+            normalizer_params=normalizer_to_use,
             params=training_state.params.replace(
                 policy=params[1], value=value_params
             ),
@@ -693,8 +719,18 @@ def train(
     if restore_params is not None:
         logging.info('Restoring TrainingState from `restore_params`.')
         value_params = restore_params[2] if restore_value_fn else init_params.value
+        # Check if normalizer shapes are compatible
+        if _check_normalizer_shape_compatible(restore_params[0], training_state.normalizer_params):
+            normalizer_to_use = restore_params[0]
+        else:
+            logging.warning(
+                'Restored params normalizer shape does not match current observation shape. '
+                'Using freshly initialized normalizer. This may happen when transferring '
+                'between environments with different observation sizes.'
+            )
+            normalizer_to_use = training_state.normalizer_params
         training_state = training_state.replace(
-            normalizer_params=restore_params[0],
+            normalizer_params=normalizer_to_use,
             params=training_state.params.replace(
                 policy=restore_params[1], value=value_params
             ),

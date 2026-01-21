@@ -284,6 +284,10 @@ def benchmark_safety_transfer(
     if use_checkpoint_transfer:
         from brax.training.agents.ppo import networks as ppo_networks
         unsafe_checkpoint_path = transfer_checkpoint_dir / 'unsafe_ppo'
+        # Clean up any existing checkpoints to avoid loading stale checkpoints
+        # from previous runs with different observation sizes
+        if unsafe_checkpoint_path.exists():
+            shutil.rmtree(unsafe_checkpoint_path)
         # Get observation and action sizes from environment
         obs_size = env.observation_size
         action_size = env.action_size
