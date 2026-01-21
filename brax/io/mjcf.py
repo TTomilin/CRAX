@@ -33,7 +33,14 @@ from etils import epath
 import jax
 from jax import numpy as jp
 import mujoco
-from brax.mjx import collisions as mjx
+try:
+    from brax.mjx import collisions as mjx
+except Exception as exc:  # pragma: no cover - fallback for mjx version mismatch
+    from mujoco import mjx as mjx
+    warnings.warn(
+        f"Falling back to mujoco.mjx (no Brax collision patches): {exc}",
+        RuntimeWarning,
+    )
 import numpy as np
 
 
