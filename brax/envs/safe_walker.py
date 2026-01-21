@@ -366,6 +366,14 @@ class SafeWalker(PipelineEnv):
         # feet world positions (use body COM positions as proxy)
         left_pos = pipeline_state.x.take(self._left_foot_link_id).pos
         right_pos = pipeline_state.x.take(self._right_foot_link_id).pos
+
+        # Check if feet are at ground level (not swinging in the air)
+        # Hazard top is at roughly 2 * hazard_height, add tolerance for foot thickness
+        ground_contact_threshold = self._hazard_height * 2 + 0.08  # ~0.1m above ground
+        left_on_ground = left_pos[2] < ground_contact_threshold
+        right_on_ground = right_pos[2] < ground_contact_threshold
+        feet_on_ground = jp.stack([left_on_ground, right_on_ground], axis=0)  # (2,)
+
         feet_xy = jp.stack([left_pos[:2], right_pos[:2]], axis=0)  # (2,2)
 
         centers = hazard_positions[:, :2]  # (N,2)
@@ -383,7 +391,12 @@ class SafeWalker(PipelineEnv):
         # Quadratic falloff: full cost at center, near-zero at edge
         cyl_penetration = jp.maximum(0.0, 1.0 - normalized_cyl_dist)  # (2,N)
         cyl_cost_per_foot = cyl_penetration ** 2  # (2,N) - quadratic scaling
-        cyl_cost_per_foot = jp.where(cyl_inside, cyl_cost_per_foot, 0.0)
+        # Only count cost if foot is actually on ground AND inside hazard XY bounds
+        cyl_cost_per_foot = jp.where(
+            cyl_inside & feet_on_ground[:, None],
+            cyl_cost_per_foot,
+            0.0
+        )
         # Take max cost across feet for each hazard (worst penetration)
         cyl_cost_per_h = jp.max(cyl_cost_per_foot, axis=0)  # (N,)
 
@@ -406,7 +419,12 @@ class SafeWalker(PipelineEnv):
         max_normalized_dist = jp.max(normalized_rect_dist, axis=2)  # (2,N)
         rect_penetration = jp.maximum(0.0, 1.0 - max_normalized_dist)  # (2,N)
         rect_cost_per_foot = rect_penetration ** 2  # quadratic scaling
-        rect_cost_per_foot = jp.where(rect_inside, rect_cost_per_foot, 0.0)
+        # Only count cost if foot is actually on ground AND inside hazard XY bounds
+        rect_cost_per_foot = jp.where(
+            rect_inside & feet_on_ground[:, None],
+            rect_cost_per_foot,
+            0.0
+        )
         # Take max cost across feet for each hazard
         rect_cost_per_h = jp.max(rect_cost_per_foot, axis=0)  # (N,)
 

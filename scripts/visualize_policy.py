@@ -186,7 +186,7 @@ def save_video(
     if show_metrics:
         try:
             # Try to load specified font
-            font_obj = ImageFont.truetype(f"{font}.ttf", 14)
+            font_obj = ImageFont.truetype(f"{font}.ttf", 20)
         except (OSError, IOError):
             # Fallback to default font if not found
             font_obj = ImageFont.load_default()
