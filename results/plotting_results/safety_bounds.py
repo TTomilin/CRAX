@@ -99,10 +99,7 @@ def align_and_stack(dfs: List[pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:
     return steps, vals
 
 
-def plot_metrics(
-        data: Dict[Tuple[str, str, str], List[pd.DataFrame]],
-        args: argparse.Namespace,
-) -> None:
+def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: argparse.Namespace) -> None:
     set_mpl_style()
 
     envs = args.envs
@@ -234,7 +231,7 @@ def plot_metrics(
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / (
-        args.out_name if args.out_name.endswith(".pdf") else f"{args.out_name}.pdf"
+        args.out_name if args.out_name.endswith(".pdf") else f"{args.out_name}_level_{args.level}.pdf"
     )
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
