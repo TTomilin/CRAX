@@ -138,14 +138,14 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     # --- FOCOPS ---
     parser.add_argument("--initial_nu", type=float, default=0.1, help="FOCOPS: initial value of nu (constraint multiplier)")
     parser.add_argument("--nu_lr", type=float, default=1.0, help="FOCOPS: learning rate for nu updates")
-    parser.add_argument("--nu_max", type=float, default=200.0, help="FOCOPS: maximum value for nu")
+    parser.add_argument("--nu_max", type=float, default=100.0, help="FOCOPS: maximum value for nu")
     parser.add_argument("--focops_lam", type=float, default=1.5, help="FOCOPS: KL penalty coefficient lambda")
     parser.add_argument("--focops_eta", type=float, default=0.02, help="FOCOPS: advantage normalization temperature eta")
 
     # --- P3O ---
     parser.add_argument("--initial_kappa", type=float, default=0.01, help="P3O: initial kappa (cost penalty)")
-    parser.add_argument("--kappa_increase_factor", type=float, default=1.5, help="P3O: multiplicative factor for kappa when constraint violated")
-    parser.add_argument("--kappa_max", type=float, default=100.0, help="P3O: maximum kappa value")
+    parser.add_argument("--kappa_increase_factor", type=float, default=1.1, help="P3O: multiplicative factor for kappa when constraint violated")
+    parser.add_argument("--kappa_max", type=float, default=50.0, help="P3O: maximum kappa value")
 
     # --- WandB ---
     parser.add_argument("--use_wandb", type=bool, default=True, help="Enable wandb logging")
