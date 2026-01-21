@@ -10,8 +10,7 @@ from common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     set_mpl_style,
-    nice_grid,
-    BASELINES_COLORS,
+    nice_grid as _nice_grid,
 )
 
 # Pretty labels
@@ -117,7 +116,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     algos = args.algos
 
     n_env = len(envs)
-    nrows_env, ncols_env = nice_grid(n_env, max_cols=args.max_cols)
+    nrows_env, ncols_env = _nice_grid(n_env, max_cols=args.max_cols)
 
     # Each env occupies len(metrics) columns (reward+cost side-by-side)
     m = len(metrics)
@@ -175,7 +174,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         ys.append(float(sub["mean"].iloc[0]))
                         es.append(float(sub["ci"].iloc[0]))
 
-                bars = ax.bar(x + offsets[a_i], ys, width=bar_w, yerr=es, capsize=2, label=algo, color=BASELINES_COLORS.get(algo))
+                bars = ax.bar(x + offsets[a_i], ys, width=bar_w, yerr=es, capsize=2, label=algo)
 
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
@@ -248,7 +247,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines (cost only).")
     p.add_argument("--grid", action="store_true")
 
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
+    p.add_argument("--max_cols", type=int, default=3, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per env column.")
     p.add_argument("--panel_h", type=float, default=2.3, help="Height per metric row per env row.")
 
