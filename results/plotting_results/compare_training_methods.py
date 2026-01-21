@@ -22,6 +22,7 @@ from common import (
     align_and_stack,
     set_mpl_style,
     nice_grid,
+    BASELINES_COLORS,
 )
 
 # Labels for display
@@ -49,17 +50,6 @@ METHOD_HATCHES = {
     "normal": "",
     "curriculum": "///",
     "transfer": "xx",
-}
-
-# Algo colors (tab10 cycle). Add more if you have more algos.
-ALGO_COLORS = {
-    "ppo_lag": "tab:blue",
-    "ppo_pid": "tab:orange",
-    "p3o": "tab:green",
-    "focops": "tab:red",
-    "ppo": "tab:purple",
-    "ppo_cost": "tab:brown",
-    "ppo_saute": "tab:pink",
 }
 
 SAFETY_THRESHOLDS: Dict[str, float] = {
@@ -269,7 +259,7 @@ def plot_training_curves(
             ax.set_xlim(0, args.total_steps)
 
             for algo in args.algos:
-                algo_color = ALGO_COLORS.get(algo, None)
+                algo_color = BASELINES_COLORS.get(algo, None)
 
                 for method in methods:
                     runs = (
@@ -461,17 +451,16 @@ def plot_final_comparison(
                 for method in methods:
                     mean, ci, _n = finals[method][algo]
                     ys.append(mean)
-                    es.append(ci)
-
-                bars = ax.bar(
-                    x + offsets[a_i], ys,
-                    width=bar_w,
-                    yerr=es,
-                    capsize=2,
-                    color=ALGO_COLORS.get(algo, None),
-                    label=algo,
-                )
-
+                                            es.append(ci)
+                    
+                                    bars = ax.bar(
+                                        x + offsets[a_i], ys,
+                                        width=bar_w,
+                                        yerr=es,
+                                        capsize=2,
+                                        color=BASELINES_COLORS.get(algo, None),
+                                        label=algo,
+                                    )
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
 
@@ -580,7 +569,7 @@ def build_args() -> argparse.ArgumentParser:
                    help="Base data directory")
     p.add_argument(
         "--envs", type=str, nargs="+",
-        default=["safe_point_goal", "safe_walker"],
+        default=["safe_point_goal", "safe_reacher", "safe_walker"],
         help="Environments to compare"
     )
     p.add_argument(

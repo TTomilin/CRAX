@@ -14,6 +14,7 @@ from common import (
     set_mpl_style,
     nice_grid,
     moving_average,
+    BASELINES_COLORS,
 )
 
 # Pretty labels (edit if you care)
@@ -38,8 +39,8 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
 
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
-    "safe_point_goal": 3_000_000_00,
-    "safe_reacher": 1_000_000_00,
+    "safe_point_goal": 5_000_000_00,
+    "safe_reacher": 5_000_000_00,
     "safe_walker": 5_000_000_00,
 }
 
@@ -141,7 +142,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                 if args.smoothing_window:
                     ci = moving_average(ci, args.smoothing_window)
 
-                line, = ax.plot(x, mean, label=algo)
+                line, = ax.plot(x, mean, label=algo, color=BASELINES_COLORS.get(algo))
                 # make CI visible
                 ax.fill_between(x, mean - ci, mean + ci, alpha=0.25)
 

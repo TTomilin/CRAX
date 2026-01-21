@@ -12,6 +12,17 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
     "cost": "episodic/cost",
 }
 
+# Define a consistent color palette for baselines across all plots
+BASELINES_COLORS: Dict[str, str] = {
+    "ppo": "#1f77b4",        # Muted Blue
+    "ppo_cost": "#ff7f0e",   # Safety Orange
+    "ppo_lag": "#2ca02c",    # Forest Green
+    "ppo_pid": "#d62728",    # Brick Red
+    "ppo_saute": "#9467bd",  # Amethyst Purple
+    "p3o": "#8c564b",        # Sepia Brown
+    "focops": "#e377c2",     # Raspberry Pink
+}
+
 
 def set_mpl_style() -> None:
     """Apply a consistent plotting style for all result figures."""
