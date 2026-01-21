@@ -29,11 +29,11 @@
       <site name="agent" rgba="1 0 0 .1"/>
     </body>
 
-    <!-- Pushable block (very light, low friction) -->
+    <!-- Pushable block (easy to push, smooth sliding) -->
     <body name="block" pos="0.5 0.5 0.1">
-      <joint name="block_x" type="slide" axis="1 0 0" damping="0.005"/>
-      <joint name="block_y" type="slide" axis="0 1 0" damping="0.005"/>
-      <geom name="block" type="box" size="0.1 0.1 0.1" density="0.05" friction="0.05 0.001 0.001" rgba="0.2 0.6 0.9 1"/>
+      <joint name="block_x" type="slide" axis="1 0 0" damping="0.015"/>
+      <joint name="block_y" type="slide" axis="0 1 0" damping="0.015"/>
+      <geom name="block" type="box" size="0.1 0.1 0.1" density="0.15" friction="0.08 0.002 0.001" rgba="0.2 0.6 0.9 1"/>
     </body>
 
   </worldbody>
