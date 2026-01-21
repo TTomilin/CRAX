@@ -248,7 +248,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines (cost only).")
     p.add_argument("--grid", action="store_true")
 
-    p.add_argument("--max_cols", type=int, default=3, help="Max env columns in grid.")
+    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per env column.")
     p.add_argument("--panel_h", type=float, default=2.3, help="Height per metric row per env row.")
 

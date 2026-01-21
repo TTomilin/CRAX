@@ -292,7 +292,7 @@ def build_args() -> argparse.ArgumentParser:
         "--seeds",
         type=int,
         nargs="+",
-        default=[1, 2, 3],
+        default=[1, 2, 3, 4, 5],
     )
     p.add_argument(
         "--metrics",

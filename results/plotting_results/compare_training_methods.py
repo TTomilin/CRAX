@@ -568,7 +568,7 @@ def build_args() -> argparse.ArgumentParser:
                    help="Base data directory")
     p.add_argument(
         "--envs", type=str, nargs="+",
-        default=["safe_point_goal", "safe_walker"],
+        default=["safe_point_goal", "safe_reacher", "safe_walker"],
         help="Environments to compare"
     )
     p.add_argument(
@@ -602,7 +602,7 @@ def build_args() -> argparse.ArgumentParser:
     # Figure sizing
     p.add_argument("--panel_w", type=float, default=3.1)
     p.add_argument("--panel_h", type=float, default=2.5)
-    p.add_argument("--max_cols", type=int, default=3, help="Max env columns in grid.")
+    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
 
     # Output
     p.add_argument("--output_fig_dir", type=str, default="figures")
