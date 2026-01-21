@@ -272,8 +272,8 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument(
         "--algo",
         type=str,
-        default="ppo_pid",
-        help="Algorithm subfolder to use (e.g., ppo_pid).",
+        default="ppo_lag",
+        help="Algorithm subfolder to use",
     )
     p.add_argument(
         "--bounds",

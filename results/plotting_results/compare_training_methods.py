@@ -9,7 +9,7 @@ For curriculum and transfer, data from different stages/phases are connected.
 
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -60,12 +60,12 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
 
 
 def load_normal_runs(
-    base: Path,
-    env: str,
-    level: int,
-    algo: str,
-    seeds: List[int],
-    metrics: List[str],
+        base: Path,
+        env: str,
+        level: int,
+        algo: str,
+        seeds: List[int],
+        metrics: List[str],
 ) -> Dict[str, List[pd.DataFrame]]:
     """Load normal training runs (trained directly on target level)."""
     out: Dict[str, List[pd.DataFrame]] = {m: [] for m in metrics}
@@ -94,12 +94,12 @@ def load_normal_runs(
 
 
 def load_curriculum_runs(
-    base: Path,
-    env: str,
-    algo: str,
-    seeds: List[int],
-    metrics: List[str],
-    total_steps: int,
+        base: Path,
+        env: str,
+        algo: str,
+        seeds: List[int],
+        metrics: List[str],
+        total_steps: int,
 ) -> Dict[str, List[pd.DataFrame]]:
     """Load curriculum training runs (trained across levels 1->2->3).
 
@@ -138,14 +138,14 @@ def load_curriculum_runs(
 
 
 def load_transfer_runs(
-    base: Path,
-    env: str,
-    level: int,
-    algo: str,
-    seeds: List[int],
-    metrics: List[str],
-    unsafe_steps: int,
-    total_steps: int,
+        base: Path,
+        env: str,
+        level: int,
+        algo: str,
+        seeds: List[int],
+        metrics: List[str],
+        unsafe_steps: int,
+        total_steps: int,
 ) -> Dict[str, List[pd.DataFrame]]:
     """Load transfer training runs (PPO pretrain + safe fine-tuning).
 
@@ -339,9 +339,9 @@ def plot_training_curves(
 
 
 def compute_final_values(
-    data: Dict[str, List[pd.DataFrame]],
-    metrics: List[str],
-    last_k: int = 10,
+        data: Dict[str, List[pd.DataFrame]],
+        metrics: List[str],
+        last_k: int = 10,
 ) -> Dict[str, Tuple[float, float, int]]:
     """Compute final values (mean, CI, n) for each metric."""
     results = {}
@@ -451,22 +451,21 @@ def plot_final_comparison(
                 for method in methods:
                     mean, ci, _n = finals[method][algo]
                     ys.append(mean)
-                                            es.append(ci)
-                    
-                                    bars = ax.bar(
-                                        x + offsets[a_i], ys,
-                                        width=bar_w,
-                                        yerr=es,
-                                        capsize=2,
-                                        color=BASELINES_COLORS.get(algo, None),
-                                        label=algo,
-                                    )
+                    es.append(ci)
+
+                bars = ax.bar(
+                    x + offsets[a_i], ys,
+                    width=bar_w,
+                    yerr=es,
+                    capsize=2,
+                    color=BASELINES_COLORS.get(algo, None),
+                    label=algo,
+                )
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
 
             ax.set_xticks(x)
-            ax.set_xticklabels([TRANSLATIONS.get(m, m.capitalize()) for m in methods],
-                               rotation=30, ha="right")
+            ax.set_xticklabels([TRANSLATIONS.get(m, m.capitalize()) for m in methods], rotation=30, ha="right")
             ax.set_ylabel(ylab)
 
             # Threshold only on cost axis
