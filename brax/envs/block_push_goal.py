@@ -100,10 +100,19 @@ class BlockPushGoal(PipelineEnv):
             hazard_specs = [
                 dict(
                     type='cube',
-                    count=8,
-                    size=0.2,
-                    height=0.2,
+                    count=6,
+                    size=0.3,
+                    height=0.3,
                     collidable=True,
+                    movable=False,
+                    density=1.0,
+                ),
+                dict(
+                    type='cube',
+                    count=6,
+                    size=0.4,
+                    height=0.01,
+                    collidable=False,
                     movable=False,
                     density=1.0,
                 ),
