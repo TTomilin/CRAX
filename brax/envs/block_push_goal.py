@@ -87,7 +87,6 @@ class BlockPushGoal(PipelineEnv):
             goal_positions: Optional[List] = None,
             goal_collidable: bool = False,
             goal_velocity: float = 0.0,  # Goal movement speed (0 = stationary, >0 = moving)
-            goal_reached_threshold: float = 0.05,  # Center-to-center distance threshold for goal reached
             # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
             hazard_specs: Optional[List[Dict]] = None,
             # Debug
@@ -310,7 +309,6 @@ class BlockPushGoal(PipelineEnv):
 
         # Goal movement
         self._goal_velocity = goal_velocity
-        self._goal_reached_threshold = goal_reached_threshold
 
         if self._debug:
             print(
@@ -561,8 +559,16 @@ class BlockPushGoal(PipelineEnv):
         center_dists = jp.sqrt(jp.sum(jp.square(goals_xy - block_xy[None, :]), axis=1) + 1e-8)
         dist_goal = jp.min(center_dists)  # distance to nearest goal center
 
-        # Goal reached when block center is within threshold of goal center
-        reached_mask = (center_dists <= self._goal_reached_threshold)
+        # Goal reached when block center is INSIDE the goal box (SDF <= 0)
+        is_cube = (self._goal_type_ids == 0)
+        sdf_cube_vals = jax.vmap(lambda c, he, y: sdf_cube(block_xy, c, he, y))(
+            goals_xy, self._goal_box_he, self._goal_yaws
+        )
+        sdf_cylinder_vals = jax.vmap(lambda c, r: sdf_cylinder(block_xy, c, r))(
+            goals_xy, self._goal_radii
+        )
+        sdf_vals = jp.where(is_cube, sdf_cube_vals, sdf_cylinder_vals)
+        reached_mask = (sdf_vals <= 0.0)
         num_goals_reached = jp.sum(reached_mask.astype(jp.int32))
 
         dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
