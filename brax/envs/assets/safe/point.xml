@@ -1,20 +1,25 @@
-<mujoco>  
-  <size njmax="3000" nconmax="1000"/>  
+<mujoco>
+  <size njmax="3000" nconmax="1000"/>
   <option timestep="0.002"/>
   <visual>
     <headlight ambient="0.5 0.5 0.5" diffuse="0.9 0.9 0.9" specular="0.2 0.2 0.2"/>
     <map znear="0.01" zfar="30"/>
   </visual>
   <statistic meansize="0.23" extent="3.96"/>
-  <default>  
-    <geom condim="6" density="1"/>  
+  <default>
+    <geom condim="6" density="1"/>
     <joint damping=".001"/>
-    <motor ctrlrange="-1 1" ctrllimited="true" forcerange="-.05 .05" forcelimited="true"/>  
-    <velocity ctrlrange="-1 1" ctrllimited="true" forcerange="-.05 .05" forcelimited="true"/>  
-    <site size="0.032" type="sphere"/>  
-  </default>  
+    <motor ctrlrange="-1 1" ctrllimited="true" forcerange="-.05 .05" forcelimited="true"/>
+    <velocity ctrlrange="-1 1" ctrllimited="true" forcerange="-.05 .05" forcelimited="true"/>
+    <site size="0.032" type="sphere"/>
+  </default>
+  <asset>
+    <texture builtin="gradient" height="100" rgb1=".52 .48 .58" rgb2="0.10 0.08 0.12" type="skybox" width="100"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.70 0.68 0.74" rgb2="0.64 0.62 0.68" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.15" shininess="0.1" specular="0.1" texrepeat="40 40" texture="texplane"/>
+  </asset>
   <worldbody>
-    <geom name="floor" type="plane" size="10 10 0.1" condim="6" rgba="0.7 0.7 0.7 1" />
+    <geom name="floor" type="plane" size="10 10 0.1" condim="6" material="MatPlane"/>
     <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1.15" mode="fixed"/>
     <body name="agent" pos="0 0 .1">
       <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>

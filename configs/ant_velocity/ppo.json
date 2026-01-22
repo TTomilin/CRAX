@@ -1,6 +1,10 @@
 {
   "env": "ant_velocity_constrained",
   "alg": "ppo",
+  "env_kwargs": {
+    "cost_mode": "binary",
+    "velocity_threshold": 2.6222
+  },
   "out_dir": "runs/metrics",
   "num_timesteps": 3000000,
   "episode_length": 1000,

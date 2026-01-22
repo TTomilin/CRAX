@@ -21,7 +21,6 @@ import jax
 from jax import numpy as jp
 
 from brax.envs import ant, humanoid_hop
-from brax.envs import ant_velocity_constrained
 from brax.envs import fast
 from brax.envs import half_cheetah
 from brax.envs import hopper
@@ -33,6 +32,7 @@ from brax.envs import inverted_pendulum
 from brax.envs import pusher
 from brax.envs import reacher
 from brax.envs import safe_reacher
+from brax.envs import safe_velocity
 from brax.envs import swimmer
 from brax.envs import walker2d
 from brax.envs import safe_ant
@@ -48,7 +48,6 @@ from brax.envs.difficulty import apply_difficulty, get_supported_levels, support
 
 _envs = {
     'ant': ant.Ant,
-    'ant_velocity_constrained': ant_velocity_constrained.AntVelocityConstrained,
     'fast': fast.Fast,
     'halfcheetah': half_cheetah.Halfcheetah,
     'hopper': hopper.Hopper,
@@ -61,6 +60,7 @@ _envs = {
     'pusher': pusher.Pusher,
     'reacher': reacher.Reacher,
     'safe_reacher': safe_reacher.SafeReacher,
+    'safe_velocity': safe_velocity.SafeVelocity,
     'swimmer': swimmer.Swimmer,
     'walker2d': walker2d.Walker2d,
     'safe_walker': safe_walker.SafeWalker,

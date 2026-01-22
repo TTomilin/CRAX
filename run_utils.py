@@ -511,3 +511,172 @@ def record_episode_video(
             wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")})
 
         print("Saved video:", mp4_path)
+
+
+def record_episode_video_simple(
+        env,
+        steps: int = 500,
+        policy=None,
+        action_mode: str = "random",
+        cameras: List[str] | List[int] = (0,),
+        width: int = 320,
+        height: int = 240,
+        fps: int = 50,
+        frame_stride: int = 1,
+        out_name: str = "rollout",
+        seed: int = 0,
+        show_metrics: bool = True,
+        font: str = "DejaVuSans-Bold",
+        num_episodes: int = 1,
+        extra_metrics: Optional[List[str]] = None,
+):
+    """
+    Record episode video with optional policy or simple action modes.
+
+    This is a simpler version of record_episode_video that doesn't require
+    make_inference_fn + params. Useful for tests and quick visualizations.
+
+    Args:
+        env: The environment to record.
+        steps: Number of steps per episode.
+        policy: Optional callable (obs, rng) -> (action, extra). If None, uses action_mode.
+        action_mode: How to generate actions if policy is None.
+            - "random": Uniform random actions in [-1, 1].
+            - "zero": Zero actions.
+            - "periodic": Sinusoidal periodic actions.
+        cameras: List of camera names or IDs to render.
+        width: Video width.
+        height: Video height.
+        fps: Video frames per second.
+        frame_stride: Only keep every N frames.
+        out_name: Base name for output video file.
+        seed: Random seed.
+        show_metrics: Whether to overlay reward/cost text on frames.
+        font: Font name for overlay text.
+        num_episodes: Number of episodes to record.
+        extra_metrics: Optional list of additional metric names to display.
+
+    Returns:
+        Path to the saved video file.
+    """
+    os.environ.setdefault("MUJOCO_GL", "egl")
+
+    reset_fn = jax.jit(env.reset)
+    step_fn = jax.jit(env.step)
+
+    if policy is not None:
+        jit_policy = jax.jit(policy)
+    else:
+        jit_policy = None
+
+    action_size = env.action_size
+
+    def get_action(obs, rng, t):
+        if jit_policy is not None:
+            action, _ = jit_policy(obs, rng)
+            return action
+        elif action_mode == "random":
+            return jax.random.uniform(rng, (action_size,), minval=-1.0, maxval=1.0)
+        elif action_mode == "zero":
+            return jnp.zeros(action_size)
+        elif action_mode == "periodic":
+            phases = jnp.linspace(0.0, 2 * jnp.pi, num=action_size, endpoint=False)
+            omega = 0.2
+            scale = 0.5
+            return scale * jnp.sin(omega * t + phases)
+        else:
+            raise ValueError(f"Unknown action_mode: {action_mode}")
+
+    all_frames = []
+    all_rewards = []
+    all_costs = []
+    all_extra = {k: [] for k in (extra_metrics or [])}
+
+    key = jax.random.PRNGKey(seed)
+
+    for ep in range(max(1, int(num_episodes))):
+        key, ep_key = jax.random.split(key)
+        state = reset_fn(ep_key)
+
+        ep_frames = []
+        ep_rewards = []
+        ep_costs = []
+        ep_extra = {k: [] for k in (extra_metrics or [])}
+
+        cum_reward = 0.0
+        cum_cost = 0.0
+
+        for t in range(steps):
+            key, step_key = jax.random.split(key)
+            action = get_action(state.obs, step_key, t)
+            state = step_fn(state, action)
+
+            ep_frames.append(state.pipeline_state)
+
+            r = float(np.asarray(jax.device_get(state.reward)).reshape(()))
+            c = state.info.get("cost", state.metrics.get("cost", jnp.array(0.0)))
+            c = float(np.asarray(jax.device_get(c)).reshape(()))
+
+            cum_reward += r
+            cum_cost += c
+            ep_rewards.append((r, cum_reward))
+            ep_costs.append((c, cum_cost))
+
+            for mk in (extra_metrics or []):
+                val = state.metrics.get(mk, state.info.get(mk, jnp.array(np.nan)))
+                ep_extra[mk].append(float(np.asarray(jax.device_get(val)).reshape(())))
+
+            done = bool(np.asarray(jax.device_get(state.done)).reshape(()))
+            if done or np.isnan(r):
+                break
+
+        keep_idx = list(range(0, len(ep_frames), frame_stride))
+        all_frames.extend([ep_frames[i] for i in keep_idx])
+        all_rewards.extend([ep_rewards[i] for i in keep_idx])
+        all_costs.extend([ep_costs[i] for i in keep_idx])
+        for mk in (extra_metrics or []):
+            all_extra[mk].extend([ep_extra[mk][i] for i in keep_idx])
+
+        print(f"Episode {ep + 1}/{num_episodes}: {len(ep_frames)} steps, "
+              f"reward={cum_reward:.2f}, cost={cum_cost:.2f}")
+
+    video_path = None
+    for camera in cameras:
+        rendering = env.render(all_frames, width=width, height=height, camera=camera)
+
+        if show_metrics:
+            try:
+                font_obj = ImageFont.truetype(f"{font}.ttf", 14)
+            except (OSError, IOError):
+                font_obj = ImageFont.load_default()
+
+            out_frames = []
+            for i, frame in enumerate(rendering):
+                _, r_cum = all_rewards[i]
+                _, c_cum = all_costs[i]
+
+                img = Image.fromarray(frame.astype(np.uint8))
+                draw = ImageDraw.Draw(img)
+
+                texts = [
+                    (f"Reward: {r_cum:.2f}", (50, 220, 50)),
+                    (f"Cost: {c_cum:.2f}", (230, 60, 60)),
+                ]
+                for mk in (extra_metrics or []):
+                    val = all_extra[mk][i]
+                    texts.append((f"{mk}: {val:.3f}", (200, 200, 255)))
+
+                for idx, (txt, color) in enumerate(texts):
+                    draw.text((10, 10 + 25 * idx), txt, font=font_obj, fill=color,
+                              stroke_width=2, stroke_fill=(0, 0, 0))
+
+                out_frames.append(np.array(img))
+            rendering = out_frames
+
+        os.makedirs("videos", exist_ok=True)
+        file_name = f"{out_name}_{camera}.mp4" if len(cameras) > 1 else f"{out_name}.mp4"
+        video_path = os.path.join("videos", file_name)
+        iio.imwrite(video_path, np.stack(rendering), fps=fps)
+        print(f"Saved video: {video_path}")
+
+    return video_path

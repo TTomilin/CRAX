@@ -34,6 +34,39 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         2: {"max_velocity": 0.5},
         3: {"max_velocity": 0.3},
     },
+    "halfcheetah_velocity_constrained": {
+        1: {"velocity_threshold": 3.2096 * 1.25},
+        2: {"velocity_threshold": 3.2096},
+        3: {"velocity_threshold": 3.2096 * 0.75},
+    },
+    "hopper_velocity_constrained": {
+        1: {"velocity_threshold": 0.7402 * 1.25},
+        2: {"velocity_threshold": 0.7402},
+        3: {"velocity_threshold": 0.7402 * 0.75},
+    },
+    "humanoid_velocity_constrained": {
+        1: {"velocity_threshold": 1.4149 * 1.25},
+        2: {"velocity_threshold": 1.4149},
+        3: {"velocity_threshold": 1.4149 * 0.75},
+    },
+    "swimmer_velocity_constrained": {
+        1: {"velocity_threshold": 0.2282 * 1.25},
+        2: {"velocity_threshold": 0.2282},
+        3: {"velocity_threshold": 0.2282 * 0.75},
+    },
+    "walker2d_velocity_constrained": {
+        1: {"velocity_threshold": 2.3415 * 1.25},
+        2: {"velocity_threshold": 2.3415},
+        3: {"velocity_threshold": 2.3415 * 0.75},
+    },
+    # Unified safe_velocity environment - level determines threshold multiplier:
+    # Level 1: 1.0x baseline (easiest), Level 2: 0.75x, Level 3: 0.5x (hardest)
+    # The actual threshold is computed in safe_velocity.py based on (agent, level)
+    "safe_velocity": {
+        1: {"level": 1},
+        2: {"level": 2},
+        3: {"level": 3},
+    },
     "safe_point_goal": {
         1: {
             "goal_type": "cylinder",
