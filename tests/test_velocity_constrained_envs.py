@@ -1,4 +1,4 @@
-"""Tests for velocity-constrained environments."""
+"""Tests for velocity-constrained environments using the unified safe_velocity env."""
 
 import jax
 import jax.numpy as jnp
@@ -7,19 +7,22 @@ import pytest
 from brax import envs
 
 
-ENV_SPECS = [
-    ("ant_velocity_constrained", {"cost_mode": "binary", "velocity_threshold": 2.6222}),
-    ("halfcheetah_velocity_constrained", {}),
-    ("hopper_velocity_constrained", {}),
-    ("walker2d_velocity_constrained", {}),
-    ("swimmer_velocity_constrained", {}),
-    ("humanoid_velocity_constrained", {}),
+# Test the unified safe_velocity environment with different agents
+AGENT_SPECS = [
+    ("ant", {"cost_mode": "binary"}),
+    ("ant", {"cost_mode": "hinge"}),
+    ("halfcheetah", {}),
+    ("hopper", {}),
+    ("walker2d", {}),
+    ("swimmer", {}),
+    ("humanoid", {}),
 ]
 
 
-@pytest.mark.parametrize("env_name, env_kwargs", ENV_SPECS)
-def test_velocity_env_cost_fields(env_name, env_kwargs):
-    env = envs.get_environment(env_name, **env_kwargs)
+@pytest.mark.parametrize("agent, env_kwargs", AGENT_SPECS)
+def test_velocity_env_cost_fields(agent, env_kwargs):
+    """Test that velocity cost fields are present in metrics and info."""
+    env = envs.get_environment("safe_velocity", agent=agent, **env_kwargs)
     key = jax.random.PRNGKey(0)
     state = env.reset(key)
 
@@ -33,3 +36,18 @@ def test_velocity_env_cost_fields(env_name, env_kwargs):
     reward_shape = jnp.shape(next_state.reward)
     assert jnp.shape(next_state.metrics["cost"]) == reward_shape
     assert jnp.shape(next_state.info["cost"]) == reward_shape
+
+
+@pytest.mark.parametrize("agent", ["ant", "halfcheetah", "hopper", "walker2d", "swimmer", "humanoid"])
+def test_velocity_env_step_count(agent):
+    """Test that step_count increments correctly."""
+    env = envs.get_environment("safe_velocity", agent=agent)
+    key = jax.random.PRNGKey(0)
+    state = env.reset(key)
+
+    assert state.info.get("step_count", 0) == 0
+
+    action = jnp.zeros(env.action_size)
+    for expected_step in range(1, 5):
+        state = env.step(state, action)
+        assert state.info["step_count"] == expected_step

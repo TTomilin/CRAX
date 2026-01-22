@@ -10,10 +10,15 @@
     <headlight ambient="0.5 0.5 0.5" diffuse="0.9 0.9 0.9" specular="0.2 0.2 0.2"/>
     <map znear="0.01" zfar="30"/>
   </visual>
+  <asset>
+    <texture builtin="gradient" height="100" rgb1=".58 .60 .62" rgb2="0.12 0.12 0.14" type="skybox" width="100"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.92 0.92 0.92" rgb2="0.86 0.86 0.86" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.12" shininess="0.08" specular="0.08" texrepeat="20 20" texture="texplane"/>
+  </asset>
   <worldbody>
     <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
     <!-- Arena -->
-    <geom conaffinity="0" contype="0" name="ground" pos="0 0 0" size="1 1 10" type="plane" rgba="1 1 1 1"/>
+    <geom conaffinity="0" contype="0" name="ground" pos="0 0 0" size="1 1 10" type="plane" material="MatPlane"/>
     <camera name="fixedfar" pos="0 -0.6 0.6" zaxis="0 -1 1" mode="fixed"/>
     <geom conaffinity="0" fromto="-.3 -.3 .01 .3 -.3 .01" name="sideS" size=".02" type="capsule"/>
     <geom conaffinity="0" fromto=" .3 -.3 .01 .3  .3 .01" name="sideE" size=".02" type="capsule"/>

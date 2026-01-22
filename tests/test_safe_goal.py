@@ -1,62 +1,33 @@
-import imageio.v3 as iio
-import jax
-import numpy as np
+"""Tests for the SafePointGoal environment."""
 
-from brax.envs.safe_point_goal import default_config, SafePointGoal_Level2, SafePointGoal_Level3
+import argparse
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-def run_random_episode(env, jit_step, jit_reset, steps: int = 100):
-    seed = jax.random.PRNGKey(4242)
-    action = jax.numpy.ones(env.action_size)
-    state = jit_reset(seed)
-
-    print(f"Starting episode")
-
-    states = [state]
-    for i in range(steps):
-        key = jax.random.PRNGKey(i)
-        step_action = action * jax.random.uniform(key)
-        state = jit_step(state, step_action)
-        states.append(state)
-        print("Step", i, "Actions", step_action)
-
-    print(f"Finished episode")
-    return states
+from brax.envs.safe_point_goal import SafePointGoal_Level3
+from run_utils import record_episode_video_simple
 
 
-def render_states(env, states, base_agent_name):
-    # 2. Render the states
-    pipeline_states = [s.pipeline_state for s in states]
-
-    frames = env.render(
-        pipeline_states,
-        width=320,
-        height=240,
-        camera="fixedfar"  # or camera ID
-    )
-
-    # 3. Save as video
-    path = "videos/" + base_agent_name + ".mp4"
-    iio.imwrite(path, np.stack(frames), fps=100)
-    print("Saved video ", path)
-
-
-def _init_safe_goal(base_agent_name="ant.xml"):
-    cfg = default_config()
-    cfg.base_agent_file_name = base_agent_name
+def _init_safe_goal():
     env = SafePointGoal_Level3()
-    step_jit = jax.jit(env.step)
-    reset_jit = jax.jit(env.reset)
-    return env, step_jit, reset_jit
+    return env
 
 
 if __name__ == '__main__':
-    # names = ["ant.xml", "half_cheetah.xml", "hopper.xml",
-    #          "humanoid.xml", "humanoidstandup.xml", "point.xml",
-    #          "swimmer.xml", "walker2d.xml"]
-    names = ["point.xml"]
+    parser = argparse.ArgumentParser(description="Test SafePointGoal environment")
+    parser.add_argument("--steps", type=int, default=300, help="Steps per episode")
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes")
+    args = parser.parse_args()
 
-    for name in names:
-        env, step, reset = _init_safe_goal(base_agent_name=name)
-        states = run_random_episode(env, step, reset, steps=300)
-        render_states(env, states, name.split(".")[0])
+    env = _init_safe_goal()
+    record_episode_video_simple(
+        env,
+        steps=args.steps,
+        action_mode="random",
+        out_name="safe_point_goal",
+        show_metrics=True,
+        num_episodes=args.episodes,
+        fps=100,
+    )

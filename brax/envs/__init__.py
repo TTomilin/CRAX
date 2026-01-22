@@ -21,14 +21,10 @@ import jax
 from jax import numpy as jp
 
 from brax.envs import ant, humanoid_hop
-from brax.envs import ant_velocity_constrained
 from brax.envs import fast
 from brax.envs import half_cheetah
-from brax.envs import half_cheetah_velocity_constrained
 from brax.envs import hopper
-from brax.envs import hopper_velocity_constrained
 from brax.envs import humanoid
-from brax.envs import humanoid_velocity_constrained
 from brax.envs import humanoid_height_constrained
 from brax.envs import humanoidstandup
 from brax.envs import inverted_double_pendulum
@@ -36,10 +32,9 @@ from brax.envs import inverted_pendulum
 from brax.envs import pusher
 from brax.envs import reacher
 from brax.envs import safe_reacher
+from brax.envs import safe_velocity
 from brax.envs import swimmer
-from brax.envs import swimmer_velocity_constrained
 from brax.envs import walker2d
-from brax.envs import walker2d_velocity_constrained
 from brax.envs import safe_ant
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
@@ -52,26 +47,21 @@ from brax.envs.difficulty import apply_difficulty, get_supported_levels, support
 
 _envs = {
     'ant': ant.Ant,
-    'ant_velocity_constrained': ant_velocity_constrained.AntVelocityConstrained,
     'fast': fast.Fast,
     'halfcheetah': half_cheetah.Halfcheetah,
-    'halfcheetah_velocity_constrained': half_cheetah_velocity_constrained.HalfcheetahVelocityConstrained,
     'hopper': hopper.Hopper,
-    'hopper_velocity_constrained': hopper_velocity_constrained.HopperVelocityConstrained,
     'humanoid': humanoid.Humanoid,
     'humanoid_hop': humanoid_hop.Humanoid,
     'humanoid_height_constrained': humanoid_height_constrained.HumanoidHeightConstrained,
-    'humanoid_velocity_constrained': humanoid_velocity_constrained.HumanoidVelocityConstrained,
     'humanoidstandup': humanoidstandup.HumanoidStandup,
     'inverted_pendulum': inverted_pendulum.InvertedPendulum,
     'inverted_double_pendulum': inverted_double_pendulum.InvertedDoublePendulum,
     'pusher': pusher.Pusher,
     'reacher': reacher.Reacher,
     'safe_reacher': safe_reacher.SafeReacher,
+    'safe_velocity': safe_velocity.SafeVelocity,
     'swimmer': swimmer.Swimmer,
-    'swimmer_velocity_constrained': swimmer_velocity_constrained.SwimmerVelocityConstrained,
     'walker2d': walker2d.Walker2d,
-    'walker2d_velocity_constrained': walker2d_velocity_constrained.Walker2dVelocityConstrained,
     'safe_walker': safe_walker.SafeWalker,
     'safe_ant': safe_ant.SafeAnt,
     'point_resetting_goal_random_hazard_sensor_obs': PointResettingGoalRandomHazardSensorObs,
