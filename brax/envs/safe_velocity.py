@@ -100,6 +100,7 @@ def create_safe_velocity_env(
     velocity_threshold: float | None = None,
     velocity_cost_weight: float = 1.0,
     cost_mode: str = "binary",
+    reward_scaler: float = 0.01,
     **kwargs,
 ) -> PipelineEnv:
     """Factory function to create a velocity-constrained environment.
@@ -109,6 +110,7 @@ def create_safe_velocity_env(
         velocity_threshold: Maximum allowed velocity. Defaults to agent-specific threshold from Safety Gymnasium.
         velocity_cost_weight: Weight for velocity constraint violation cost.
         cost_mode: Cost computation mode ('binary' or 'hinge').
+        reward_scaler: Coefficient for the reward.
         **kwargs: Additional arguments passed to the base environment.
 
     Returns:
@@ -137,6 +139,7 @@ def create_safe_velocity_env(
             self._cost_mode = cost_mode
             self._velocity_mode = velocity_mode
             self._agent_name = agent
+            self._reward_scaler = reward_scaler
 
         def step(self, state: State, action: jax.Array) -> State:
             pipeline_state0 = state.pipeline_state
@@ -178,7 +181,7 @@ def create_safe_velocity_env(
                 step_count=step_count,
             )
 
-            return next_state.replace(metrics=metrics, info=info)
+            return next_state.replace(reward=next_state.reward * self._reward_scaler, metrics=metrics, info=info)
 
         def reset(self, rng: jax.Array) -> State:
             state = super().reset(rng)
@@ -223,6 +226,7 @@ class SafeVelocity:
         velocity_threshold: float | None = None,
         velocity_cost_weight: float = 1.0,
         cost_mode: str = "binary",
+        reward_scaler: float = 0.01,
         **kwargs,
     ):
         """Create a new velocity-constrained environment.
@@ -234,6 +238,7 @@ class SafeVelocity:
                                threshold.
             velocity_cost_weight: Weight for velocity constraint violation cost.
             cost_mode: Cost computation mode ('binary' or 'hinge').
+            reward_scaler: Coefficient for the reward.
             **kwargs: Additional arguments passed to the base environment.
 
         Returns:
@@ -244,5 +249,6 @@ class SafeVelocity:
             velocity_threshold=velocity_threshold,
             velocity_cost_weight=velocity_cost_weight,
             cost_mode=cost_mode,
+            reward_scaler=reward_scaler,
             **kwargs,
         )
