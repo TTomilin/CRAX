@@ -23,7 +23,7 @@ from brax.envs.velocity_constraints import (
 )
 from brax.envs.walker2d import Walker2d
 
-# Default velocity thresholds per agent
+# Default velocity thresholds per agent (used as level 1 baseline)
 DEFAULT_THRESHOLDS = {
     "ant": 2.6222,
     "halfcheetah": 3.2096,
@@ -32,6 +32,42 @@ DEFAULT_THRESHOLDS = {
     "swimmer": 0.2282,
     "walker2d": 2.3415,
 }
+
+# Difficulty level multipliers (lower = harder, must move slower)
+_LEVEL_MULTIPLIERS = {
+    1: 1.0,    # Baseline - easiest
+    2: 0.75,   # 75% of baseline - medium
+    3: 0.5,    # 50% of baseline - hardest
+}
+
+# Pre-computed thresholds per (level, agent) for convenience
+LEVEL_THRESHOLDS: dict[int, dict[str, float]] = {
+    level: {agent: thresh * mult for agent, thresh in DEFAULT_THRESHOLDS.items()}
+    for level, mult in _LEVEL_MULTIPLIERS.items()
+}
+
+
+def get_threshold_for_level(agent: str, level: int | None = None) -> float:
+    """Get the velocity threshold for a given agent and difficulty level.
+
+    Args:
+        agent: Agent name (ant, halfcheetah, hopper, humanoid, swimmer, walker2d).
+        level: Difficulty level (1, 2, or 3). If None, uses level 1 (baseline).
+
+    Returns:
+        The velocity threshold for the specified agent and level.
+    """
+    agent = agent.lower()
+    if agent not in DEFAULT_THRESHOLDS:
+        raise ValueError(f"Unknown agent: {agent}")
+
+    if level is None:
+        level = 1
+
+    if level not in LEVEL_THRESHOLDS:
+        raise ValueError(f"Unknown level: {level}. Supported levels: {list(LEVEL_THRESHOLDS.keys())}")
+
+    return LEVEL_THRESHOLDS[level][agent]
 
 # Base environment classes
 _BASE_ENVS: dict[str, Type[PipelineEnv]] = {
@@ -97,6 +133,7 @@ _VELOCITY_COMPUTERS: dict[str, Callable] = {
 
 def create_safe_velocity_env(
     agent: str,
+    level: int | None = None,
     velocity_threshold: float | None = None,
     velocity_cost_weight: float = 1.0,
     cost_mode: str = "binary",
@@ -107,7 +144,10 @@ def create_safe_velocity_env(
 
     Args:
         agent: Name of the agent ('ant', 'halfcheetah', 'hopper', 'humanoid', 'swimmer', 'walker2d').
-        velocity_threshold: Maximum allowed velocity. Defaults to agent-specific threshold from Safety Gymnasium.
+        level: Difficulty level (1, 2, or 3). Level 1 is easiest, level 3 is hardest.
+               If provided, overrides velocity_threshold with the level-specific value.
+        velocity_threshold: Maximum allowed velocity. If None, uses the threshold for
+                           the specified level (or level 1 if level is also None).
         velocity_cost_weight: Weight for velocity constraint violation cost.
         cost_mode: Cost computation mode ('binary' or 'hinge').
         reward_scaler: Coefficient for the reward.
@@ -121,7 +161,12 @@ def create_safe_velocity_env(
         raise ValueError(f"Unknown agent: {agent}. Supported agents: {list(_BASE_ENVS.keys())}")
 
     base_cls = _BASE_ENVS[agent]
-    threshold = velocity_threshold if velocity_threshold is not None else DEFAULT_THRESHOLDS[agent]
+
+    # Determine threshold: explicit > level-based > default (level 1)
+    if velocity_threshold is not None:
+        threshold = velocity_threshold
+    else:
+        threshold = get_threshold_for_level(agent, level)
     velocity_mode = _VELOCITY_MODES[agent]
     compute_vel = _VELOCITY_COMPUTERS[velocity_mode]
 
@@ -212,17 +257,23 @@ class SafeVelocity:
     """Wrapper class that provides a consistent interface for safe velocity environments.
 
     This class acts as a factory that creates the appropriate velocity-constrained
-    environment based on the specified agent.
+    environment based on the specified agent and difficulty level.
+
+    Difficulty Levels:
+        - Level 1: Baseline thresholds (easiest)
+        - Level 2: 75% of baseline (medium)
+        - Level 3: 50% of baseline (hardest)
 
     Usage:
-        env = SafeVelocity(agent="ant", velocity_threshold=2.5)
+        env = SafeVelocity(agent="ant", level=1)
         # or via brax.envs.create:
-        env = brax.envs.create("safe_velocity", agent="ant")
+        env = brax.envs.create("safe_velocity", agent="ant", level=2)
     """
 
     def __new__(
         cls,
         agent: str = "ant",
+        level: int | None = None,
         velocity_threshold: float | None = None,
         velocity_cost_weight: float = 1.0,
         cost_mode: str = "binary",
@@ -234,8 +285,10 @@ class SafeVelocity:
         Args:
             agent: Name of the agent ('ant', 'halfcheetah', 'hopper', 'humanoid',
                    'swimmer', 'walker2d').
-            velocity_threshold: Maximum allowed velocity. Defaults to agent-specific
-                               threshold.
+            level: Difficulty level (1, 2, or 3). Higher levels have stricter
+                   velocity constraints. Defaults to 1 if not specified.
+            velocity_threshold: Maximum allowed velocity. If specified, overrides
+                               the level-based threshold.
             velocity_cost_weight: Weight for velocity constraint violation cost.
             cost_mode: Cost computation mode ('binary' or 'hinge').
             reward_scaler: Coefficient for the reward.
@@ -246,6 +299,7 @@ class SafeVelocity:
         """
         return create_safe_velocity_env(
             agent=agent,
+            level=level,
             velocity_threshold=velocity_threshold,
             velocity_cost_weight=velocity_cost_weight,
             cost_mode=cost_mode,
