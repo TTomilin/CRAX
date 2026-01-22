@@ -571,9 +571,9 @@ class BlockPushGoal(PipelineEnv):
         reached_mask = (sdf <= 0.0)
         num_goals_reached = jp.sum(reached_mask.astype(jp.int32))
 
-        # Dense reward: distance from BLOCK to nearest goal
-        outside_dist = jp.maximum(sdf, 0.0)  # clamp negative (inside) to 0
-        dist_goal = jp.min(outside_dist)  # distance to nearest goal boundary
+        # Dense reward: center-to-center distance from BLOCK to nearest goal
+        center_dists = jp.sqrt(jp.sum(jp.square(goals_xy - block_xy[None, :]), axis=1) + 1e-8)
+        dist_goal = jp.min(center_dists)  # distance to nearest goal center
 
         dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
         goal_reward = self._reward_goal * num_goals_reached
