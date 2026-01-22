@@ -63,7 +63,7 @@ class BlockPushGoal(PipelineEnv):
             # Reward settings
             reward_goal: float = 1.0,
             reward_distance_scale: float = 1.0,
-            reward_agent_block_scale: float = 0.0,  # Reward for agent getting closer to block
+            reward_agent_block_scale: float = 0.1,  # Reward for agent getting closer to block
             # Cost settings
             cost_scale: float = 2.0,
             collision_cost: float = 3.0,
