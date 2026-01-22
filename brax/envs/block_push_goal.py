@@ -62,7 +62,8 @@ class BlockPushGoal(PipelineEnv):
             max_velocity: float = 5.0,
             # Reward settings
             reward_goal: float = 1.0,
-            reward_distance_scale: float = 0.0,
+            reward_distance_scale: float = 1.0,
+            reward_agent_block_scale: float = 0.0,  # Reward for agent getting closer to block
             # Cost settings
             cost_scale: float = 2.0,
             collision_cost: float = 3.0,
@@ -271,6 +272,7 @@ class BlockPushGoal(PipelineEnv):
         # Reward
         self._reward_goal = reward_goal
         self._reward_distance = reward_distance_scale
+        self._reward_agent_block = reward_agent_block_scale
 
         # Cost
         self._ctrl_cost_weight = ctrl_cost_weight
@@ -395,14 +397,19 @@ class BlockPushGoal(PipelineEnv):
         agent_pos = data.xpos[self._agent_body]
         block_pos = data.xpos[self._block_body]
         goals_xy = goal_positions[:, :2]
+        agent_xy = agent_pos[:2]
         block_xy = block_pos[:2]
 
         # Calculate initial distance from BLOCK to nearest goal (not agent!)
         initial_dist_goal = jp.min(jp.sqrt(jp.sum(jp.square(goals_xy - block_xy[None, :]), axis=1) + 1e-8))
 
+        # Calculate initial distance from AGENT to BLOCK
+        initial_dist_block = safe_norm(agent_xy - block_xy)
+
         if self._debug:
-            print(f"[RESET] Agent pos: {agent_pos[:2]}, Block pos: {block_xy}, Goal pos: {goals_xy[0]}")
+            print(f"[RESET] Agent pos: {agent_xy}, Block pos: {block_xy}, Goal pos: {goals_xy[0]}")
             print(f"[RESET] Initial block-to-goal distance: {initial_dist_goal}")
+            print(f"[RESET] Initial agent-to-block distance: {initial_dist_block}")
 
         info = {
             "goal_positions": goal_positions,
@@ -410,6 +417,7 @@ class BlockPushGoal(PipelineEnv):
             "block_position": block_pos,
             "step_count": 0,
             "last_dist_goal": initial_dist_goal,
+            "last_dist_block": initial_dist_block,
             "cost": 0.0,
             "respawn_rng": rng_layout,
         }
@@ -432,6 +440,7 @@ class BlockPushGoal(PipelineEnv):
         hazard_positions = state.info['hazard_positions']
         goal_positions = state.info['goal_positions']
         last_dist_goal = state.info['last_dist_goal']
+        last_dist_block = state.info['last_dist_block']
 
         # ============================== GOAL REWARDS ==============================
         # NOTE: Goal detection uses BLOCK position, not agent position!
@@ -463,10 +472,15 @@ class BlockPushGoal(PipelineEnv):
         dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
         goal_reward = self._reward_goal * num_goals_reached
 
+        # ============================== AGENT-TO-BLOCK REWARD ==============================
+        # Dense reward for agent getting closer to the block (helps agent learn to approach block)
+        dist_block = safe_norm(agent_xy - block_xy)
+        agent_block_reward = (last_dist_block - dist_block) * self._reward_agent_block
+
         # Debug output
         if self._debug:
-            jax.debug.print("[STEP] Block: {b}, Goal: {g}, Dist: {d}, Reached: {r}",
-                          b=block_xy, g=goals_xy[0], d=dist_goal, r=num_goals_reached)
+            jax.debug.print("[STEP] Block: {b}, Goal: {g}, Dist: {d}, Reached: {r}, AgentBlockDist: {abd}",
+                          b=block_xy, g=goals_xy[0], d=dist_goal, r=num_goals_reached, abd=dist_block)
 
         # ============================== GOAL RESPAWN ==============================
 
@@ -604,7 +618,7 @@ class BlockPushGoal(PipelineEnv):
         cost = self._calculate_safety_cost(data, hazard_positions)
 
         # Total reward
-        reward = dist_reward + goal_reward
+        reward = dist_reward + goal_reward + agent_block_reward
 
         # Get observation and metrics
         obs = self._get_obs(data)
@@ -617,6 +631,7 @@ class BlockPushGoal(PipelineEnv):
             "block_position": block_pos,
             "step_count": state.info['step_count'] + 1,
             "last_dist_goal": dist_goal,
+            "last_dist_block": dist_block,
             "cost": cost,
             "respawn_rng": rng_for_goal_respawn,
         })
