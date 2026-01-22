@@ -474,8 +474,10 @@ class BlockPushGoal(PipelineEnv):
 
         # ============================== AGENT-TO-BLOCK REWARD ==============================
         # Dense reward for agent getting closer to the block (helps agent learn to approach block)
+        # NOTE: Only reward getting closer, don't penalize moving away (e.g., during pushing)
+        # Otherwise the agent learns that pushing = negative reward (since pushing increases agent-block distance)
         dist_block = safe_norm(agent_xy - block_xy)
-        agent_block_reward = (last_dist_block - dist_block) * self._reward_agent_block
+        agent_block_reward = jp.maximum(0.0, last_dist_block - dist_block) * self._reward_agent_block
 
         # Debug output
         if self._debug:
