@@ -41,6 +41,8 @@ def main():
 
         # Create environments with difficulty level
         env_kwargs = config.env_kwargs or {}
+        if env_name == 'safe_velocity':
+            env_kwargs['agent'] = config.agent
         env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
         eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
 

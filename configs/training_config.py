@@ -61,6 +61,13 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     # --- Environment ---
     parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name")
     parser.add_argument(
+        "--agent",
+        type=str,
+        default="ant",
+        choices=['ant', 'halfcheetah', 'hopper', 'humanoid', 'swimmer', 'walker2d'],
+        help="Agent for safe_velocity env",
+    )
+    parser.add_argument(
         "--difficulty", type=int, choices=[1, 2, 3], default=1, help="Difficulty level (1=easy, 2=medium, 3=hard)"
     )
     parser.add_argument(
