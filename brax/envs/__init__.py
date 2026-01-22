@@ -41,6 +41,7 @@ from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettin
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
 from brax.envs.safe_point_goal import SafePointGoal
 from brax.envs.safe_point_goal_weighted import SafePointGoalWeighted
+from brax.envs.block_push_goal import BlockPushGoal
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
 from brax.envs.difficulty import apply_difficulty, get_supported_levels, supports_difficulty
@@ -68,6 +69,7 @@ _envs = {
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,
     'safe_point_goal_weighted': SafePointGoalWeighted,
+    'block_push_goal': BlockPushGoal,
 }
 
 

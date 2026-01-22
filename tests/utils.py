@@ -3,6 +3,21 @@ import jax.numpy as jp
 import numpy as np
 
 
+# --- Random policy maker ---
+def make_random_policy(action_dim: int, minval: float = -1.0, maxval: float = 1.0):
+    """
+    Returns a make_inference_fn(params)->inference(obs, rng)->(action, info)
+    that outputs random actions sampled uniformly from [minval, maxval].
+    Works with record_episode_video which JITs the policy.
+    """
+    def _make_inference_fn(_params):
+        def _infer(obs, rng):
+            action = jax.random.uniform(rng, (action_dim,), minval=minval, maxval=maxval)
+            return action, {}
+        return _infer
+    return _make_inference_fn
+
+
 # --- Circular policy maker ---
 def make_circular_policy(action_dim: int, thrust: float, yaw_rate: float, thrust_idx: int, yaw_idx: int):
     """
