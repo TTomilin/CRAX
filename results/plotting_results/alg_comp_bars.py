@@ -231,6 +231,181 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     print(f"Saved figure: {out_path}")
 
 
+def generate_latex_table(
+        stats: pd.DataFrame,
+        envs: List[str],
+        levels: List[int],
+        algos: List[str],
+        safety_threshold: float = 25.0,
+) -> str:
+    """
+    Generate a LaTeX table with results.
+
+    - Rows: algorithms
+    - Main columns: environments with levels as sub-columns
+    - Each level has reward (↑) and cost (↓)
+    - Safe costs (< threshold) are colored green
+    - Best result per (env, level) is bolded: highest reward among safe algorithms
+    """
+    # Build lookup: (env, level, algo, metric) -> (mean, ci)
+    lookup = {}
+    for _, row in stats.iterrows():
+        key = (row["env"], row["level"], row["algo"], row["metric"])
+        lookup[key] = (row["mean"], row["ci"])
+
+    # Determine best algo per (env, level): highest reward among those with cost < threshold
+    best_algo = {}
+    for env in envs:
+        for level in levels:
+            best_reward = -float("inf")
+            best_a = None
+            for algo in algos:
+                cost_key = (env, level, algo, "cost")
+                reward_key = (env, level, algo, "reward")
+                if cost_key not in lookup or reward_key not in lookup:
+                    continue
+                cost_mean, _ = lookup[cost_key]
+                reward_mean, _ = lookup[reward_key]
+                if cost_mean < safety_threshold and reward_mean > best_reward:
+                    best_reward = reward_mean
+                    best_a = algo
+            best_algo[(env, level)] = best_a
+
+    # Build LaTeX
+    lines = []
+
+    # Preamble comment
+    lines.append("% Auto-generated LaTeX table")
+    lines.append("% Requires: \\usepackage{booktabs}, \\usepackage{xcolor}, \\usepackage{multirow}")
+    lines.append("% Define: \\definecolor{safegreen}{RGB}{34, 139, 34}")
+    lines.append("")
+
+    # Calculate column structure
+    # For each env: levels * 2 columns (reward + cost per level)
+    n_data_cols = len(envs) * len(levels) * 2
+
+    # Column spec: l for algo name, then c for each data column (no vertical lines)
+    col_spec = "l" + "c" * n_data_cols
+
+    lines.append("\\begin{table}[htbp]")
+    lines.append("\\centering")
+    lines.append("\\small")
+    lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
+    lines.append("\\toprule")
+
+    # Header row 1: Environment names spanning their columns
+    header1_parts = [""]
+    for env in envs:
+        env_label = TRANSLATIONS.get(env, env)
+        n_cols = len(levels) * 2
+        header1_parts.append(f"\\multicolumn{{{n_cols}}}{{c}}{{{env_label}}}")
+    lines.append(" & ".join(header1_parts) + " \\\\")
+
+    # Add cmidrules under each environment name
+    cmidrule_parts = []
+    col_idx = 2  # Start at column 2 (after algo name)
+    for env in envs:
+        n_cols = len(levels) * 2
+        cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + n_cols - 1}}}")
+        col_idx += n_cols
+    lines.append(" ".join(cmidrule_parts))
+
+    # Header row 2: Level numbers spanning reward+cost pairs
+    header2_parts = [""]
+    for env in envs:
+        for level in levels:
+            header2_parts.append(f"\\multicolumn{{2}}{{c}}{{Level {level}}}")
+    lines.append(" & ".join(header2_parts) + " \\\\")
+
+    # Add cmidrules under each level
+    cmidrule_parts = []
+    col_idx = 2
+    for env in envs:
+        for level in levels:
+            cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + 1}}}")
+            col_idx += 2
+    lines.append(" ".join(cmidrule_parts))
+
+    # Header row 3: Reward↑ / Cost↓ labels
+    header3_parts = ["Algorithm"]
+    for env in envs:
+        for level in levels:
+            header3_parts.append("R $\\uparrow$")
+            header3_parts.append("C $\\downarrow$")
+    lines.append(" & ".join(header3_parts) + " \\\\")
+    lines.append("\\midrule")
+
+    # Data rows: one per algorithm
+    for algo in algos:
+        algo_label = TRANSLATIONS.get(algo, algo)
+        row_parts = [algo_label]
+
+        for env in envs:
+            for level in levels:
+                # Reward
+                reward_key = (env, level, algo, "reward")
+                if reward_key in lookup:
+                    r_mean, r_ci = lookup[reward_key]
+                    r_str = f"{r_mean:.1f}"
+                    # Bold if this is the best algo for this (env, level)
+                    if best_algo.get((env, level)) == algo:
+                        r_str = f"\\textbf{{{r_str}}}"
+                else:
+                    r_str = "--"
+                row_parts.append(r_str)
+
+                # Cost
+                cost_key = (env, level, algo, "cost")
+                if cost_key in lookup:
+                    c_mean, c_ci = lookup[cost_key]
+                    c_str = f"{c_mean:.1f}"
+                    # Color green if safe
+                    if c_mean < safety_threshold:
+                        c_str = f"\\textcolor{{safegreen}}{{{c_str}}}"
+                    # Bold if this is the best algo for this (env, level)
+                    if best_algo.get((env, level)) == algo:
+                        c_str = f"\\textbf{{{c_str}}}"
+                else:
+                    c_str = "--"
+                row_parts.append(c_str)
+
+        lines.append(" & ".join(row_parts) + " \\\\")
+
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append("\\caption{Algorithm comparison across environments and difficulty levels. "
+                 "R: Reward ($\\uparrow$ higher is better), C: Cost ($\\downarrow$ lower is better). "
+                 f"\\textcolor{{safegreen}}{{Green}} indicates safe (cost $< {safety_threshold:.0f}$). "
+                 "\\textbf{Bold} indicates best safe result.}")
+    lines.append("\\label{tab:alg_comparison}")
+    lines.append("\\end{table}")
+
+    return "\n".join(lines)
+
+
+def print_latex_table(stats: pd.DataFrame, args: argparse.Namespace) -> None:
+    """Generate and print the LaTeX table."""
+    latex = generate_latex_table(
+        stats=stats,
+        envs=args.envs,
+        levels=args.levels,
+        algos=args.algos,
+        safety_threshold=args.safety_threshold,
+    )
+    print("\n" + "=" * 80)
+    print("LATEX TABLE (copy below into your .tex file):")
+    print("=" * 80 + "\n")
+    print(latex)
+    print("\n" + "=" * 80)
+
+    # Optionally save to file
+    if args.output_latex:
+        out_path = Path(args.output_latex)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(latex)
+        print(f"LaTeX table saved to: {out_path}")
+
+
 def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
@@ -254,6 +429,14 @@ def build_args() -> argparse.ArgumentParser:
 
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="baselines")
+
+    # LaTeX table options
+    p.add_argument("--latex", action="store_true", help="Generate and print LaTeX table.")
+    p.add_argument("--output_latex", type=str, default=None,
+                   help="Optional path to save LaTeX table (e.g., tables/results.tex).")
+    p.add_argument("--safety_threshold", type=float, default=25.0,
+                   help="Cost threshold for marking results as safe (green) in LaTeX table.")
+    p.add_argument("--no_plot", action="store_true", help="Skip plotting, only generate LaTeX table.")
     return p
 
 
@@ -272,7 +455,14 @@ def main(args: argparse.Namespace) -> None:
     if df.empty:
         raise SystemExit("No data loaded. Check paths/envs/levels/algos/seeds.")
     stats = summarize(df)
-    plot_final_bars(stats, args)
+
+    # Generate LaTeX table if requested
+    if args.latex or args.output_latex:
+        print_latex_table(stats, args)
+
+    # Plot unless --no_plot is set
+    if not args.no_plot:
+        plot_final_bars(stats, args)
 
 
 if __name__ == "__main__":
