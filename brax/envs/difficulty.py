@@ -73,6 +73,20 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             ],
         },
     },
+    "block_push_goal": {
+        # Level 1: Stationary goal
+        1: {
+            "goal_velocity": 0.0,
+        },
+        # Level 2: Slow moving goal
+        2: {
+            "goal_velocity": 0.3,
+        },
+        # Level 3: Fast moving goal
+        3: {
+            "goal_velocity": 0.6,
+        },
+    },
 }
 
 

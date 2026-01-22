@@ -25,6 +25,8 @@ def main():
                         help="Maximum steps per episode")
     parser.add_argument("--num_episodes", type=int, default=1,
                         help="Number of episodes to run")
+    parser.add_argument("--level", type=int, default=1,
+                        help="Environment difficulty level (1=easy, 2=medium, 3=hard)")
     parser.add_argument("--output_dir", type=str, default="videos",
                         help="Output directory for videos")
     parser.add_argument("--seed", type=int, default=42,
@@ -39,9 +41,9 @@ def main():
                         help="Camera name for rendering")
     parser.add_argument("--no_metrics", action="store_true",
                         help="Disable reward/cost overlay on video")
-    parser.add_argument("--thrust", type=float, default=1.0,
+    parser.add_argument("--thrust", type=float, default=0.3,
                         help="Forward velocity for circular motion (constant)")
-    parser.add_argument("--yaw_rate", type=float, default=0.3,
+    parser.add_argument("--yaw_rate", type=float, default=1.5,
                         help="Turning rate for circular motion (constant, positive = left)")
 
     # Environment configuration
@@ -52,16 +54,8 @@ def main():
     args = parser.parse_args()
 
     print("Creating BlockPushGoal environment")
-    print(f"  num_hazards: {args.num_hazards}, goal_size: {args.goal_size}")
 
-    env = envs.get_environment(
-        'block_push_goal',
-        hazard_specs=[
-            dict(type='cube', count=args.num_hazards, size=0.2, height=0.2,
-                 collidable=True, movable=False, density=1.0),
-        ],
-        goal_size=args.goal_size,
-    )
+    env = envs.get_environment('block_push_goal', level=args.level)
 
     # Create circular policy using the helper
     print(f"Creating circular policy: thrust={args.thrust}, yaw_rate={args.yaw_rate}")
@@ -75,6 +69,7 @@ def main():
 
     # Record video using existing utility
     print(f"Recording {args.num_episodes} episode(s), {args.episode_length} steps each")
+    out_name = f"block_push_goal_level_{args.level}.mp4"
     record_episode_video(
         env=env,
         make_inference_fn=make_policy,
@@ -84,14 +79,14 @@ def main():
         width=args.width,
         height=args.height,
         fps=args.fps,
-        out_name="block_push_goal_circular",
+        out_name=out_name,
         log_to_wandb=False,
         seed=args.seed,
         show_metrics=not args.no_metrics,
         num_episodes=args.num_episodes,
     )
 
-    print(f"\nDone! Video saved to: {args.output_dir}/block_push_goal_circular_{args.camera}.mp4")
+    print(f"\nDone! Video saved to: {out_name}")
 
 
 if __name__ == '__main__':

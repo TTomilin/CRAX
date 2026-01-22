@@ -86,6 +86,7 @@ class BlockPushGoal(PipelineEnv):
             goal_height: float = 0.2,
             goal_positions: Optional[List] = None,
             goal_collidable: bool = False,
+            goal_velocity: float = 0.0,  # Goal movement speed (0 = stationary, >0 = moving)
             # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
             hazard_specs: Optional[List[Dict]] = None,
             # Debug
@@ -101,8 +102,8 @@ class BlockPushGoal(PipelineEnv):
                 dict(
                     type='cube',
                     count=6,
-                    size=0.3,
-                    height=0.3,
+                    size=0.2,
+                    height=0.2,
                     collidable=True,
                     movable=False,
                     density=1.0,
@@ -110,7 +111,7 @@ class BlockPushGoal(PipelineEnv):
                 dict(
                     type='cube',
                     count=6,
-                    size=0.4,
+                    size=0.3,
                     height=0.01,
                     collidable=False,
                     movable=False,
@@ -306,6 +307,9 @@ class BlockPushGoal(PipelineEnv):
         self._max_placement_attempts = max_placement_attempts
         self._max_layout_attempts = max_layout_attempts
 
+        # Goal movement
+        self._goal_velocity = goal_velocity
+
         if self._debug:
             print(
                 f"BlockPushGoal initialized with {self._num_hazards} hazards and {self._num_goals} goals")
@@ -415,10 +419,16 @@ class BlockPushGoal(PipelineEnv):
         # Calculate initial distance from AGENT to BLOCK
         initial_dist_block = safe_norm(agent_xy - block_xy)
 
+        # Sample random movement directions for each goal (unit vectors)
+        rng_layout, rng_dir = jax.random.split(rng_layout)
+        goal_angles = jax.random.uniform(rng_dir, (self._num_goals,), minval=0.0, maxval=2.0 * jp.pi)
+        goal_directions = jp.stack([jp.cos(goal_angles), jp.sin(goal_angles)], axis=-1)  # (num_goals, 2)
+
         if self._debug:
             print(f"[RESET] Agent pos: {agent_xy}, Block pos: {block_xy}, Goal pos: {goals_xy[0]}")
             print(f"[RESET] Initial block-to-goal distance: {initial_dist_goal}")
             print(f"[RESET] Initial agent-to-block distance: {initial_dist_block}")
+            print(f"[RESET] Goal velocity: {self._goal_velocity}, Initial directions: {goal_directions}")
 
         info = {
             "goal_positions": goal_positions,
@@ -427,6 +437,7 @@ class BlockPushGoal(PipelineEnv):
             "step_count": 0,
             "last_dist_goal": initial_dist_goal,
             "last_dist_block": initial_dist_block,
+            "goal_directions": goal_directions,  # Movement directions for moving goals
             "cost": 0.0,
             "respawn_rng": rng_layout,
         }
@@ -450,6 +461,92 @@ class BlockPushGoal(PipelineEnv):
         goal_positions = state.info['goal_positions']
         last_dist_goal = state.info['last_dist_goal']
         last_dist_block = state.info['last_dist_block']
+        goal_directions = state.info['goal_directions']
+
+        # ============================== GOAL MOVEMENT ==============================
+        # Move goals if goal_velocity > 0
+        rng_movement = state.info["respawn_rng"]
+
+        def _move_goals(args):
+            """Move goals and handle boundary bouncing."""
+            gpos, gdirs, rng = args
+            # Move goals: new_pos = old_pos + direction * velocity * dt
+            dt = self.dt  # timestep
+            velocity = self._goal_velocity
+            new_xy = gpos[:, :2] + gdirs * velocity * dt
+
+            # Check boundary collision for each goal and bounce
+            minx, miny, maxx, maxy = self._placement_extents
+            margin = self._placement_margin
+
+            # For each goal, check if it hit a boundary and reflect direction
+            def _bounce_goal(carry, idx):
+                positions, directions, rng_key = carry
+                pos_xy = positions[idx]
+                dir_xy = directions[idx]
+
+                # Check x boundaries
+                hit_min_x = pos_xy[0] < minx + margin
+                hit_max_x = pos_xy[0] > maxx - margin
+                hit_x = jp.logical_or(hit_min_x, hit_max_x)
+
+                # Check y boundaries
+                hit_min_y = pos_xy[1] < miny + margin
+                hit_max_y = pos_xy[1] > maxy - margin
+                hit_y = jp.logical_or(hit_min_y, hit_max_y)
+
+                hit_boundary = jp.logical_or(hit_x, hit_y)
+
+                # Reflect direction: flip the component that hit the wall
+                new_dir_x = jp.where(hit_x, -dir_xy[0], dir_xy[0])
+                new_dir_y = jp.where(hit_y, -dir_xy[1], dir_xy[1])
+                reflected_dir = jp.array([new_dir_x, new_dir_y])
+
+                # Sample a completely new random direction if hit boundary (more variety)
+                rng_key, rng_angle = jax.random.split(rng_key)
+                random_angle = jax.random.uniform(rng_angle, (), minval=0.0, maxval=2.0 * jp.pi)
+                random_dir = jp.array([jp.cos(random_angle), jp.sin(random_angle)])
+
+                # Use random direction instead of simple reflection for more interesting movement
+                new_dir = jp.where(hit_boundary, random_dir, dir_xy)
+
+                # Clamp position to stay within bounds
+                clamped_x = jp.clip(pos_xy[0], minx + margin, maxx - margin)
+                clamped_y = jp.clip(pos_xy[1], miny + margin, maxy - margin)
+                clamped_pos = jp.array([clamped_x, clamped_y])
+
+                # Update arrays
+                new_positions = positions.at[idx].set(clamped_pos)
+                new_directions = directions.at[idx].set(new_dir)
+
+                return (new_positions, new_directions, rng_key), None
+
+            (final_positions, final_directions, final_rng), _ = jax.lax.scan(
+                _bounce_goal, (new_xy, gdirs, rng), jp.arange(self._num_goals)
+            )
+
+            # Reconstruct full goal positions with z coordinate
+            final_goal_positions = gpos.at[:, :2].set(final_positions)
+
+            return final_goal_positions, final_directions, final_rng
+
+        def _keep_goals(args):
+            """Keep goals stationary."""
+            gpos, gdirs, rng = args
+            return gpos, gdirs, rng
+
+        # Only move goals if velocity > 0
+        goal_positions, goal_directions, rng_movement = jax.lax.cond(
+            self._goal_velocity > 0.0,
+            _move_goals,
+            _keep_goals,
+            (goal_positions, goal_directions, rng_movement)
+        )
+
+        # Update mocap positions with moved goals
+        mocap_pos = data.mocap_pos
+        mocap_pos = mocap_pos.at[jp.array(self._goal_mocap_ids)].set(goal_positions)
+        data = data.replace(mocap_pos=mocap_pos)
 
         # ============================== GOAL REWARDS ==============================
         # NOTE: Goal detection uses BLOCK position, not agent position!
@@ -483,10 +580,8 @@ class BlockPushGoal(PipelineEnv):
 
         # ============================== AGENT-TO-BLOCK REWARD ==============================
         # Dense reward for agent getting closer to the block (helps agent learn to approach block)
-        # NOTE: Only reward getting closer, don't penalize moving away (e.g., during pushing)
-        # Otherwise the agent learns that pushing = negative reward (since pushing increases agent-block distance)
         dist_block = safe_norm(agent_xy - block_xy)
-        agent_block_reward = jp.maximum(0.0, last_dist_block - dist_block) * self._reward_agent_block
+        agent_block_reward = (last_dist_block - dist_block) * self._reward_agent_block
 
         # Debug output
         if self._debug:
@@ -541,8 +636,9 @@ class BlockPushGoal(PipelineEnv):
             If goal `goal_index` was reached, sample a new valid position for it.
             Otherwise keep its current position. We temporarily disable the goal's
             own object keepout while sampling, to avoid blocking itself.
+            Also samples a new movement direction when goal is respawned.
             """
-            rng_key, object_positions_xy, object_is_rect, object_half_extents, object_radii, new_goal_positions_out = carry
+            rng_key, object_positions_xy, object_is_rect, object_half_extents, object_radii, new_goal_positions_out, new_goal_directions_out = carry
             object_slot = goal_span_start + goal_index  # where this goal sits in the object arrays
 
             def _place_new(_):
@@ -570,36 +666,45 @@ class BlockPushGoal(PipelineEnv):
                     self._placement_margin,
                 )
 
+                # Sample new random direction for the respawned goal
+                next_rng, rng_dir = jax.random.split(next_rng)
+                new_angle = jax.random.uniform(rng_dir, (), minval=0.0, maxval=2.0 * jp.pi)
+                new_direction = jp.array([jp.cos(new_angle), jp.sin(new_angle)])
+
                 # Update arrays at this slot and restore the radius
                 updated_positions_xy = object_positions_xy.at[object_slot].set(new_pos_xyz[:2])
                 updated_goal_positions_out = new_goal_positions_out.at[goal_index].set(new_pos_xyz)
+                updated_goal_directions_out = new_goal_directions_out.at[goal_index].set(new_direction)
 
                 updated_radii = object_radii.at[object_slot].set(goal_keepout_radius)
 
                 return (next_rng, updated_positions_xy, object_is_rect, object_half_extents, updated_radii,
-                        updated_goal_positions_out)
+                        updated_goal_positions_out, updated_goal_directions_out)
 
             def _keep_old(_):
                 updated_goal_positions_out = new_goal_positions_out.at[goal_index].set(goal_positions[goal_index])
+                updated_goal_directions_out = new_goal_directions_out.at[goal_index].set(goal_directions[goal_index])
                 next_rng, _ = jax.random.split(rng_key)
                 return (next_rng, object_positions_xy, object_is_rect, object_half_extents, object_radii,
-                        updated_goal_positions_out)
+                        updated_goal_positions_out, updated_goal_directions_out)
 
             return jax.lax.cond(reached_mask[goal_index], _place_new, _keep_old, operand=None)
 
-        # Compute new positions for all goals (only those reached will move)
+        # Compute new positions and directions for all goals (only those reached will move/get new direction)
         new_goal_positions = jp.zeros_like(goal_positions)
+        new_goal_directions = jp.zeros_like(goal_directions)
         (rng_for_goal_respawn,
          object_positions_xy,
          object_is_rect,
          object_half_extents,
          object_radii,
-         new_goal_positions) = jax.lax.fori_loop(
+         new_goal_positions,
+         new_goal_directions) = jax.lax.fori_loop(
             0,
             self._num_goals,
             lambda i, carry: _place_or_keep_goal(carry, i),
             (rng_for_goal_respawn, object_positions_xy, object_is_rect, object_half_extents, object_radii,
-             new_goal_positions),
+             new_goal_positions, new_goal_directions),
         )
 
         # Scatter updated goal mocaps back into the physics state
@@ -639,6 +744,7 @@ class BlockPushGoal(PipelineEnv):
         new_info = state.info.copy()
         new_info.update({
             "goal_positions": new_goal_positions,
+            "goal_directions": new_goal_directions,
             "block_position": block_pos,
             "step_count": state.info['step_count'] + 1,
             "last_dist_goal": dist_goal,
