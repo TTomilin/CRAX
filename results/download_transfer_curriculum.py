@@ -42,10 +42,7 @@ def build_filters(args: argparse.Namespace) -> dict:
     if algos_to_filter:
         # For curriculum, the algo is stored in config.alg
         # For transfer, we filter by config.algorithm
-        f["$or"] = [
-            {"config.alg": {"$in": algos_to_filter}},
-            {"config.algorithm": {"$in": algos_to_filter}},
-        ]
+        f["config.alg"] = {"$in": algos_to_filter}
     if args.envs:
         f["config.env_name"] = {"$in": args.envs}
     if args.seeds:
