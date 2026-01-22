@@ -87,6 +87,7 @@ class BlockPushGoal(PipelineEnv):
             goal_positions: Optional[List] = None,
             goal_collidable: bool = False,
             goal_velocity: float = 0.0,  # Goal movement speed (0 = stationary, >0 = moving)
+            goal_reached_threshold: float = 0.05,  # Center-to-center distance threshold for goal reached
             # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
             hazard_specs: Optional[List[Dict]] = None,
             # Debug
@@ -309,6 +310,7 @@ class BlockPushGoal(PipelineEnv):
 
         # Goal movement
         self._goal_velocity = goal_velocity
+        self._goal_reached_threshold = goal_reached_threshold
 
         if self._debug:
             print(
@@ -555,25 +557,13 @@ class BlockPushGoal(PipelineEnv):
         block_xy = block_pos[:2]
         goals_xy = goal_positions[:, :2]
 
-        is_cube = (self._goal_type_ids == 0)  # TODO extend for more types
-
-        # vectorized SDFs - check if BLOCK is in goal (not agent!)
-        sdf_cube_2d = jax.vmap(lambda c, he, y: sdf_cube(block_xy, c, he, y))(
-            goals_xy, self._goal_box_he, self._goal_yaws
-        )
-        sdf_cylinder_2d = jax.vmap(lambda c, r: sdf_cylinder(block_xy, c, r))(
-            goals_xy, self._goal_radii
-        )
-
-        # pick per-type
-        sdf = jp.where(is_cube, sdf_cube_2d, sdf_cylinder_2d)
-
-        reached_mask = (sdf <= 0.0)
-        num_goals_reached = jp.sum(reached_mask.astype(jp.int32))
-
         # Dense reward: center-to-center distance from BLOCK to nearest goal
         center_dists = jp.sqrt(jp.sum(jp.square(goals_xy - block_xy[None, :]), axis=1) + 1e-8)
         dist_goal = jp.min(center_dists)  # distance to nearest goal center
+
+        # Goal reached when block center is within threshold of goal center
+        reached_mask = (center_dists <= self._goal_reached_threshold)
+        num_goals_reached = jp.sum(reached_mask.astype(jp.int32))
 
         dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
         goal_reward = self._reward_goal * num_goals_reached
@@ -712,6 +702,12 @@ class BlockPushGoal(PipelineEnv):
         mocap_pos = mocap_pos.at[jp.array(self._goal_mocap_ids)].set(new_goal_positions)
         data = data.replace(mocap_pos=mocap_pos)
 
+        # Recalculate distance to goal AFTER respawn to avoid penalty on next step
+        # When goal respawns, we need last_dist_goal to reflect the new goal position
+        new_goals_xy = new_goal_positions[:, :2]
+        new_center_dists = jp.sqrt(jp.sum(jp.square(new_goals_xy - block_xy[None, :]), axis=1) + 1e-8)
+        dist_goal_after_respawn = jp.min(new_center_dists)
+
         # Health check
         min_z, max_z = self._healthy_z_range
         is_healthy = jp.logical_and(
@@ -741,13 +737,14 @@ class BlockPushGoal(PipelineEnv):
         metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost)
 
         # Update info
+        # Use dist_goal_after_respawn for last_dist_goal to avoid penalty when goal respawns
         new_info = state.info.copy()
         new_info.update({
             "goal_positions": new_goal_positions,
             "goal_directions": new_goal_directions,
             "block_position": block_pos,
             "step_count": state.info['step_count'] + 1,
-            "last_dist_goal": dist_goal,
+            "last_dist_goal": dist_goal_after_respawn,
             "last_dist_block": dist_block,
             "cost": cost,
             "respawn_rng": rng_for_goal_respawn,
