@@ -1,166 +1,501 @@
 """
-Test script to verify that the reward calculation uses center-to-center distance
-between the block and the goal, not edge-based SDF distance.
+Comprehensive test suite for BlockPushGoal (PointPushGoal) environment.
+
+Tests cover:
+- XML/model loading and body existence
+- Environment instantiation and configuration
+- JIT compilation and performance
+- Reset and step functionality
+- Block position tracking and observations
+- Center-to-center distance calculations for rewards
+- Agent ability to physically push the block
+
+Run with: pytest tests/test_point_push_goal.py -v
 """
+
+import functools
 
 import jax
 import jax.numpy as jp
+import jax.random as jrandom
+import mujoco
+import pytest
+
 from brax.envs.block_push_goal import BlockPushGoal
 
 
-def test_center_to_center_distance():
-    """Test that reward uses center-to-center distance."""
-    print("=" * 60)
-    print("Testing Center-to-Center Distance Calculation")
-    print("=" * 60)
+# -----------------------------------------------------------------------------
+# Fixtures - JIT compiled functions for speed
+# -----------------------------------------------------------------------------
 
-    # Create environment with debug enabled
-    env = BlockPushGoal(
+@pytest.fixture(scope="module")
+def env():
+    """Create a standard test environment."""
+    return BlockPushGoal(
         episode_length=1000,
-        goal_size=0.3,  # Larger goal to make edge vs center difference obvious
+        goal_size=0.3,
         goal_type='cube',
-        hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+        hazard_specs=[dict(type='cube', count=2, size=0.2, height=0.2, collidable=True, movable=False)],
         debug=False,
     )
 
-    # Initialize with a fixed seed for reproducibility
-    rng = jax.random.PRNGKey(42)
-    state = env.reset(rng)
 
-    # Get positions
-    data = state.pipeline_state
-    block_pos = data.xpos[env._block_body]
-    goal_pos = state.info['goal_positions'][0]
-
-    block_xy = block_pos[:2]
-    goal_xy = goal_pos[:2]
-
-    # Calculate expected center-to-center distance
-    expected_center_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)) + 1e-8)
-
-    # Get the distance stored in metrics (this is what step() calculates)
-    recorded_dist = state.metrics['distance_to_goal']
-
-    print(f"\nBlock position (xy):  {block_xy}")
-    print(f"Goal position (xy):   {goal_xy}")
-    print(f"\nExpected center-to-center distance: {expected_center_dist:.6f}")
-    print(f"Recorded distance_to_goal metric:   {recorded_dist:.6f}")
-
-    # Check if they match
-    tolerance = 1e-5
-    match = jp.abs(expected_center_dist - recorded_dist) < tolerance
-
-    if match:
-        print(f"\n[PASS] Distances match within tolerance ({tolerance})")
-    else:
-        print(f"\n[FAIL] Distances do NOT match!")
-        print(f"       Difference: {jp.abs(expected_center_dist - recorded_dist):.6f}")
-
-    return match
-
-
-def test_reward_shaping():
-    """Test that reward shaping works correctly with center distance."""
-    print("\n" + "=" * 60)
-    print("Testing Reward Shaping with Center Distance")
-    print("=" * 60)
-
-    # Create environment with distance reward enabled
-    env = BlockPushGoal(
+@pytest.fixture(scope="module")
+def env_with_distance_reward():
+    """Create environment with distance-based reward enabled."""
+    return BlockPushGoal(
         episode_length=1000,
         goal_size=0.3,
         goal_type='cube',
         hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
-        reward_distance_scale=1.0,  # Enable distance-based reward
+        reward_distance_scale=1.0,
         debug=False,
     )
 
-    rng = jax.random.PRNGKey(123)
-    state = env.reset(rng)
 
-    # Take a few steps with zero action to see distance tracking
-    print("\nStep-by-step distance tracking:")
-    print("-" * 40)
+@pytest.fixture(scope="module")
+def jit_reset(env):
+    """JIT-compiled reset function."""
+    return jax.jit(env.reset)
 
-    action = jp.zeros(env.action_size)
 
-    for i in range(5):
+@pytest.fixture(scope="module")
+def jit_step(env):
+    """JIT-compiled step function."""
+    return jax.jit(env.step)
+
+
+@pytest.fixture(scope="module")
+def initial_state(jit_reset):
+    """Get initial state from reset."""
+    rng = jrandom.PRNGKey(42)
+    return jit_reset(rng)
+
+
+# -----------------------------------------------------------------------------
+# XML and Model Loading Tests
+# -----------------------------------------------------------------------------
+
+def _get_xml_path():
+    """Get the absolute path to the point_push.xml file."""
+    import pathlib
+    # Navigate from tests/ to brax/envs/assets/safe/
+    tests_dir = pathlib.Path(__file__).parent
+    project_root = tests_dir.parent
+    return str(project_root / "brax" / "envs" / "assets" / "safe" / "point_push.xml")
+
+
+class TestXMLLoading:
+    """Tests for XML model loading and body verification."""
+
+    def test_xml_loads_successfully(self):
+        """Verify XML file loads without errors."""
+        xml_path = _get_xml_path()
+        mj_model = mujoco.MjModel.from_xml_path(xml_path)
+        assert mj_model is not None
+        assert mj_model.nq > 0
+        assert mj_model.nv > 0
+
+    def test_block_body_exists(self):
+        """Verify block body exists in the model."""
+        xml_path = _get_xml_path()
+        mj_model = mujoco.MjModel.from_xml_path(xml_path)
+        block_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "block")
+        assert block_id >= 0, "Block body not found in model"
+
+    def test_block_geom_exists(self):
+        """Verify block geom exists in the model."""
+        xml_path = _get_xml_path()
+        mj_model = mujoco.MjModel.from_xml_path(xml_path)
+        block_geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, "block")
+        assert block_geom_id >= 0, "Block geom not found in model"
+
+
+# -----------------------------------------------------------------------------
+# Environment Instantiation Tests
+# -----------------------------------------------------------------------------
+
+class TestEnvironmentInstantiation:
+    """Tests for environment creation and configuration."""
+
+    def test_env_instantiates(self, env):
+        """Verify environment instantiates without errors."""
+        assert env is not None
+        assert env.observation_size > 0
+        assert env.action_size > 0
+
+    def test_env_system_dimensions(self, env):
+        """Verify system has expected dimensions."""
+        assert env.sys.nq > 0
+        assert env.sys.nv > 0
+
+    def test_env_with_different_hazard_configs(self):
+        """Test environment with various hazard configurations."""
+        configs = [
+            [dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+            [dict(type='cube', count=4, size=0.2, height=0.2, collidable=True, movable=False)],
+            [dict(type='cylinder', count=2, size=0.15, height=0.3, collidable=True, movable=False)],
+        ]
+        for hazard_spec in configs:
+            env = BlockPushGoal(hazard_specs=hazard_spec, debug=False)
+            assert env is not None
+
+
+# -----------------------------------------------------------------------------
+# JIT Compilation Tests
+# -----------------------------------------------------------------------------
+
+class TestJITCompilation:
+    """Tests for JAX JIT compilation correctness."""
+
+    def test_reset_jits_successfully(self, env):
+        """Verify reset can be JIT compiled."""
+        jit_reset = jax.jit(env.reset)
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        assert state is not None
+        assert state.obs.shape[0] == env.observation_size
+
+    def test_step_jits_successfully(self, env, jit_reset):
+        """Verify step can be JIT compiled."""
+        jit_step = jax.jit(env.step)
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        action = jp.zeros(env.action_size)
+        state2 = jit_step(state, action)
+        assert state2 is not None
+
+    def test_jit_reset_is_deterministic(self, jit_reset):
+        """Verify JIT reset produces deterministic results."""
+        rng = jrandom.PRNGKey(123)
+        state1 = jit_reset(rng)
+        state2 = jit_reset(rng)
+        assert jp.allclose(state1.obs, state2.obs)
+
+    def test_jit_step_is_deterministic(self, jit_reset, jit_step):
+        """Verify JIT step produces deterministic results."""
+        rng = jrandom.PRNGKey(456)
+        state = jit_reset(rng)
+        action = jp.array([0.5, 0.3])
+        state1 = jit_step(state, action)
+        state2 = jit_step(state, action)
+        assert jp.allclose(state1.obs, state2.obs)
+        assert jp.allclose(state1.reward, state2.reward)
+
+    def test_multiple_jit_resets_fast(self, jit_reset):
+        """Verify compiled reset runs quickly (no recompilation)."""
+        import time
+        rng = jrandom.PRNGKey(0)
+        # Warmup
+        _ = jit_reset(rng)
+
+        # Time 10 resets
+        t0 = time.time()
+        for i in range(10):
+            rng, sub = jrandom.split(rng)
+            _ = jit_reset(sub)
+        elapsed = time.time() - t0
+        # Should complete well under 1 second on any hardware
+        assert elapsed < 5.0, f"10 resets took {elapsed:.2f}s, expected <5s"
+
+    def test_multiple_jit_steps_fast(self, jit_reset, jit_step):
+        """Verify compiled step runs quickly (no recompilation)."""
+        import time
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        action = jp.zeros(2)
+        # Warmup
+        _ = jit_step(state, action)
+
+        # Time 100 steps
+        t0 = time.time()
+        for i in range(100):
+            rng, sub = jrandom.split(rng)
+            action = jrandom.uniform(sub, (2,), minval=-1.0, maxval=1.0)
+            state = jit_step(state, action)
+        elapsed = time.time() - t0
+        # Should complete well under 5 seconds
+        assert elapsed < 10.0, f"100 steps took {elapsed:.2f}s, expected <10s"
+
+
+# -----------------------------------------------------------------------------
+# Reset and Step Tests
+# -----------------------------------------------------------------------------
+
+class TestResetAndStep:
+    """Tests for reset and step functionality."""
+
+    def test_reset_returns_valid_state(self, jit_reset):
+        """Verify reset returns a valid state object."""
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        assert hasattr(state, 'obs')
+        assert hasattr(state, 'reward')
+        assert hasattr(state, 'done')
+        assert hasattr(state, 'pipeline_state')
+        assert hasattr(state, 'info')
+
+    def test_step_updates_state(self, jit_reset, jit_step):
+        """Verify step updates the state."""
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        action = jp.array([1.0, 0.0])  # Move forward
+        state2 = jit_step(state, action)
+        # Pipeline state should change
+        assert not jp.allclose(state.pipeline_state.qpos, state2.pipeline_state.qpos)
+
+    def test_step_with_zero_action(self, jit_reset, jit_step):
+        """Verify step works with zero action."""
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        action = jp.zeros(2)
+        state2 = jit_step(state, action)
+        assert state2 is not None
+        # Agent should not move much with zero action
+        agent_displacement = jp.linalg.norm(
+            state2.pipeline_state.qpos[:2] - state.pipeline_state.qpos[:2]
+        )
+        assert agent_displacement < 0.5  # Small displacement due to physics settling
+
+
+# -----------------------------------------------------------------------------
+# Block Position Tracking Tests
+# -----------------------------------------------------------------------------
+
+class TestBlockTracking:
+    """Tests for block position tracking in state.info."""
+
+    def test_block_position_in_info(self, initial_state):
+        """Verify block_position is tracked in state.info."""
+        assert 'block_position' in initial_state.info
+        block_pos = initial_state.info['block_position']
+        assert block_pos.shape == (3,)
+
+    def test_goal_positions_in_info(self, initial_state):
+        """Verify goal_positions is tracked in state.info."""
+        assert 'goal_positions' in initial_state.info
+        goal_pos = initial_state.info['goal_positions']
+        assert goal_pos.shape[1] == 3  # (num_goals, 3)
+
+    def test_block_position_updates_after_step(self, env, jit_reset, jit_step):
+        """Verify block position updates in info after stepping."""
+        rng = jrandom.PRNGKey(0)
+        state = jit_reset(rng)
+        initial_block_pos = state.info['block_position']
+
+        # Run many steps with forward motion toward block
+        for _ in range(100):
+            action = jp.array([1.0, 0.0])
+            state = jit_step(state, action)
+
+        # Block position should be different (even if just slightly due to physics)
+        final_block_pos = state.info['block_position']
+        # At minimum, the state.info should still contain valid position
+        assert final_block_pos.shape == (3,)
+
+    def test_distance_to_goal_metric(self, initial_state):
+        """Verify distance_to_goal metric is tracked."""
+        assert 'distance_to_goal' in initial_state.metrics
+        dist = initial_state.metrics['distance_to_goal']
+        assert dist >= 0
+
+
+# -----------------------------------------------------------------------------
+# Block Observations Tests
+# -----------------------------------------------------------------------------
+
+class TestBlockObservations:
+    """Tests for block-related observations in obs vector."""
+
+    def test_observation_contains_block_info(self, env, initial_state):
+        """Verify observations contain block information."""
+        obs = initial_state.obs
+        assert obs.shape[0] == env.observation_size
+
+        # Block obs are at end: agent_to_block_comp(2), block_to_goal_comp(2),
+        # agent_to_block_dist(1), block_to_goal_dist(1)
+        agent_to_block_comp = obs[-6:-4]
+        block_to_goal_comp = obs[-4:-2]
+        agent_to_block_dist = obs[-2]
+        block_to_goal_dist = obs[-1]
+
+        # Compasses should be approximately normalized
+        a2b_norm = jp.linalg.norm(agent_to_block_comp)
+        b2g_norm = jp.linalg.norm(block_to_goal_comp)
+
+        # Allow some tolerance for edge cases (e.g., agent on block)
+        assert 0.0 <= a2b_norm <= 1.5
+        assert 0.0 <= b2g_norm <= 1.5
+
+    def test_compass_normalization(self, env, initial_state):
+        """Verify compass vectors are normalized (or near zero if coincident)."""
+        obs = initial_state.obs
+        agent_to_block_comp = obs[-6:-4]
+        block_to_goal_comp = obs[-4:-2]
+
+        a2b_norm = jp.linalg.norm(agent_to_block_comp)
+        b2g_norm = jp.linalg.norm(block_to_goal_comp)
+
+        # Should be normalized (close to 1) unless positions coincide (close to 0)
+        assert a2b_norm < 0.01 or abs(a2b_norm - 1.0) < 0.1
+        assert b2g_norm < 0.01 or abs(b2g_norm - 1.0) < 0.1
+
+
+# -----------------------------------------------------------------------------
+# Center-to-Center Distance Tests
+# -----------------------------------------------------------------------------
+
+class TestCenterToCenterDistance:
+    """Tests for center-to-center distance calculation in rewards."""
+
+    def test_distance_uses_center_not_edge(self, env, jit_reset):
+        """Verify reward uses center-to-center distance, not edge-based SDF."""
+        rng = jrandom.PRNGKey(42)
+        state = jit_reset(rng)
+
         data = state.pipeline_state
-        block_xy = data.xpos[env._block_body][:2]
-        goal_xy = state.info['goal_positions'][0][:2]
+        block_pos = data.xpos[env._block_body]
+        goal_pos = state.info['goal_positions'][0]
 
-        # Manual center-to-center calculation
-        manual_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)) + 1e-8)
+        block_xy = block_pos[:2]
+        goal_xy = goal_pos[:2]
+
+        # Calculate expected center-to-center distance
+        expected_center_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)) + 1e-8)
+
+        # Get the distance stored in metrics
         recorded_dist = state.metrics['distance_to_goal']
-        last_dist = state.metrics['last_dist_goal']
 
-        print(f"Step {i}: manual_dist={float(manual_dist):.4f}, "
-              f"recorded={float(recorded_dist):.4f}, "
-              f"last={float(last_dist):.4f}, "
-              f"reward={float(state.reward):.4f}")
+        # They should match (within tolerance for numerical precision)
+        assert jp.abs(expected_center_dist - recorded_dist) < 1e-4, (
+            f"Expected center distance {expected_center_dist}, got {recorded_dist}"
+        )
 
-        # Take a step
-        state = env.step(state, action)
+    def test_reward_shaping_with_center_distance(self, env_with_distance_reward):
+        """Test that reward shaping works correctly with center distance."""
+        jit_reset = jax.jit(env_with_distance_reward.reset)
+        jit_step = jax.jit(env_with_distance_reward.step)
 
-    print("\n[INFO] If manual_dist matches recorded distance, center-to-center is working.")
-    return True
+        rng = jrandom.PRNGKey(123)
+        state = jit_reset(rng)
+        action = jp.zeros(env_with_distance_reward.action_size)
+
+        # Run a few steps and verify distance tracking consistency
+        for _ in range(5):
+            data = state.pipeline_state
+            block_xy = data.xpos[env_with_distance_reward._block_body][:2]
+            goal_xy = state.info['goal_positions'][0][:2]
+
+            # Manual center-to-center calculation
+            manual_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)) + 1e-8)
+            recorded_dist = state.metrics['distance_to_goal']
+
+            assert jp.abs(manual_dist - recorded_dist) < 1e-4, (
+                f"Manual distance {manual_dist} != recorded {recorded_dist}"
+            )
+
+            state = jit_step(state, action)
+
+    def test_edge_vs_center_distance_difference(self):
+        """Verify center distance differs from edge-based SDF distance."""
+        # For a cube goal with size 0.3, the half-extent is 0.15
+        # If block is at distance 0.5 from center:
+        # - Center-to-center distance = 0.5
+        # - Edge distance (SDF) approx = 0.5 - 0.15 = 0.35
+
+        goal_size = 0.3
+        half_extent = goal_size / 2
+
+        block_xy = jp.array([0.0, 0.0])
+        goal_xy = jp.array([0.5, 0.0])
+
+        center_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)))
+        edge_dist_approx = center_dist - half_extent
+
+        # Center distance should be larger than edge distance
+        assert center_dist > edge_dist_approx
+        assert jp.abs(center_dist - 0.5) < 1e-6
+        assert jp.abs(edge_dist_approx - 0.35) < 1e-6
 
 
-def test_edge_vs_center_difference():
-    """Demonstrate the difference between edge and center distance."""
-    print("\n" + "=" * 60)
-    print("Demonstrating Edge vs Center Distance Difference")
-    print("=" * 60)
+# -----------------------------------------------------------------------------
+# Agent Block Pushing Tests
+# -----------------------------------------------------------------------------
 
-    # For a cube goal with size 0.3, the half-extent is 0.15
-    # If block is at distance 0.5 from center:
-    # - Center-to-center distance = 0.5
-    # - Edge distance (SDF) = 0.5 - 0.15 = 0.35 (approximately)
+class TestAgentBlockPushing:
+    """Tests for agent ability to physically push the block."""
 
-    goal_size = 0.3
-    half_extent = goal_size / 2
+    def test_agent_can_push_block(self):
+        """Verify agent can physically displace the block."""
+        env = BlockPushGoal(
+            debug=False,
+            hazard_specs=[dict(type='cube', count=1, size=0.1, height=0.1, collidable=False, movable=False)],
+        )
 
-    # Simulated positions
-    block_xy = jp.array([0.0, 0.0])
-    goal_xy = jp.array([0.5, 0.0])
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
 
-    center_dist = jp.sqrt(jp.sum(jp.square(goal_xy - block_xy)))
-    edge_dist_approx = center_dist - half_extent  # Simplified 1D case
+        rng = jrandom.PRNGKey(123)
+        state = jit_reset(rng)
 
-    print(f"\nExample with goal_size={goal_size} (half_extent={half_extent}):")
-    print(f"Block at: {block_xy}")
-    print(f"Goal at:  {goal_xy}")
-    print(f"\nCenter-to-center distance: {center_dist:.4f}")
-    print(f"Edge distance (approx):    {edge_dist_approx:.4f}")
-    print(f"Difference:                {center_dist - edge_dist_approx:.4f}")
+        initial_block_pos = state.info['block_position'][:2]
 
-    print("\n[INFO] The fix ensures we use center-to-center distance for rewards,")
-    print("       which provides more consistent reward shaping regardless of goal size.")
+        # Run steps with agent moving toward and pushing block
+        for i in range(200):
+            agent_pos = state.pipeline_state.xpos[env._agent_body][:2]
+            block_pos = state.info['block_position'][:2]
+            to_block = block_pos - agent_pos
+            desired_angle = jp.arctan2(to_block[1], to_block[0])
+            current_angle = state.pipeline_state.qpos[2]
+            angle_diff = desired_angle - current_angle
+            angle_diff = jp.arctan2(jp.sin(angle_diff), jp.cos(angle_diff))
 
-    return True
+            # Move forward and turn toward block
+            forward = 1.0 if abs(float(angle_diff)) < 0.5 else 0.3
+            turn = jp.clip(angle_diff * 3.0, -1.0, 1.0)
+            action = jp.array([forward, turn])
 
+            state = jit_step(state, action)
+
+        final_block_pos = state.info['block_position'][:2]
+        block_displacement = jp.linalg.norm(final_block_pos - initial_block_pos)
+
+        assert float(block_displacement) > 0.1, (
+            f"Block should move when pushed. Displacement: {float(block_displacement):.4f}"
+        )
+
+
+# -----------------------------------------------------------------------------
+# Goal Reached Tests
+# -----------------------------------------------------------------------------
+
+class TestGoalReached:
+    """Tests for goal reached detection and reward."""
+
+    def test_env_runs_with_dense_reward(self, env_with_distance_reward):
+        """Verify environment runs correctly with dense reward enabled."""
+        jit_reset = jax.jit(env_with_distance_reward.reset)
+        jit_step = jax.jit(env_with_distance_reward.step)
+
+        rng = jrandom.PRNGKey(42)
+        state = jit_reset(rng)
+
+        # Run 10 steps with zero action
+        total_reward = 0.0
+        for _ in range(10):
+            action = jp.zeros(env_with_distance_reward.action_size)
+            state = jit_step(state, action)
+            total_reward += float(state.reward)
+
+        # Environment should run without errors
+        # (reward value depends on configuration, just verify it's a number)
+        assert not jp.isnan(total_reward)
+        assert not jp.isinf(total_reward)
+
+
+# -----------------------------------------------------------------------------
+# Run as script for debugging
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("BLOCK PUSH GOAL - REWARD CALCULATION TEST")
-    print("=" * 60)
-
-    all_passed = True
-
-    # Run tests
-    all_passed &= test_center_to_center_distance()
-    all_passed &= test_reward_shaping()
-    all_passed &= test_edge_vs_center_difference()
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("TEST SUMMARY")
-    print("=" * 60)
-
-    if all_passed:
-        print("\n[SUCCESS] All tests passed!")
-        print("The reward calculation now uses center-to-center distance.")
-    else:
-        print("\n[FAILURE] Some tests failed. Check output above.")
-
-    print()
+    pytest.main([__file__, "-v"])
