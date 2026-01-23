@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import (
+from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     set_mpl_style,
@@ -28,6 +28,7 @@ TRANSLATIONS = {
     "safe_point_goal": "Safe Point Goal",
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
+    "safe_velocity": "Safe Velocity",
 }
 
 # Optional safety thresholds per env for cost bars (None disables)
@@ -35,6 +36,7 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
     "safe_point_goal": 25.0,
     "safe_reacher": 25.0,
     "safe_walker": 25.0,
+    "safe_velocity": 25.0,
 }
 
 
@@ -70,7 +72,7 @@ def load_final_values(
                     df = df.sort_values("_step", kind="mergesort")
 
                     for metric in metrics:
-                        series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+                        series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
                         if series is None:
                             continue
                         series = series.dropna().astype(np.float32)
@@ -106,6 +108,34 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
     out["ci"] = 1.96 * out["std"].fillna(0.0) / np.sqrt(out["n"].clip(lower=1))
     out.drop(columns=["std"], inplace=True)
     return out
+
+
+def _draw_break_pattern(ax, bar, y_clip, bar_width):
+    """Draw a zigzag break pattern at the top of a truncated bar."""
+    x_center = bar.get_x() + bar.get_width() / 2
+    x_left = x_center - bar_width / 2
+    x_right = x_center + bar_width / 2
+
+    # Draw white rectangle to "cut" the bar
+    cut_height = y_clip * 0.06
+    rect = plt.Rectangle(
+        (x_left, y_clip - cut_height / 2),
+        bar_width,
+        cut_height,
+        facecolor='white',
+        edgecolor='none',
+        zorder=10
+    )
+    ax.add_patch(rect)
+
+    # Draw zigzag lines
+    n_zigs = 3
+    x_points = np.linspace(x_left, x_right, n_zigs * 2 + 1)
+    y_bottom = y_clip - cut_height / 2
+    y_top = y_clip + cut_height / 2
+    y_points = [y_bottom if i % 2 == 0 else y_top for i in range(len(x_points))]
+
+    ax.plot(x_points, y_points, color='black', linewidth=0.8, zorder=11)
 
 
 def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
@@ -149,6 +179,23 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         c = gc * m + metric_i
         return axs[r, c]
 
+    # First pass: collect all values to determine y-limits with truncation
+    env_metric_values: Dict[tuple, List[float]] = {}
+    for env_i, env in enumerate(envs):
+        for metric_i, metric in enumerate(metrics):
+            values = []
+            for algo in algos:
+                for level in levels:
+                    sub = stats[
+                        (stats["env"] == env)
+                        & (stats["metric"] == metric)
+                        & (stats["algo"] == algo)
+                        & (stats["level"] == level)
+                    ]
+                    if len(sub) > 0:
+                        values.append(float(sub["mean"].iloc[0]))
+            env_metric_values[(env, metric)] = values
+
     # plot per env
     for env_i, env in enumerate(envs):
         env_title = TRANSLATIONS.get(env, env)
@@ -158,6 +205,32 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
             ax = get_ax(env_i, metric_i)
             ylab = TRANSLATIONS.get(metric, metric.capitalize())
 
+            # Determine y-clip for this subplot
+            values = env_metric_values.get((env, metric), [])
+            threshold = SAFETY_THRESHOLDS.get(env, None)
+
+            # Compute smart y-clip based on data distribution
+            y_clip = None
+            truncated_bars = []  # Track which bars get truncated
+
+            if args.truncate_outliers and metric == "cost" and threshold is not None and len(values) > 0:
+                # Sort values to find the "gap" between safe and unsafe
+                sorted_vals = sorted([v for v in values if not np.isnan(v)])
+
+                if len(sorted_vals) > 1:
+                    # Find values that are much larger than the threshold
+                    safe_vals = [v for v in sorted_vals if v <= threshold * args.truncate_factor]
+                    outlier_vals = [v for v in sorted_vals if v > threshold * args.truncate_factor]
+
+                    if outlier_vals and safe_vals:
+                        # Set y_clip to show detail in the safe region
+                        y_clip = threshold * args.truncate_factor
+                    elif not safe_vals and outlier_vals:
+                        # All values are outliers - use a reasonable max
+                        y_clip = threshold * args.truncate_factor
+
+            # Collect data for all algorithms
+            algo_data = []
             for a_i, algo in enumerate(algos):
                 ys = []
                 es = []
@@ -167,29 +240,87 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         & (stats["metric"] == metric)
                         & (stats["algo"] == algo)
                         & (stats["level"] == level)
-                        ]
+                    ]
                     if len(sub) == 0:
                         ys.append(np.nan)
                         es.append(0.0)
                     else:
                         ys.append(float(sub["mean"].iloc[0]))
                         es.append(float(sub["ci"].iloc[0]))
+                algo_data.append((algo, ys, es))
 
-                bars = ax.bar(x + offsets[a_i], ys, width=bar_w, yerr=es, capsize=2, label=algo, color=BASELINES_COLORS.get(algo))
+            # Plot bars
+            for a_i, (algo, ys, es) in enumerate(algo_data):
+                # Clip values and errors for display
+                ys_display = []
+                es_display = []
+                is_truncated = []
+
+                for y, e in zip(ys, es):
+                    if y_clip is not None and not np.isnan(y) and y > y_clip:
+                        ys_display.append(y_clip)
+                        es_display.append(0)  # Don't show error bar for truncated
+                        is_truncated.append(True)
+                    else:
+                        ys_display.append(y)
+                        es_display.append(e)
+                        is_truncated.append(False)
+
+                bars = ax.bar(
+                    x + offsets[a_i], ys_display, width=bar_w,
+                    yerr=es_display, capsize=2, label=algo,
+                    color=BASELINES_COLORS.get(algo)
+                )
 
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
+
+                # Handle truncated bars
+                for bar_idx, (bar, trunc, orig_y) in enumerate(zip(bars, is_truncated, ys)):
+                    if trunc and not np.isnan(orig_y):
+                        # Draw break pattern
+                        _draw_break_pattern(ax, bar, y_clip, bar_w)
+
+                        # Add value label above the bar
+                        x_pos = bar.get_x() + bar.get_width() / 2
+                        if orig_y >= 1000:
+                            label_text = f"{orig_y / 1000:.1f}k"
+                        else:
+                            label_text = f"{orig_y:.0f}"
+
+                        ax.annotate(
+                            label_text,
+                            xy=(x_pos, y_clip),
+                            xytext=(0, 4),
+                            textcoords='offset points',
+                            ha='center', va='bottom',
+                            fontsize=7,
+                            fontweight='bold',
+                            color=BASELINES_COLORS.get(algo, 'black'),
+                            rotation=90 if len(algos) > 5 else 0,
+                        )
 
             ax.set_xticks(x)
             ax.set_xticklabels([str(lv) for lv in levels])
             ax.set_xlabel("Level")
             ax.set_ylabel(ylab)
 
+            # Set y-limit if truncating
+            if y_clip is not None:
+                ax.set_ylim(0, y_clip * 1.15)  # Add space for labels
+
+            y_max = ax.get_ylim()[1]
+            if y_max >= 1000:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            else:
+                ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+            ax.yaxis.get_major_formatter().set_useOffset(False)
+
             # threshold only on cost axis
             if metric == "cost" and not args.no_threshold:
                 thr = SAFETY_THRESHOLDS.get(env, None)
                 if thr is not None:
-                    thr_line = ax.axhline(thr, linestyle="--", color="red")
+                    thr_line = ax.axhline(thr, linestyle="--", color="red", linewidth=1.5, zorder=5)
                     if "Threshold" not in legend_handles:
                         legend_handles["Threshold"] = thr_line
 
@@ -410,7 +541,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
@@ -422,6 +553,14 @@ def build_args() -> argparse.ArgumentParser:
 
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines (cost only).")
     p.add_argument("--grid", action="store_true")
+
+    # Truncation options for handling outliers
+    p.add_argument("--truncate_outliers", action="store_true", default=True,
+                   help="Truncate bars that exceed the threshold by a large factor (default: True).")
+    p.add_argument("--no_truncate", dest="truncate_outliers", action="store_false",
+                   help="Disable truncation of outlier bars.")
+    p.add_argument("--truncate_factor", type=float, default=2.5,
+                   help="Truncate cost bars exceeding threshold * factor (default: 2.5).")
 
     p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per env column.")
