@@ -539,6 +539,129 @@ class TestGoalReached:
 
 
 # -----------------------------------------------------------------------------
+# Moving Goal Reward Fairness Tests
+# -----------------------------------------------------------------------------
+
+class TestMovingGoalRewardFairness:
+    """Tests for fair reward calculation when goals are moving."""
+
+    def test_no_negative_reward_from_goal_movement(self):
+        """Verify agent doesn't get negative reward just because goal moves away.
+
+        When goal_velocity > 0, the goal moves each step. The distance reward
+        should be calculated BEFORE the goal moves, so the agent is only
+        rewarded/penalized for their own actions (pushing the block), not for
+        the goal's autonomous movement.
+        """
+        env = BlockPushGoal(
+            goal_size=0.3,
+            goal_velocity=0.5,  # Moving goal
+            reward_distance_scale=1.0,
+            reward_agent_block_scale=0.0,  # Disable agent-block reward for cleaner test
+            reward_goal=0.0,  # Disable goal reward for cleaner test
+            hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+            debug=False,
+        )
+
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
+
+        rng = jrandom.PRNGKey(42)
+        state = jit_reset(rng)
+
+        # With zero action, block shouldn't move significantly
+        # Therefore reward should be near zero (not negative due to goal movement)
+        action = jp.zeros(env.action_size)
+
+        rewards = []
+        for _ in range(50):
+            state = jit_step(state, action)
+            rewards.append(float(state.reward))
+
+        # With zero action and stationary block, rewards should be near zero
+        # Allow small negative values due to physics settling, but not large negatives
+        # that would indicate goal movement is being penalized
+        min_reward = min(rewards)
+        max_reward = max(rewards)
+        avg_reward = sum(rewards) / len(rewards)
+
+        # The key assertion: rewards should not be strongly negative
+        # If goal movement caused penalties, we'd see large negative rewards
+        assert min_reward > -0.1, (
+            f"Reward dropped to {min_reward}, suggesting goal movement is causing "
+            f"unfair penalties. Rewards: min={min_reward:.4f}, max={max_reward:.4f}, avg={avg_reward:.4f}"
+        )
+
+        # Average reward should be close to zero with zero action
+        assert abs(avg_reward) < 0.05, (
+            f"Average reward should be near zero with no action, got {avg_reward:.4f}"
+        )
+
+    def test_reward_reflects_block_movement_not_goal_movement(self):
+        """Verify reward reflects block progress, not goal movement direction.
+
+        When the block moves toward the goal position (before goal moves),
+        reward should be positive regardless of which direction the goal
+        subsequently moves.
+        """
+        env = BlockPushGoal(
+            goal_size=0.3,
+            goal_velocity=0.5,  # Moving goal
+            reward_distance_scale=1.0,
+            reward_agent_block_scale=0.0,
+            reward_goal=0.0,
+            hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+            debug=False,
+        )
+
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
+
+        # Run multiple trials with different seeds
+        positive_rewards_when_pushing = 0
+        total_pushing_steps = 0
+
+        for seed in range(5):
+            rng = jrandom.PRNGKey(seed * 100)
+            state = jit_reset(rng)
+
+            # Push toward the block/goal for several steps
+            for _ in range(30):
+                # Get direction to block and push forward
+                agent_pos = state.pipeline_state.xpos[env._agent_body][:2]
+                block_pos = state.info['block_position'][:2]
+                to_block = block_pos - agent_pos
+                block_dist = jp.linalg.norm(to_block)
+
+                # Only count steps where agent is close enough to potentially push block
+                if float(block_dist) < 1.0:
+                    action = jp.array([1.0, 0.0])  # Push forward
+                    old_block_pos = state.info['block_position'][:2]
+                    state = jit_step(state, action)
+                    new_block_pos = state.info['block_position'][:2]
+
+                    # If block actually moved toward goal direction, reward should reflect this
+                    block_moved = jp.linalg.norm(new_block_pos - old_block_pos)
+                    if float(block_moved) > 0.001:  # Block actually moved
+                        total_pushing_steps += 1
+                        if float(state.reward) > -0.05:  # Not strongly negative
+                            positive_rewards_when_pushing += 1
+                else:
+                    # Move toward block
+                    action = jp.array([1.0, 0.0])
+                    state = jit_step(state, action)
+
+        # Most pushing actions should not result in negative rewards
+        # (unless the block was pushed away from goal, but that's agent's action, not goal movement)
+        if total_pushing_steps > 0:
+            success_rate = positive_rewards_when_pushing / total_pushing_steps
+            assert success_rate > 0.7, (
+                f"Only {success_rate*100:.1f}% of pushing steps had non-negative rewards. "
+                f"Goal movement may be unfairly affecting rewards."
+            )
+
+
+# -----------------------------------------------------------------------------
 # Run as script for debugging
 # -----------------------------------------------------------------------------
 

@@ -471,6 +471,24 @@ class BlockPushGoal(PipelineEnv):
         last_dist_block = state.info['last_dist_block']
         goal_directions = state.info['goal_directions']
 
+        # ============================== DISTANCE REWARD (before goal movement) ==============================
+        # Calculate distance reward BEFORE goals move, so reward reflects agent's actions only.
+        # This prevents unfair negative rewards when the goal moves away from the block.
+        agent_xy = agent_pos[:2]
+        block_xy = block_pos[:2]
+        goals_xy_before_move = goal_positions[:, :2]
+
+        # Distance from block to nearest goal (before goal moves this step)
+        center_dists_before = jp.sqrt(jp.sum(jp.square(goals_xy_before_move - block_xy[None, :]), axis=1) + 1e-8)
+        dist_goal_before_move = jp.min(center_dists_before)
+
+        # Distance reward based on goal position BEFORE movement (fair to agent)
+        dist_reward = (last_dist_goal - dist_goal_before_move) * self._reward_distance
+
+        # Agent-to-block reward (also calculated before goal movement for consistency)
+        dist_block = safe_norm(agent_xy - block_xy)
+        agent_block_reward = (last_dist_block - dist_block) * self._reward_agent_block
+
         # ============================== GOAL MOVEMENT ==============================
         # Move goals if goal_velocity > 0
         rng_movement = state.info["respawn_rng"]
@@ -556,16 +574,9 @@ class BlockPushGoal(PipelineEnv):
         mocap_pos = mocap_pos.at[jp.array(self._goal_mocap_ids)].set(goal_positions)
         data = data.replace(mocap_pos=mocap_pos)
 
-        # ============================== GOAL REWARDS ==============================
-        # NOTE: Goal detection uses BLOCK position, not agent position!
-
-        agent_xy = agent_pos[:2]
-        block_xy = block_pos[:2]
+        # ============================== GOAL REACHED DETECTION ==============================
+        # NOTE: Goal detection uses BLOCK position and MOVED goal positions
         goals_xy = goal_positions[:, :2]
-
-        # Dense reward: center-to-center distance from BLOCK to nearest goal
-        center_dists = jp.sqrt(jp.sum(jp.square(goals_xy - block_xy[None, :]), axis=1) + 1e-8)
-        dist_goal = jp.min(center_dists)  # distance to nearest goal center
 
         # Goal reached when block center is INSIDE the goal box (SDF <= 0)
         is_cube = (self._goal_type_ids == 0)
@@ -579,18 +590,12 @@ class BlockPushGoal(PipelineEnv):
         reached_mask = (sdf_vals <= 0.0)
         num_goals_reached = jp.sum(reached_mask.astype(jp.int32))
 
-        dist_reward = (last_dist_goal - dist_goal) * self._reward_distance
         goal_reward = self._reward_goal * num_goals_reached
-
-        # ============================== AGENT-TO-BLOCK REWARD ==============================
-        # Dense reward for agent getting closer to the block (helps agent learn to approach block)
-        dist_block = safe_norm(agent_xy - block_xy)
-        agent_block_reward = (last_dist_block - dist_block) * self._reward_agent_block
 
         # Debug output
         if self._debug:
             jax.debug.print("[STEP] Block: {b}, Goal: {g}, Dist: {d}, Reached: {r}, AgentBlockDist: {abd}",
-                          b=block_xy, g=goals_xy[0], d=dist_goal, r=num_goals_reached, abd=dist_block)
+                          b=block_xy, g=goals_xy[0], d=dist_goal_before_move, r=num_goals_reached, abd=dist_block)
 
         # ============================== GOAL RESPAWN ==============================
 
@@ -748,7 +753,7 @@ class BlockPushGoal(PipelineEnv):
 
         # Get observation and metrics
         obs = self._get_obs(data)
-        metrics = self._get_metrics(data, reward, cost, dist_goal, last_dist_goal, ctrl_cost)
+        metrics = self._get_metrics(data, reward, cost, dist_goal_before_move, last_dist_goal, ctrl_cost)
 
         # Update info
         # Use dist_goal_after_respawn for last_dist_goal to avoid penalty when goal respawns
