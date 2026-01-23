@@ -39,8 +39,8 @@ SAFETY_THRESHOLDS: Dict[str, float] = {
 
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
-    "safe_point_goal": 3_000_000_00,
-    "safe_reacher": 1_000_000_00,
+    "safe_point_goal": 5_000_000_00,
+    "safe_reacher": 5_000_000_00,
     "safe_walker": 5_000_000_00,
 }
 
@@ -224,7 +224,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot Safe-Brax Parquet results.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
     p.add_argument("--algos", type=str, nargs="+",
                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])

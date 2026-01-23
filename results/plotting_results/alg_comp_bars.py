@@ -418,9 +418,9 @@ def generate_latex_table(
     # Column spec: l for algo name, then c for each data column (no vertical lines)
     col_spec = "l" + "c" * n_data_cols
 
-    lines.append("\\begin{table}[htbp]")
+    lines.append("\\begin{table*}[htbp]")
     lines.append("\\centering")
-    lines.append("\\small")
+    lines.append("\\footnotesize")
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
     lines.append("\\toprule")
 
@@ -509,7 +509,7 @@ def generate_latex_table(
                  f"\\textcolor{{safegreen}}{{Green}} indicates safe (cost $< {safety_threshold:.0f}$). "
                  "\\textbf{Bold} indicates best safe result.}")
     lines.append("\\label{tab:alg_comparison}")
-    lines.append("\\end{table}")
+    lines.append("\\end{table*}")
 
     return "\n".join(lines)
 
