@@ -1,17 +1,12 @@
+"""Common utilities for result processing scripts."""
 from __future__ import annotations
 
 from typing import Dict, List, Tuple, Optional
 
-import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-# Default mapping matching most scripts in this repo
-DEFAULT_METRIC_COLS: Dict[str, str] = {
-    "reward": "episodic/sum_reward",
-    "cost": "episodic/cost",
-}
 
 # Define a consistent color palette for baselines across all plots
 # Using matplotlib's tab10 colormap
@@ -25,6 +20,33 @@ BASELINES_COLORS: Dict[str, str] = {
     "p3o": _tab10_colors[5],
     "focops": _tab10_colors[6],
 }
+
+# Default mapping matching most scripts in this repo
+DEFAULT_METRIC_COLS: Dict[str, str] = {
+    "reward": "episodic/sum_reward",
+    "cost": "episodic/cost",
+}
+
+# Defines the primary reward metric for specific environments.
+# If an environment is not listed here, it defaults to 'episodic/sum_reward'.
+REWARD_METRIC_MAP = {
+    'safe_walker': 'episodic/reward_forward',
+    'safe_velocity': 'episodic/forward_reward',
+}
+DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
+
+
+def get_metrics_for_env(env_name: str, metrics: list[str]) -> list[str]:
+    """
+    Replaces the default reward metric with the correct one for the given environment.
+    """
+    metrics = list(metrics)  # Make a copy
+    if DEFAULT_REWARD_METRIC in metrics:
+        reward_metric = REWARD_METRIC_MAP.get(env_name, DEFAULT_REWARD_METRIC)
+        # Find index of default reward metric and replace it
+        idx = metrics.index(DEFAULT_REWARD_METRIC)
+        metrics[idx] = reward_metric
+    return metrics
 
 
 def set_mpl_style() -> None:
@@ -72,6 +94,7 @@ def get_series(
         algo: str,
         metric: str,
         metric_cols: Optional[Dict[str, str]] = None,
+        env_name: Optional[str] = None,
 ) -> Optional[pd.Series]:
     """Return a numeric pandas Series for the requested metric, with corrections.
 
@@ -82,20 +105,26 @@ def get_series(
     If required columns are missing, returns None.
     """
     cols = metric_cols or DEFAULT_METRIC_COLS
-
-    # Column containing the logged reward/cost as stored
-    reward_col = cols.get("reward")
+    
+    default_reward_col = cols.get("reward")
     cost_col = cols.get("cost")
+    
+    reward_col_name = default_reward_col
+    if env_name:
+        reward_col_name = REWARD_METRIC_MAP.get(env_name, default_reward_col)
 
     if metric == "reward":
         if algo == "ppo_cost":
             # Need both reward and cost columns to reconstruct original reward
-            if reward_col not in df.columns or cost_col not in df.columns:
-                return None
-            ser = df[reward_col].astype(np.float32) + df[cost_col].astype(np.float32)
+            if reward_col_name not in df.columns or cost_col not in df.columns:
+                 if default_reward_col not in df.columns or cost_col not in df.columns:
+                    return None
+                 else:
+                    reward_col_name = default_reward_col
+            ser = df[reward_col_name].astype(np.float32) + df[cost_col].astype(np.float32)
             return ser
         else:
-            col = reward_col
+            col = reward_col_name
     elif metric == "cost":
         col = cost_col
     else:
@@ -103,7 +132,11 @@ def get_series(
         col = cols.get(metric)
 
     if col is None or col not in df.columns:
-        return None
+        # Fallback to default reward column if the specific one is not found
+        if metric == "reward" and default_reward_col in df.columns:
+            col = default_reward_col
+        else:
+            return None
 
     return df[col].astype(np.float32)
 

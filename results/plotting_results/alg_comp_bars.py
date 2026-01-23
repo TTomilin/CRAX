@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import (
+from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     set_mpl_style,
@@ -70,7 +70,7 @@ def load_final_values(
                     df = df.sort_values("_step", kind="mergesort")
 
                     for metric in metrics:
-                        series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+                        series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
                         if series is None:
                             continue
                         series = series.dropna().astype(np.float32)
@@ -179,12 +179,17 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
                 if algo not in legend_handles:
                     legend_handles[algo] = bars[0]
+                ax.set_xticks(x)
+                ax.set_xticklabels([str(lv) for lv in levels])
+                ax.set_xlabel("Level")
+                ax.set_ylabel(ylab)
 
-            ax.set_xticks(x)
-            ax.set_xticklabels([str(lv) for lv in levels])
-            ax.set_xlabel("Level")
-            ax.set_ylabel(ylab)
-
+                y_max = ax.get_ylim()[1]
+                if y_max >= 1000:
+                    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+                else:
+                    ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
+                ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
             # threshold only on cost axis
             if metric == "cost" and not args.no_threshold:
                 thr = SAFETY_THRESHOLDS.get(env, None)

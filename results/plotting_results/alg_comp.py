@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import FormatStrFormatter
 
-from common import (
+from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     align_and_stack,
@@ -64,7 +64,7 @@ def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], met
             df = pd.read_parquet(fp, engine="pyarrow")
             if "_step" not in df:
                 continue
-            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
             if series is None:
                 continue
             d = pd.DataFrame({
@@ -153,8 +153,12 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
 
-            # format y-axis ticks as integers without thousands separators
-            ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+            y_max = ax.get_ylim()[1]
+            if y_max >= 1000:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            else:
+                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
 
             # safety threshold line (red dashed) with legend entry, no text on plot
             if metric == "cost" and not args.no_threshold:
