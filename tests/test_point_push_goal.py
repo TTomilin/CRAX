@@ -662,6 +662,112 @@ class TestMovingGoalRewardFairness:
 
 
 # -----------------------------------------------------------------------------
+# Block Surface Tests (stone vs icey)
+# -----------------------------------------------------------------------------
+
+class TestBlockSurface:
+    """Tests for block surface settings (stone vs icey)."""
+
+    def test_stone_surface_is_default(self):
+        """Verify stone is the default block surface."""
+        env = BlockPushGoal(
+            hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+            debug=False,
+        )
+        assert env._block_surface == "stone"
+
+    def test_icey_surface_can_be_set(self):
+        """Verify icey surface can be configured."""
+        env = BlockPushGoal(
+            block_surface="icey",
+            hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+            debug=False,
+        )
+        assert env._block_surface == "icey"
+
+    def test_invalid_surface_raises_error(self):
+        """Verify invalid surface type raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown block_surface"):
+            BlockPushGoal(
+                block_surface="invalid_surface",
+                hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+                debug=False,
+            )
+
+    def test_icey_block_slides_further_than_stone(self):
+        """Verify icey block slides significantly further than stone block.
+
+        This is the key behavioral test: when pushed with the same force,
+        an icey block should coast much further than a stone block.
+        """
+        def measure_block_slide(block_surface: str, seed: int = 42) -> float:
+            """Push block and measure how far it slides after agent stops."""
+            env = BlockPushGoal(
+                block_surface=block_surface,
+                hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+                debug=False,
+            )
+
+            jit_reset = jax.jit(env.reset)
+            jit_step = jax.jit(env.step)
+
+            rng = jrandom.PRNGKey(seed)
+            state = jit_reset(rng)
+
+            # Phase 1: Push block for some steps
+            for _ in range(50):
+                action = jp.array([1.0, 0.0])  # Full forward
+                state = jit_step(state, action)
+
+            block_pos_after_push = state.info['block_position'][:2].copy()
+
+            # Phase 2: Stop pushing, let block coast
+            for _ in range(100):
+                action = jp.array([0.0, 0.0])  # No action
+                state = jit_step(state, action)
+
+            block_pos_after_coast = state.info['block_position'][:2]
+
+            # Measure slide distance during coast phase
+            slide_distance = float(jp.linalg.norm(block_pos_after_coast - block_pos_after_push))
+            return slide_distance
+
+        stone_slide = measure_block_slide("stone")
+        icey_slide = measure_block_slide("icey")
+
+        # Icey should slide at least 3x further than stone
+        assert icey_slide > stone_slide * 3, (
+            f"Icey block should slide much further than stone. "
+            f"Stone: {stone_slide:.3f}, Icey: {icey_slide:.3f}, Ratio: {icey_slide/stone_slide:.1f}x"
+        )
+
+    def test_both_surfaces_run_without_errors(self):
+        """Verify both surface types can complete a full episode without errors."""
+        for surface in ["stone", "icey"]:
+            env = BlockPushGoal(
+                block_surface=surface,
+                hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
+                debug=False,
+            )
+
+            jit_reset = jax.jit(env.reset)
+            jit_step = jax.jit(env.step)
+
+            rng = jrandom.PRNGKey(123)
+            state = jit_reset(rng)
+
+            # Run 100 steps
+            for _ in range(100):
+                rng, sub = jrandom.split(rng)
+                action = jrandom.uniform(sub, (2,), minval=-1.0, maxval=1.0)
+                state = jit_step(state, action)
+
+                # Verify no NaN values
+                assert not jp.any(jp.isnan(state.obs)), f"NaN in obs with {surface} surface"
+                assert not jp.isnan(state.reward), f"NaN in reward with {surface} surface"
+
+
+# -----------------------------------------------------------------------------
 # Run as script for debugging
 # -----------------------------------------------------------------------------
 
