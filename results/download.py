@@ -8,7 +8,7 @@ from wandb.apis.public import Run
 # Defines the primary reward metric for specific environments.
 # If an environment is not listed here, it defaults to 'episodic/sum_reward'.
 REWARD_METRIC_MAP = {
-    'safe_walker': 'episodic/forward_reward',
+    'safe_walker': 'episodic/reward_forward',
     'safe_velocity': 'episodic/forward_reward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
