@@ -1,0 +1,160 @@
+<mujoco model="spider">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option timestep="0.01" iterations="4" />
+  <custom>
+    <!-- brax custom params -->
+    <numeric data="0.0 0.0 0.55 1.0 0.0 0.0 0.0 0.0 1.0 0.0 -1.0 0.0 -1.0 0.0 1.0 0.0 -1.0 0.0 1.0" name="init_qpos"/>
+    <numeric data="1000" name="constraint_limit_stiffness"/>
+    <numeric data="4000" name="constraint_stiffness"/>
+    <numeric data="10" name="constraint_ang_damping"/>
+    <numeric data="20" name="constraint_vel_damping"/>
+    <numeric data="0.5" name="joint_scale_pos"/>
+    <numeric data="0.2" name="joint_scale_ang"/>
+    <numeric data="0.0" name="ang_damping"/>
+    <numeric data="1" name="spring_mass_scale"/>
+    <numeric data="1" name="spring_inertia_scale"/>
+    <numeric data="15" name="solver_maxls"/>
+  </custom>
+  <default>
+    <joint armature="1" damping="1" limited="true"/>
+    <geom contype="0" conaffinity="0" condim="3" density="5.0" friction="1 0.5 0.5"
+     rgba="0.25 0.2 0.35 1.0"/>
+    <site size="0.032" type="sphere"/>
+  </default>
+  <asset>
+    <texture builtin="gradient" height="100" rgb1=".35 .25 .45" rgb2="0.08 0.06 0.12" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.5 0.4 0.6" rgb2="0.5 0.4 0.6" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.52 0.46 0.58" rgb2="0.46 0.40 0.52" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.15" shininess="0.1" specular="0.1" texrepeat="60 60" texture="texplane"/>
+    <material name="geom" texture="texgeom" texuniform="true"/>
+  </asset>
+  <worldbody>
+    <light cutoff="100" diffuse="1 1 1" dir="-0 0 -1.3" directional="true" exponent="1" pos="0 0 1.3" specular=".1 .1 .1"/>
+    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" size="40 40 40" type="plane" rgba="0.5 0.5 0.5 1.0"/>
+
+  <camera name="fixedfar" pos="0 -4 2" zaxis="0 -1 0.5" mode="trackcom"/>
+  <body name="torso" pos="0 0 0.75">
+      <site name="torso" rgba="1 0 0 .1"/>
+      <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
+      <geom name="torso_geom" pos="0 0 0" size="0.22" type="sphere"/>
+      <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
+
+      <!-- Front-left leg (45 degrees) -->
+      <body name="front_left_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 0.15 0.15 0.0" name="aux_fl_geom" size="0.06" type="capsule"/>
+        <body name="aux_fl" pos="0.15 0.15 0">
+          <joint axis="0 0 1" name="hip_fl" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 0.15 0.15 0.0" name="leg_fl_geom" size="0.06" type="capsule"/>
+          <body pos="0.15 0.15 0">
+            <joint axis="-1 1 0" name="ankle_fl" pos="0.0 0.0 0.0" range="30 70" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 0.3 0.3 0.0" name="ankle_fl_geom" size="0.06" type="capsule"/>
+            <geom name="foot_fl_geom" contype="1" pos="0.3 0.3 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Front-right leg (45 degrees, mirrored) -->
+      <body name="front_right_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 -0.15 0.15 0.0" name="aux_fr_geom" size="0.06" type="capsule"/>
+        <body name="aux_fr" pos="-0.15 0.15 0">
+          <joint axis="0 0 1" name="hip_fr" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 -0.15 0.15 0.0" name="leg_fr_geom" size="0.06" type="capsule"/>
+          <body pos="-0.15 0.15 0">
+            <joint axis="1 1 0" name="ankle_fr" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 -0.3 0.3 0.0" name="ankle_fr_geom" size="0.06" type="capsule"/>
+            <geom name="foot_fr_geom" contype="1" pos="-0.3 0.3 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Mid-left leg (90 degrees - straight out) -->
+      <body name="mid_left_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 0.18 0.0 0.0" name="aux_ml_geom" size="0.06" type="capsule"/>
+        <body name="aux_ml" pos="0.18 0.0 0">
+          <joint axis="0 0 1" name="hip_ml" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 0.18 0.0 0.0" name="leg_ml_geom" size="0.06" type="capsule"/>
+          <body pos="0.18 0.0 0">
+            <joint axis="0 1 0" name="ankle_ml" pos="0.0 0.0 0.0" range="30 70" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 0.35 0.0 0.0" name="ankle_ml_geom" size="0.06" type="capsule"/>
+            <geom name="foot_ml_geom" contype="1" pos="0.35 0.0 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Mid-right leg (90 degrees - straight out, mirrored) -->
+      <body name="mid_right_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 -0.18 0.0 0.0" name="aux_mr_geom" size="0.06" type="capsule"/>
+        <body name="aux_mr" pos="-0.18 0.0 0">
+          <joint axis="0 0 1" name="hip_mr" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 -0.18 0.0 0.0" name="leg_mr_geom" size="0.06" type="capsule"/>
+          <body pos="-0.18 0.0 0">
+            <joint axis="0 1 0" name="ankle_mr" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 -0.35 0.0 0.0" name="ankle_mr_geom" size="0.06" type="capsule"/>
+            <geom name="foot_mr_geom" contype="1" pos="-0.35 0.0 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Back-left leg (135 degrees) -->
+      <body name="back_left_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 0.15 -0.15 0.0" name="aux_bl_geom" size="0.06" type="capsule"/>
+        <body name="aux_bl" pos="0.15 -0.15 0">
+          <joint axis="0 0 1" name="hip_bl" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 0.15 -0.15 0.0" name="leg_bl_geom" size="0.06" type="capsule"/>
+          <body pos="0.15 -0.15 0">
+            <joint axis="1 1 0" name="ankle_bl" pos="0.0 0.0 0.0" range="30 70" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 0.3 -0.3 0.0" name="ankle_bl_geom" size="0.06" type="capsule"/>
+            <geom name="foot_bl_geom" contype="1" pos="0.3 -0.3 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Back-right leg (135 degrees, mirrored) -->
+      <body name="back_right_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 -0.15 -0.15 0.0" name="aux_br_geom" size="0.06" type="capsule"/>
+        <body name="aux_br" pos="-0.15 -0.15 0">
+          <joint axis="0 0 1" name="hip_br" pos="0.0 0.0 0.0" range="-30 30" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 -0.15 -0.15 0.0" name="leg_br_geom" size="0.06" type="capsule"/>
+          <body pos="-0.15 -0.15 0">
+            <joint axis="-1 1 0" name="ankle_br" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 -0.3 -0.3 0.0" name="ankle_br_geom" size="0.06" type="capsule"/>
+            <geom name="foot_br_geom" contype="1" pos="-0.3 -0.3 0" size="0.06" type="sphere" mass="0"/>
+          </body>
+        </body>
+      </body>
+
+    </body>
+  </worldbody>
+  <sensor>
+    <!-- Used for observation -->
+    <accelerometer site="torso" name="accelerometer"/>
+    <velocimeter site="torso" name="velocimeter"/>
+    <gyro site="torso" name="gyro"/>
+    <magnetometer site="torso" name="magnetometer"/>
+
+    <!-- Used for intrinsic constraints -->
+    <subtreecom body="torso" name="subtreecom"/>
+    <subtreelinvel body="torso" name="subtreelinvel"/>
+    <subtreeangmom body="torso" name="subtreeangmom"/>
+  </sensor>
+  <actuator>
+    <!-- Front-left -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_fl" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_fl" gear="150"/>
+    <!-- Front-right -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_fr" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_fr" gear="150"/>
+    <!-- Mid-left -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_ml" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_ml" gear="150"/>
+    <!-- Mid-right -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_mr" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_mr" gear="150"/>
+    <!-- Back-left -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_bl" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_bl" gear="150"/>
+    <!-- Back-right -->
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_br" gear="150"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_br" gear="150"/>
+  </actuator>
+</mujoco>

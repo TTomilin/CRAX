@@ -1,25 +1,11 @@
-# Copyright 2024 The Brax Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Safe Spider environment with leg-lifting constraints.
 
-"""Safe Ant environment with leg-lifting constraints.
-
-The ant must learn to walk while keeping certain legs off the ground.
+A 6-legged spider that must learn to walk while keeping certain legs off the ground.
 
 Difficulty levels:
-  - Level 1: Keep front-left leg off the ground
-  - Level 2: Keep front-left and back-right (diagonal) legs off the ground
-  - Level 3: Only back-right leg may touch the ground (hop on one leg)
+  - Level 1: Keep 2 legs up (front-left + back-right diagonal)
+  - Level 2: Keep 3 legs up (front-left + mid-right + back-left - alternating tripod)
+  - Level 3: Keep 4 legs up (only mid-left + mid-right may touch - center legs only)
 """
 
 from typing import Tuple
@@ -35,10 +21,10 @@ from brax.io import mjcf
 from etils import epath
 
 
-class SafeAnt(PipelineEnv):
-    """Ant that must keep certain legs off the ground.
+class SafeSpider(PipelineEnv):
+    """Spider that must keep certain legs off the ground.
 
-    The ant receives a cost each timestep when a restricted leg touches the ground.
+    The spider receives a cost each timestep when a restricted leg touches the ground.
     Ground contact is detected by computing the world z-position of foot geoms
     and checking if they are below a threshold.
 
@@ -50,16 +36,25 @@ class SafeAnt(PipelineEnv):
 
     # Foot geom names and their local offsets from parent body (from XML)
     FOOT_GEOMS = {
-        'front_left': ('left_foot_geom', jp.array([0.4, 0.4, 0.0])),
-        'front_right': ('right_foot_geom', jp.array([-0.4, 0.4, 0.0])),
-        'back_left': ('third_foot_geom', jp.array([-0.4, -0.4, 0.0])),
-        'back_right': ('fourth_foot_geom', jp.array([0.4, -0.4, 0.0])),
+        'front_left': ('foot_fl_geom', jp.array([0.3, 0.3, 0.0])),
+        'front_right': ('foot_fr_geom', jp.array([-0.3, 0.3, 0.0])),
+        'mid_left': ('foot_ml_geom', jp.array([0.35, 0.0, 0.0])),
+        'mid_right': ('foot_mr_geom', jp.array([-0.35, 0.0, 0.0])),
+        'back_left': ('foot_bl_geom', jp.array([0.3, -0.3, 0.0])),
+        'back_right': ('foot_br_geom', jp.array([-0.3, -0.3, 0.0])),
+    }
+
+    # Which legs are restricted at each difficulty level
+    DIFFICULTY_RESTRICTIONS = {
+        1: ['front_left', 'back_right'],  # Diagonal opposite
+        2: ['front_left', 'mid_right', 'back_left'],  # Alternating tripod
+        3: ['front_left', 'front_right', 'back_left', 'back_right'],  # Only mid legs touch
     }
 
     def __init__(
             self,
             difficulty: int = 1,
-            ground_contact_threshold: float = 0.15,
+            ground_contact_threshold: float = 0.12,
             cost_scale: float = 1.0,
             ctrl_cost_weight: float = 0.5,
             healthy_reward: float = 1.0,
@@ -73,7 +68,7 @@ class SafeAnt(PipelineEnv):
     ):
         assert difficulty in [1, 2, 3], "Difficulty must be 1, 2, or 3"
 
-        path = epath.resource_path('brax') / 'envs/assets/safe/ant.xml'
+        path = epath.resource_path('brax') / 'envs/assets/safe/spider.xml'
         mj_model = mujoco.MjModel.from_xml_path(str(path))
         sys = mjcf.load_model(mj_model)
 
@@ -124,15 +119,7 @@ class SafeAnt(PipelineEnv):
             self._foot_local_offsets[foot_key] = local_offset
 
         # Determine which feet are restricted based on difficulty
-        if difficulty == 1:
-            # Level 1: Front-left leg must stay off ground
-            self._restricted_feet = ['front_left']
-        elif difficulty == 2:
-            # Level 2: Diagonal legs (front-left and back-right) must stay off
-            self._restricted_feet = ['front_left', 'back_right']
-        else:  # difficulty == 3
-            # Level 3: Only back-right can touch (all others restricted)
-            self._restricted_feet = ['front_left', 'front_right', 'back_left']
+        self._restricted_feet = self.DIFFICULTY_RESTRICTIONS[difficulty]
 
         # Store body IDs and local offsets as arrays for vectorized computation
         self._restricted_body_ids = jp.array(
@@ -239,7 +226,6 @@ class SafeAnt(PipelineEnv):
         body_rot = pipeline_state.x.rot[self._restricted_body_ids]  # (n_feet, 4)
 
         # Transform local foot offsets to world coordinates
-        # math.rotate expects (quat, vec) and handles batching
         foot_world_offsets = jax.vmap(math.rotate)(body_rot, self._restricted_local_offsets)
         foot_world_pos = body_pos + foot_world_offsets
 
@@ -267,7 +253,7 @@ class SafeAnt(PipelineEnv):
         return jp.sum(feet_touching.astype(jp.float32))
 
     def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-        """Observe ant body position and velocities."""
+        """Observe spider body position and velocities."""
         qpos = pipeline_state.q
         qvel = pipeline_state.qd
 
