@@ -119,6 +119,7 @@ class BlockPushGoal(PipelineEnv):
                 ),
                 dict(
                     type='outer_wall',
+                    offset=1.0,  # Push walls out ~3 block widths beyond placement extents
                     thickness=0.1,
                     height=0.1,
                     collidable=True,
