@@ -20,6 +20,14 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
+# Defines the primary reward metric for specific environments.
+# If an environment is not listed here, it defaults to 'episodic/sum_reward'.
+REWARD_METRIC_MAP = {
+    'safe_walker': 'episodic/forward_reward',
+    'safe_velocity': 'episodic/forward_reward',
+}
+DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
+
 
 def main(args: argparse.Namespace) -> None:
     api = wandb.Api()
@@ -61,13 +69,18 @@ def build_filters(args: argparse.Namespace) -> dict:
 
 def store_data(run: Run, args: argparse.Namespace) -> None:
     """Store run data to parquet file."""
-    metrics = args.metrics
+    metrics = list(args.metrics)
     config = run.config
     run_id = run.id
     tags = run.tags
 
     seed = config.get('seed')
     env = config.get('env_name')
+
+    # Automatically select the correct reward metric based on the environment
+    if DEFAULT_REWARD_METRIC in metrics:
+        reward_metric = REWARD_METRIC_MAP.get(env, DEFAULT_REWARD_METRIC)
+        metrics[metrics.index(DEFAULT_REWARD_METRIC)] = reward_metric
 
     # Determine if this is a transfer or curriculum run
     is_transfer = 'TRANSFER' in tags
