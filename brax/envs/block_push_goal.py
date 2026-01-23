@@ -117,6 +117,13 @@ class BlockPushGoal(PipelineEnv):
                     movable=False,
                     density=1.0,
                 ),
+                dict(
+                    type='outer_wall',
+                    thickness=0.1,
+                    height=0.1,
+                    collidable=True,
+                    fixed=True,
+                ),
             ]
 
         # Expand hazard specs with type defaults
