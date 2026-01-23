@@ -89,6 +89,8 @@ class BlockPushGoal(PipelineEnv):
             goal_velocity: float = 0.0,  # Goal movement speed (0 = stationary, >0 = moving)
             # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
             hazard_specs: Optional[List[Dict]] = None,
+            # Block surface type: "stone" (moderate friction) or "icey" (very slippery, default)
+            block_surface: str = "stone",
             # Debug
             debug: bool = False,
             **kwargs,
@@ -195,12 +197,34 @@ class BlockPushGoal(PipelineEnv):
         xml_path = generate_goal_xml_from_base(base_agent_file_name, self._goal_manager, self._hazard_manager)
         self._xml_base_file_path = base_xml_file_path(base_agent_file_name)
 
+        # Block surface physics settings
+        # damping controls how quickly the block decelerates after being pushed
+        surface_settings = {
+            "stone": {"damping": 0.015},   # Default: moderate sliding (~2 block widths)
+            "icey": {"damping": 0.0025},   # Slippery: long sliding (~10 block widths)
+        }
+        if block_surface not in surface_settings:
+            raise ValueError(f"Unknown block_surface '{block_surface}'. Must be one of: {list(surface_settings.keys())}")
+        self._block_surface = block_surface
+        block_damping = surface_settings[block_surface]["damping"]
+
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
             mj_model.opt.solver = mujoco.mjtSolver.mjSOL_CG
             mj_model.opt.timestep = timestep
             mj_model.opt.iterations = 4
             mj_model.opt.ls_iterations = 4
+
+            # Apply block surface damping to block joints
+            block_x_joint = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, "block_x")
+            block_y_joint = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, "block_y")
+            if block_x_joint >= 0:
+                mj_model.dof_damping[block_x_joint] = block_damping
+            if block_y_joint >= 0:
+                mj_model.dof_damping[block_y_joint] = block_damping
+
+            if self._debug:
+                print(f"Block surface: {block_surface}, damping: {block_damping}")
         finally:
             # Clean up temporary XML file
             if os.path.exists(xml_path):
