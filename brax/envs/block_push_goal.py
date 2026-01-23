@@ -90,7 +90,7 @@ class BlockPushGoal(PipelineEnv):
             # Hazard settings - list of specs: {type, count, size, height, collidable, fixed, density}
             hazard_specs: Optional[List[Dict]] = None,
             # Block surface type: "stone" (moderate friction) or "icey" (very slippery, default)
-            block_surface: str = "icey",
+            block_surface: str = "stone",
             # Debug
             debug: bool = False,
             **kwargs,
