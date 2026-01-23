@@ -20,6 +20,8 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
+from results.common import get_metrics_for_env
+
 
 def main(args: argparse.Namespace) -> None:
     api = wandb.Api()
@@ -61,13 +63,14 @@ def build_filters(args: argparse.Namespace) -> dict:
 
 def store_data(run: Run, args: argparse.Namespace) -> None:
     """Store run data to parquet file."""
-    metrics = args.metrics
     config = run.config
     run_id = run.id
     tags = run.tags
 
     seed = config.get('seed')
     env = config.get('env_name')
+
+    metrics = get_metrics_for_env(env, args.metrics)
 
     # Determine if this is a transfer or curriculum run
     is_transfer = 'TRANSFER' in tags

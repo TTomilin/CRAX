@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import FormatStrFormatter
 
-from common import align_and_stack, set_mpl_style, nice_grid, moving_average
+from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, DEFAULT_REWARD_METRIC
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
@@ -69,16 +69,29 @@ def load_runs(
     for metric in metrics:
         key = (env, bound, metric)
         out[key] = []
-        col = METRIC_COLS[metric]
+        
+        # Determine the column name based on the environment and metric
+        if metric == "reward":
+            col_name = REWARD_METRIC_MAP.get(env, DEFAULT_REWARD_METRIC)
+        elif metric == "cost":
+            col_name = METRIC_COLS["cost"]
+        else:
+            col_name = METRIC_COLS.get(metric)
+
+        if col_name is None:
+            print(f"Warning: Unknown metric {metric} for env {env}. Skipping.")
+            continue
+
         for seed in seeds:
             fp = base / env / f"level_{level}" / algo / f"safety_bound_{bound}" / f"seed_{seed}.parquet"
             if not fp.exists():
                 print(f"File not found: {fp}")
                 continue
             df = pd.read_parquet(fp, engine="pyarrow")
-            if "_step" not in df or col not in df:
+            if "_step" not in df or col_name not in df:
+                print(f"Warning: Missing column {col_name} or _step in {fp}. Skipping.")
                 continue
-            d = df[["_step", col]].rename(columns={col: "value"}).dropna()
+            d = df[["_step", col_name]].rename(columns={col_name: "value"}).dropna()
             d = d.astype({"_step": np.int64, "value": np.float32})
             out[key].append(d)
     return out
@@ -189,8 +202,13 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
-            # format y-axis ticks as integers without thousands separators
-            ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+            
+            y_max = ax.get_ylim()[1]
+            if y_max >= 1000:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            else:
+                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
 
             # Per-env x max takes priority, then CLI x_max, then data-driven max
             x_max = ENV_X_MAX.get(env, None)

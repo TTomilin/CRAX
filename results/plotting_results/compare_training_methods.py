@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import FormatStrFormatter
 
-from common import (
+from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     align_and_stack,
@@ -81,7 +81,7 @@ def load_normal_runs(
             continue
 
         for metric in metrics:
-            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
             if series is None:
                 continue
             d = pd.DataFrame({
@@ -123,7 +123,7 @@ def load_curriculum_runs(
             continue
 
         for metric in metrics:
-            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+            series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
             if series is None:
                 continue
             d = pd.DataFrame({
@@ -192,7 +192,7 @@ def load_transfer_runs(
             # Pretrain phase (if available)
             if pretrain_df is not None:
                 pretrain_series = get_series(
-                    pretrain_df, algo="ppo", metric=metric, metric_cols=METRIC_COLS
+                    pretrain_df, algo="ppo", metric=metric, metric_cols=METRIC_COLS, env_name=env
                 )
                 if pretrain_series is not None:
                     p_df = pd.DataFrame({
@@ -204,7 +204,7 @@ def load_transfer_runs(
                     frames.append(p_df)
 
             # Safe phase - offset by unsafe_steps
-            safe_series = get_series(safe_df, algo=algo, metric=metric, metric_cols=METRIC_COLS)
+            safe_series = get_series(safe_df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
             if safe_series is not None:
                 s_df = pd.DataFrame({
                     "_step": safe_df["_step"].astype(np.int64) + unsafe_steps,
@@ -255,7 +255,12 @@ def plot_training_curves(
             ax = axs[0, metric_i]
             ax.set_xlabel("Steps")
             ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
-            ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+            y_max = ax.get_ylim()[1]
+            if y_max >= 1000:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            else:
+                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
             ax.set_xlim(0, args.total_steps)
 
             for algo in args.algos:
@@ -467,6 +472,14 @@ def plot_final_comparison(
             ax.set_xticks(x)
             ax.set_xticklabels([TRANSLATIONS.get(m, m.capitalize()) for m in methods], rotation=30, ha="right")
             ax.set_ylabel(ylab)
+            ax.set_ylim(bottom=0)
+            
+            y_max = ax.get_ylim()[1]
+            if y_max >= 1000:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            else:
+                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
 
             # Threshold only on cost axis
             if metric == "cost" and not args.no_threshold:

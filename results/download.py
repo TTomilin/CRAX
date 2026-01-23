@@ -5,6 +5,8 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
+from results.common import get_metrics_for_env
+
 
 def main(args: argparse.Namespace) -> None:
     api = wandb.Api()
@@ -44,7 +46,6 @@ def build_filters(args: argparse.Namespace) -> dict:
 
 
 def store_data(run: Run, args: argparse.Namespace) -> None:
-    metrics = args.metrics
     config = run.config
     run_id = run.id
     seed = config['seed']
@@ -52,6 +53,8 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     level = config['difficulty']
     algo = config['alg']
     extra_attribute = ''
+
+    metrics = get_metrics_for_env(env, args.metrics)
 
     attribute_key = args.extra_attribute
     if attribute_key:
