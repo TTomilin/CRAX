@@ -35,6 +35,7 @@
   <camera name="fixedfar" pos="0 -4 2" zaxis="0 -1 0.5" mode="trackcom"/>
   <body name="torso" pos="0 0 0.75">
       <site name="torso" rgba="1 0 0 .1"/>
+      <camera name="vision" pos="0 0 0.2" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
       <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
       <geom name="torso_geom" pos="0 0 0" size="0.22" type="sphere"/>
       <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
