@@ -29,14 +29,7 @@ TRANSLATIONS = {
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
     "safe_velocity": "Safe Velocity",
-}
-
-# Optional safety thresholds per env for cost bars (None disables)
-SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 25.0,
-    "safe_reacher": 25.0,
-    "safe_walker": 25.0,
-    "safe_velocity": 25.0,
+    "safe_spider": "Safe Spider",
 }
 
 
@@ -145,6 +138,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     metrics = args.metrics  # expects ["reward","cost"] by default
     levels = args.levels
     algos = args.algos
+    threshold = 25.0
 
     n_env = len(envs)
     nrows_env, ncols_env = _nice_grid(n_env, max_cols=args.max_cols)
@@ -207,7 +201,6 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
             # Determine y-clip for this subplot
             values = env_metric_values.get((env, metric), [])
-            threshold = SAFETY_THRESHOLDS.get(env, None)
 
             # Compute smart y-clip based on data distribution
             y_clip = None
@@ -305,9 +298,11 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
             ax.set_xlabel("Level")
             ax.set_ylabel(ylab)
 
+            ax.set_ylim(bottom=0)
+
             # Set y-limit if truncating
             if y_clip is not None:
-                ax.set_ylim(0, y_clip * 1.15)  # Add space for labels
+                ax.set_ylim(top=y_clip * 1.15)  # Add space for labels
 
             y_max = ax.get_ylim()[1]
             if y_max >= 1000:
@@ -318,9 +313,8 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
             # threshold only on cost axis
             if metric == "cost" and not args.no_threshold:
-                thr = SAFETY_THRESHOLDS.get(env, None)
-                if thr is not None:
-                    thr_line = ax.axhline(thr, linestyle="--", color="red", linewidth=1.5, zorder=5)
+                if threshold is not None:
+                    thr_line = ax.axhline(threshold, linestyle="--", color="red", linewidth=1.5, zorder=5)
                     if "Threshold" not in legend_handles:
                         legend_handles["Threshold"] = thr_line
 
@@ -541,7 +535,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
