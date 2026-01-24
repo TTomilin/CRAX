@@ -8,17 +8,18 @@ Difficulty levels:
   - Level 3: Keep 4 legs up (only mid-left + mid-right may touch - center legs only)
 """
 
-from typing import Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 import jax
 import mujoco
+import numpy as np
+from etils import epath
 from jax import numpy as jp
 
 from brax import base
 from brax import math
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
-from etils import epath
 
 
 class SafeSpider(PipelineEnv):
@@ -42,6 +43,15 @@ class SafeSpider(PipelineEnv):
         'back_right': ('foot_br_geom', (-0.3, -0.3, 0.0)),
     }
 
+    # Indicator geom names for visualization (transparent red spheres)
+    INDICATOR_GEOMS = {
+        'front_left': 'indicator_fl',
+        'front_right': 'indicator_fr',
+        'mid_left': 'indicator_ml',
+        'mid_right': 'indicator_mr',
+        'back_left': 'indicator_bl',
+        'back_right': 'indicator_br',
+    }
 
     def __init__(
             self,
@@ -96,16 +106,13 @@ class SafeSpider(PipelineEnv):
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = exclude_current_positions_from_observation
-
+        self._restricted_feet = restricted_feet
 
         # Get geom IDs for contact-based detection
         self._floor_geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, 'floor')
         self._foot_geom_ids = {}
         for foot_key, (geom_name, _) in self.FOOT_GEOMS.items():
             self._foot_geom_ids[foot_key] = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
-
-        # Determine which feet are restricted
-        self._restricted_feet = list(restricted_feet) if restricted_feet else []
 
         # Store restricted foot geom IDs as array for vectorized contact checking
         if self._restricted_feet:
@@ -115,6 +122,13 @@ class SafeSpider(PipelineEnv):
             )
         else:
             self._restricted_geom_ids = jp.array([], dtype=jp.int32)
+
+        # Get indicator geom IDs for visualization
+        self._indicator_geom_ids = {}
+        for foot_key, indicator_name in self.INDICATOR_GEOMS.items():
+            self._indicator_geom_ids[foot_key] = mujoco.mj_name2id(
+                mj_model, mujoco.mjtObj.mjOBJ_GEOM, indicator_name
+            )
 
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment to an initial state."""
@@ -221,8 +235,8 @@ class SafeSpider(PipelineEnv):
             # Check if this foot geom is in contact with the floor
             # Contact pairs can be in either order
             is_foot_floor_contact = (
-                ((contact_geom[:, 0] == foot_geom_id) & (contact_geom[:, 1] == self._floor_geom_id)) |
-                ((contact_geom[:, 1] == foot_geom_id) & (contact_geom[:, 0] == self._floor_geom_id))
+                    ((contact_geom[:, 0] == foot_geom_id) & (contact_geom[:, 1] == self._floor_geom_id)) |
+                    ((contact_geom[:, 1] == foot_geom_id) & (contact_geom[:, 0] == self._floor_geom_id))
             )
             # Only count if contact is active
             in_contact = jp.any(is_foot_floor_contact & active_contacts)
@@ -265,3 +279,78 @@ class SafeSpider(PipelineEnv):
     def restricted_feet(self) -> list:
         """Return list of feet that must stay off ground."""
         return self._restricted_feet
+
+    def render(
+            self,
+            trajectory: Union[List[base.State], base.State],
+            height: int = 240,
+            width: int = 320,
+            camera: Optional[str] = None,
+    ) -> Union[Sequence[np.ndarray], np.ndarray]:
+        """Renders trajectory with violation indicators shown as red spheres.
+
+        When a restricted foot touches the ground, its indicator sphere becomes
+        visible (red, semi-transparent) to visualize the constraint violation.
+        """
+        renderer = mujoco.Renderer(self.sys.mj_model, height=height, width=width)
+        camera = camera or -1
+
+        # Store original indicator colors to restore after rendering
+        original_rgba = {}
+        for foot_key in self._restricted_feet:
+            indicator_id = self._indicator_geom_ids[foot_key]
+            original_rgba[indicator_id] = self.sys.mj_model.geom_rgba[indicator_id].copy()
+
+        def get_image(state: base.State):
+            # Check which restricted feet are violating (touching floor)
+            feet_touching = self._check_foot_floor_contacts_render(state)
+
+            # Update indicator colors based on violations
+            for i, foot_key in enumerate(self._restricted_feet):
+                indicator_id = self._indicator_geom_ids[foot_key]
+                if feet_touching[i]:
+                    # Violation: show a red semi-transparent sphere
+                    self.sys.mj_model.geom_rgba[indicator_id] = [1.0, 0.0, 0.0, 0.5]
+                else:
+                    # No violation: keep the sphere transparent
+                    self.sys.mj_model.geom_rgba[indicator_id] = [1.0, 0.0, 0.0, 0.0]
+
+            # Render the frame
+            d = mujoco.MjData(self.sys.mj_model)
+            d.qpos, d.qvel = np.asarray(state.q), np.asarray(state.qd)
+            if hasattr(state, 'mocap_pos') and hasattr(state, 'mocap_quat'):
+                d.mocap_pos, d.mocap_quat = state.mocap_pos, state.mocap_quat
+            mujoco.mj_forward(self.sys.mj_model, d)
+            renderer.update_scene(d, camera=camera)
+            return renderer.render()
+
+        if isinstance(trajectory, list):
+            images = [get_image(s) for s in trajectory]
+        else:
+            images = get_image(trajectory)
+
+        # Restore original colors
+        for indicator_id, rgba in original_rgba.items():
+            self.sys.mj_model.geom_rgba[indicator_id] = rgba
+
+        return images
+
+    def _check_foot_floor_contacts_render(self, state: base.State) -> List[bool]:
+        """Check foot contacts for rendering"""
+
+        contact_geom = np.asarray(state.contact.geom)
+        contact_dist = np.asarray(state.contact.dist)
+        active_contacts = contact_dist <= 0
+
+        contacts = []
+        for foot_key in self._restricted_feet:
+            foot_geom_id = self._foot_geom_ids[foot_key]
+
+            is_foot_floor_contact = (
+                    ((contact_geom[:, 0] == foot_geom_id) & (contact_geom[:, 1] == self._floor_geom_id)) |
+                    ((contact_geom[:, 1] == foot_geom_id) & (contact_geom[:, 0] == self._floor_geom_id))
+            )
+            in_contact = np.any(is_foot_floor_contact & active_contacts)
+            contacts.append(bool(in_contact))
+
+        return contacts

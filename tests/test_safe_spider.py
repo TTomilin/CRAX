@@ -163,6 +163,9 @@ def _run_video_for_level(env: PipelineEnv, steps: int = 300, num_episodes: int =
     return record_episode_video_simple(
         env,
         steps=steps,
+        cameras=["track"],
+        width=640,
+        height=480,
         action_mode="periodic",
         out_name=f"safe_spider_level{level}",
         show_metrics=True,
@@ -203,7 +206,5 @@ if __name__ == "__main__":
         print(f"Initial state obs shape: {state.obs.shape}")
 
         print(f"\nRecording video for level {level}...")
-        video_path = _run_video_for_level(
-            env, steps=args.steps, num_episodes=args.episodes
-        )
+        video_path = _run_video_for_level(env, steps=args.steps, num_episodes=args.episodes)
         print(f"Video saved to: {video_path}")

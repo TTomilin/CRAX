@@ -38,6 +38,8 @@
           <body name="foot" pos="0.2 0 -0.35">
             <joint name="foot_joint" pos="-0.2 0 0.1" axis="0 -1 0" range="-0.785398 0.785398"/>
             <geom name="foot_geom" size="0.06 0.1" pos="-0.1 0 0.1" quat="0.707107 0 -0.707107 0" type="capsule" contype="1" friction="0.9 0.1 0.1"/>
+            <!-- Violation indicator (visual only, initially transparent) -->
+            <geom name="indicator_foot_right" type="sphere" size="0.15" pos="-0.1 0 0.05" contype="0" conaffinity="0" rgba="1 0.2 0.8 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -50,6 +52,8 @@
           <body name="foot_left" pos="0.2 0 -0.35">
             <joint name="foot_left_joint" pos="-0.2 0 0.1" axis="0 -1 0" range="-0.785398 0.785398"/>
             <geom name="foot_left_geom" size="0.06 0.1" pos="-0.1 0 0.1" quat="0.707107 0 -0.707107 0" type="capsule" contype="1" friction="1.9 0.1 0.1"/>
+            <!-- Violation indicator (visual only, initially transparent) -->
+            <geom name="indicator_foot_left" type="sphere" size="0.15" pos="-0.1 0 0.05" contype="0" conaffinity="0" rgba="1 0.2 0.8 0" mass="0"/>
           </body>
         </body>
       </body>
