@@ -32,6 +32,7 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
 REWARD_METRIC_MAP = {
     'safe_walker': 'episodic/reward_forward',
     'safe_velocity': 'episodic/forward_reward',
+    'safe_spider': 'episodic/reward_forward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
