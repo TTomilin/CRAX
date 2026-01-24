@@ -25,36 +25,27 @@ class SafeSpider(PipelineEnv):
     """Spider that must keep certain legs off the ground.
 
     The spider receives a cost each timestep when a restricted leg touches the ground.
-    Ground contact is detected by computing the world z-position of foot geoms
-    and checking if they are below a threshold.
+    Ground contact is detected using MuJoCo's native contact detection system.
 
     Args:
-        difficulty: 1, 2, or 3 - determines which legs must stay off ground
-        ground_contact_threshold: z-position below which a foot is considered touching
+        restricted_feet: list of foot names that must stay off ground
         cost_scale: multiplier for the per-step cost
     """
 
     # Foot geom names and their local offsets from parent body (from XML)
     FOOT_GEOMS = {
-        'front_left': ('foot_fl_geom', jp.array([0.3, 0.3, 0.0])),
-        'front_right': ('foot_fr_geom', jp.array([-0.3, 0.3, 0.0])),
-        'mid_left': ('foot_ml_geom', jp.array([0.35, 0.0, 0.0])),
-        'mid_right': ('foot_mr_geom', jp.array([-0.35, 0.0, 0.0])),
-        'back_left': ('foot_bl_geom', jp.array([0.3, -0.3, 0.0])),
-        'back_right': ('foot_br_geom', jp.array([-0.3, -0.3, 0.0])),
+        'front_left': ('foot_fl_geom', (0.3, 0.3, 0.0)),
+        'front_right': ('foot_fr_geom', (-0.3, 0.3, 0.0)),
+        'mid_left': ('foot_ml_geom', (0.35, 0.0, 0.0)),
+        'mid_right': ('foot_mr_geom', (-0.35, 0.0, 0.0)),
+        'back_left': ('foot_bl_geom', (0.3, -0.3, 0.0)),
+        'back_right': ('foot_br_geom', (-0.3, -0.3, 0.0)),
     }
 
-    # Which legs are restricted at each difficulty level
-    DIFFICULTY_RESTRICTIONS = {
-        1: ['front_left', 'back_right'],  # Diagonal opposite
-        2: ['front_left', 'mid_right', 'back_left'],  # Alternating tripod
-        3: ['front_left', 'front_right', 'back_left', 'back_right'],  # Only mid legs touch
-    }
 
     def __init__(
             self,
-            difficulty: int = 1,
-            ground_contact_threshold: float = 0.12,
+            restricted_feet=None,
             cost_scale: float = 1.0,
             ctrl_cost_weight: float = 0.5,
             healthy_reward: float = 1.0,
@@ -66,8 +57,6 @@ class SafeSpider(PipelineEnv):
             backend: str = 'mjx',
             **kwargs,
     ):
-        assert difficulty in [1, 2, 3], "Difficulty must be 1, 2, or 3"
-
         path = epath.resource_path('brax') / 'envs/assets/safe/spider.xml'
         mj_model = mujoco.MjModel.from_xml_path(str(path))
         sys = mjcf.load_model(mj_model)
@@ -98,8 +87,6 @@ class SafeSpider(PipelineEnv):
         super().__init__(sys=sys, backend=backend, **kwargs)
 
         self.episode_length = episode_length
-        self._difficulty = difficulty
-        self._ground_threshold = ground_contact_threshold
         self._cost_scale = cost_scale
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
@@ -108,27 +95,23 @@ class SafeSpider(PipelineEnv):
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = exclude_current_positions_from_observation
 
-        # Get body indices and local offsets for foot geoms
-        self._foot_body_ids = {}
-        self._foot_local_offsets = {}
+        # Get geom IDs for contact-based detection
+        self._floor_geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, 'floor')
+        self._foot_geom_ids = {}
+        for foot_key, (geom_name, _) in self.FOOT_GEOMS.items():
+            self._foot_geom_ids[foot_key] = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
 
-        for foot_key, (geom_name, local_offset) in self.FOOT_GEOMS.items():
-            geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
-            body_id = mj_model.geom_bodyid[geom_id]
-            self._foot_body_ids[foot_key] = body_id
-            self._foot_local_offsets[foot_key] = local_offset
+        # Determine which feet are restricted
+        self._restricted_feet = list(restricted_feet) if restricted_feet else []
 
-        # Determine which feet are restricted based on difficulty
-        self._restricted_feet = self.DIFFICULTY_RESTRICTIONS[difficulty]
-
-        # Store body IDs and local offsets as arrays for vectorized computation
-        self._restricted_body_ids = jp.array(
-            [self._foot_body_ids[k] for k in self._restricted_feet],
-            dtype=jp.int32
-        )
-        self._restricted_local_offsets = jp.stack(
-            [self._foot_local_offsets[k] for k in self._restricted_feet]
-        )
+        # Store restricted foot geom IDs as array for vectorized contact checking
+        if self._restricted_feet:
+            self._restricted_geom_ids = jp.array(
+                [self._foot_geom_ids[k] for k in self._restricted_feet],
+                dtype=jp.int32
+            )
+        else:
+            self._restricted_geom_ids = jp.array([], dtype=jp.int32)
 
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment to an initial state."""
@@ -215,41 +198,54 @@ class SafeSpider(PipelineEnv):
             info=info,
         )
 
-    def _get_foot_world_positions(self, pipeline_state: base.State) -> jax.Array:
-        """Compute world z-positions of restricted foot geoms.
+    def _check_foot_floor_contacts(self, pipeline_state: base.State) -> jax.Array:
+        """Check which restricted feet are in contact with the floor.
 
-        The foot geom position is computed as:
-            foot_world = body_pos + rotate(body_rot, foot_local_offset)
+        Uses MuJoCo's actual contact detection for accurate results.
+        Returns a boolean array of shape (num_restricted_feet,).
         """
-        # Get body positions and rotations for restricted feet
-        body_pos = pipeline_state.x.pos[self._restricted_body_ids]  # (n_feet, 3)
-        body_rot = pipeline_state.x.rot[self._restricted_body_ids]  # (n_feet, 4)
+        # Get contact geom pairs from MJX - shape (max_ncon, 2)
+        contact_geom = pipeline_state.contact.geom
+        # Contact is active when dist <= 0 (penetrating or touching)
+        contact_dist = pipeline_state.contact.dist
+        active_contacts = contact_dist <= 0
 
-        # Transform local foot offsets to world coordinates
-        foot_world_offsets = jax.vmap(math.rotate)(body_rot, self._restricted_local_offsets)
-        foot_world_pos = body_pos + foot_world_offsets
+        # Check each restricted foot for contact with floor
+        contacts = []
+        for foot_key in self._restricted_feet:
+            foot_geom_id = self._foot_geom_ids[foot_key]
 
-        return foot_world_pos[:, 2]  # Return only z-coordinates
+            # Check if this foot geom is in contact with the floor
+            # Contact pairs can be in either order
+            is_foot_floor_contact = (
+                ((contact_geom[:, 0] == foot_geom_id) & (contact_geom[:, 1] == self._floor_geom_id)) |
+                ((contact_geom[:, 1] == foot_geom_id) & (contact_geom[:, 0] == self._floor_geom_id))
+            )
+            # Only count if contact is active
+            in_contact = jp.any(is_foot_floor_contact & active_contacts)
+            contacts.append(in_contact)
+
+        return jp.stack(contacts) if contacts else jp.array([], dtype=bool)
 
     def _calculate_foot_contact_cost(self, pipeline_state: base.State) -> jax.Array:
         """Calculate cost based on restricted feet touching the ground.
 
-        A foot is considered touching if its world z-position is below the threshold.
+        Uses MuJoCo's contact detection for accurate floor contact sensing.
         """
-        foot_z_positions = self._get_foot_world_positions(pipeline_state)
+        if len(self._restricted_feet) == 0:
+            return jp.float32(0.0)
 
-        # Check which feet are on the ground
-        feet_touching = foot_z_positions < self._ground_threshold
-
-        # Cost is the number of restricted feet touching ground
+        feet_touching = self._check_foot_floor_contacts(pipeline_state)
         cost = jp.sum(feet_touching.astype(jp.float32))
 
         return self._cost_scale * cost
 
     def _count_feet_on_ground(self, pipeline_state: base.State) -> jax.Array:
-        """Count how many restricted feet are on the ground."""
-        foot_z_positions = self._get_foot_world_positions(pipeline_state)
-        feet_touching = foot_z_positions < self._ground_threshold
+        """Count how many restricted feet are in contact with the floor."""
+        if len(self._restricted_feet) == 0:
+            return jp.float32(0.0)
+
+        feet_touching = self._check_foot_floor_contacts(pipeline_state)
         return jp.sum(feet_touching.astype(jp.float32))
 
     def _get_obs(self, pipeline_state: base.State) -> jax.Array:
@@ -261,11 +257,6 @@ class SafeSpider(PipelineEnv):
             qpos = pipeline_state.q[2:]
 
         return jp.concatenate([qpos, qvel])
-
-    @property
-    def difficulty(self) -> int:
-        """Return the current difficulty level."""
-        return self._difficulty
 
     @property
     def restricted_feet(self) -> list:

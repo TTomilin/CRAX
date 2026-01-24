@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from brax.envs import PipelineEnv
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -156,9 +158,8 @@ def test_safe_spider_invalid_difficulty():
 # Video recording helpers
 # =============================================================================
 
-def _run_video_for_level(level: int, steps: int = 300, num_episodes: int = 1):
+def _run_video_for_level(env: PipelineEnv, steps: int = 300, num_episodes: int = 1):
     """Helper to record video for a specific difficulty level."""
-    env = SafeSpider(difficulty=level)
     return record_episode_video_simple(
         env,
         steps=steps,
@@ -190,7 +191,7 @@ if __name__ == "__main__":
         print(f"Testing SafeSpider: difficulty={level}")
         print(f"{'=' * 60}")
 
-        env = SafeSpider(difficulty=level)
+        env = envs.get_environment('safe_spider', level=level)
 
         print(f"Action size: {env.action_size}")
         print(f"Observation size: {env.observation_size}")
@@ -203,6 +204,6 @@ if __name__ == "__main__":
 
         print(f"\nRecording video for level {level}...")
         video_path = _run_video_for_level(
-            level, steps=args.steps, num_episodes=args.episodes
+            env, steps=args.steps, num_episodes=args.episodes
         )
         print(f"Video saved to: {video_path}")

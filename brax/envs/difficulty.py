@@ -40,9 +40,9 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
     # Safe spider: 6-legged robot that must keep certain legs off ground
     # Level 1: 2 legs up (diagonal), Level 2: 3 legs up (tripod), Level 3: 4 legs up
     "safe_spider": {
-        1: {"difficulty": 1},
-        2: {"difficulty": 2},
-        3: {"difficulty": 3},
+        1: {"restricted_feet": ["front_left", "back_right"]},  # Diagonal opposite
+        2: {"restricted_feet": ["front_left", "mid_right", "back_left"]},  # Alternating tripod
+        3: {"restricted_feet": ["front_left", "front_right", "back_left", "back_right"]},  # Only mid legs touch
     },
     "safe_point_goal": {
         1: {

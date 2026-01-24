@@ -50,10 +50,10 @@ class SafeAnt(PipelineEnv):
 
     # Foot geom names and their local offsets from parent body (from XML)
     FOOT_GEOMS = {
-        'front_left': ('left_foot_geom', jp.array([0.4, 0.4, 0.0])),
-        'front_right': ('right_foot_geom', jp.array([-0.4, 0.4, 0.0])),
-        'back_left': ('third_foot_geom', jp.array([-0.4, -0.4, 0.0])),
-        'back_right': ('fourth_foot_geom', jp.array([0.4, -0.4, 0.0])),
+        'front_left': ('left_foot_geom', (0.4, 0.4, 0.0)),
+        'front_right': ('right_foot_geom', (-0.4, 0.4, 0.0)),
+        'back_left': ('third_foot_geom', (-0.4, -0.4, 0.0)),
+        'back_right': ('fourth_foot_geom', (0.4, -0.4, 0.0)),
     }
 
     def __init__(
@@ -121,7 +121,7 @@ class SafeAnt(PipelineEnv):
             geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
             body_id = mj_model.geom_bodyid[geom_id]
             self._foot_body_ids[foot_key] = body_id
-            self._foot_local_offsets[foot_key] = local_offset
+            self._foot_local_offsets[foot_key] = jp.array(local_offset)
 
         # Determine which feet are restricted based on difficulty
         if difficulty == 1:
@@ -234,16 +234,19 @@ class SafeAnt(PipelineEnv):
         The foot geom position is computed as:
             foot_world = body_pos + rotate(body_rot, foot_local_offset)
         """
-        # Get body positions and rotations for restricted feet
-        body_pos = pipeline_state.x.pos[self._restricted_body_ids]  # (n_feet, 3)
-        body_rot = pipeline_state.x.rot[self._restricted_body_ids]  # (n_feet, 4)
+        foot_z_positions = []
+        for foot_key in self._restricted_feet:
+            body_id = self._foot_body_ids[foot_key]
+            body_pos = pipeline_state.x.pos[body_id]
+            body_rot = pipeline_state.x.rot[body_id]
+            local_offset = self._foot_local_offsets[foot_key]
 
-        # Transform local foot offsets to world coordinates
-        # math.rotate expects (quat, vec) and handles batching
-        foot_world_offsets = jax.vmap(math.rotate)(body_rot, self._restricted_local_offsets)
-        foot_world_pos = body_pos + foot_world_offsets
+            # Transform local offset to world coordinates
+            world_offset = math.rotate(body_rot, local_offset)
+            foot_world_z = body_pos[2] + world_offset[2]
+            foot_z_positions.append(foot_world_z)
 
-        return foot_world_pos[:, 2]  # Return only z-coordinates
+        return jp.stack(foot_z_positions)
 
     def _calculate_foot_contact_cost(self, pipeline_state: base.State) -> jax.Array:
         """Calculate cost based on restricted feet touching the ground.
