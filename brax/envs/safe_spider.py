@@ -47,6 +47,7 @@ class SafeSpider(PipelineEnv):
             self,
             restricted_feet=None,
             cost_scale: float = 1.0,
+            reward_scale: float = 0.01,
             ctrl_cost_weight: float = 0.5,
             healthy_reward: float = 1.0,
             terminate_when_unhealthy: bool = True,
@@ -88,12 +89,14 @@ class SafeSpider(PipelineEnv):
 
         self.episode_length = episode_length
         self._cost_scale = cost_scale
+        self._reward_scale = reward_scale
         self._ctrl_cost_weight = ctrl_cost_weight
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = exclude_current_positions_from_observation
+
 
         # Get geom IDs for contact-based detection
         self._floor_geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, 'floor')
@@ -175,9 +178,9 @@ class SafeSpider(PipelineEnv):
         feet_on_ground = self._count_feet_on_ground(pipeline_state)
 
         state.metrics.update(
-            reward_forward=forward_reward,
-            reward_survive=healthy_reward,
-            reward_ctrl=-ctrl_cost,
+            reward_forward=forward_reward * self._reward_scale,
+            reward_survive=healthy_reward * self._reward_scale,
+            reward_ctrl=-ctrl_cost * self._reward_scale,
             cost=cost,
             x_position=pipeline_state.x.pos[0, 0],
             y_position=pipeline_state.x.pos[0, 1],
