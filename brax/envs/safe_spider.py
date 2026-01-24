@@ -168,7 +168,7 @@ class SafeSpider(PipelineEnv):
         cost = self._calculate_foot_contact_cost(pipeline_state)
 
         obs = self._get_obs(pipeline_state)
-        reward = forward_reward + healthy_reward - ctrl_cost
+        reward = forward_reward + healthy_reward
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
 
         # Count how many restricted feet are on ground
