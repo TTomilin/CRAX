@@ -53,7 +53,7 @@ class SafeSpider(PipelineEnv):
             healthy_z_range: Tuple[float, float] = (0.2, 1.0),
             reset_noise_scale: float = 0.1,
             exclude_current_positions_from_observation: bool = True,
-            episode_length: int = 2000,
+            episode_length: int = 500,
             backend: str = 'mjx',
             **kwargs,
     ):
