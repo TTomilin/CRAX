@@ -36,6 +36,7 @@ from brax.envs import safe_velocity
 from brax.envs import swimmer
 from brax.envs import walker2d
 from brax.envs import safe_ant
+from brax.envs import safe_spider
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
@@ -65,6 +66,7 @@ _envs = {
     'walker2d': walker2d.Walker2d,
     'safe_walker': safe_walker.SafeWalker,
     'safe_ant': safe_ant.SafeAnt,
+    'safe_spider': safe_spider.SafeSpider,
     'point_resetting_goal_random_hazard_sensor_obs': PointResettingGoalRandomHazardSensorObs,
     'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
     'safe_point_goal': SafePointGoal,

@@ -39,7 +39,8 @@ class SafeAnt(PipelineEnv):
     """Ant that must keep certain legs off the ground.
 
     The ant receives a cost each timestep when a restricted leg touches the ground.
-    Ground contact is detected by checking if the foot z-position is below a threshold.
+    Ground contact is detected by computing the world z-position of foot geoms
+    and checking if they are below a threshold.
 
     Args:
         difficulty: 1, 2, or 3 - determines which legs must stay off ground
@@ -47,12 +48,12 @@ class SafeAnt(PipelineEnv):
         cost_scale: multiplier for the per-step cost
     """
 
-    # Foot body names in the XML
-    FOOT_BODIES = {
-        'front_left': 'front_left_leg',   # The body chain ends here
-        'front_right': 'front_right_leg',
-        'back_left': 'back_leg',
-        'back_right': 'right_back_leg',
+    # Foot geom names and their local offsets from parent body (from XML)
+    FOOT_GEOMS = {
+        'front_left': ('left_foot_geom', (0.4, 0.4, 0.0)),
+        'front_right': ('right_foot_geom', (-0.4, 0.4, 0.0)),
+        'back_left': ('third_foot_geom', (-0.4, -0.4, 0.0)),
+        'back_right': ('fourth_foot_geom', (0.4, -0.4, 0.0)),
     }
 
     def __init__(
@@ -112,23 +113,15 @@ class SafeAnt(PipelineEnv):
         self._reset_noise_scale = reset_noise_scale
         self._exclude_current_positions_from_observation = exclude_current_positions_from_observation
 
-        # Get body indices for feet
-        # The foot is at the end of each leg chain - we need the deepest body
-        # Looking at XML: front_left_leg -> aux_1 -> (unnamed body with foot)
-        # We'll get the body that contains the foot geom
-
-        # Get geom-to-body mapping for foot geoms
-        self._foot_geom_ids = {}
+        # Get body indices and local offsets for foot geoms
         self._foot_body_ids = {}
+        self._foot_local_offsets = {}
 
-        geom_names = ['left_foot_geom', 'right_foot_geom', 'third_foot_geom', 'fourth_foot_geom']
-        foot_keys = ['front_left', 'front_right', 'back_left', 'back_right']
-
-        for key, geom_name in zip(foot_keys, geom_names):
+        for foot_key, (geom_name, local_offset) in self.FOOT_GEOMS.items():
             geom_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
             body_id = mj_model.geom_bodyid[geom_id]
-            self._foot_geom_ids[key] = geom_id
-            self._foot_body_ids[key] = body_id
+            self._foot_body_ids[foot_key] = body_id
+            self._foot_local_offsets[foot_key] = jp.array(local_offset)
 
         # Determine which feet are restricted based on difficulty
         if difficulty == 1:
@@ -141,10 +134,13 @@ class SafeAnt(PipelineEnv):
             # Level 3: Only back-right can touch (all others restricted)
             self._restricted_feet = ['front_left', 'front_right', 'back_left']
 
-        # Convert to body ID array for vectorized checking
+        # Store body IDs and local offsets as arrays for vectorized computation
         self._restricted_body_ids = jp.array(
             [self._foot_body_ids[k] for k in self._restricted_feet],
             dtype=jp.int32
+        )
+        self._restricted_local_offsets = jp.stack(
+            [self._foot_local_offsets[k] for k in self._restricted_feet]
         )
 
     def reset(self, rng: jax.Array) -> State:
@@ -232,13 +228,32 @@ class SafeAnt(PipelineEnv):
             info=info,
         )
 
+    def _get_foot_world_positions(self, pipeline_state: base.State) -> jax.Array:
+        """Compute world z-positions of restricted foot geoms.
+
+        The foot geom position is computed as:
+            foot_world = body_pos + rotate(body_rot, foot_local_offset)
+        """
+        foot_z_positions = []
+        for foot_key in self._restricted_feet:
+            body_id = self._foot_body_ids[foot_key]
+            body_pos = pipeline_state.x.pos[body_id]
+            body_rot = pipeline_state.x.rot[body_id]
+            local_offset = self._foot_local_offsets[foot_key]
+
+            # Transform local offset to world coordinates
+            world_offset = math.rotate(body_rot, local_offset)
+            foot_world_z = body_pos[2] + world_offset[2]
+            foot_z_positions.append(foot_world_z)
+
+        return jp.stack(foot_z_positions)
+
     def _calculate_foot_contact_cost(self, pipeline_state: base.State) -> jax.Array:
         """Calculate cost based on restricted feet touching the ground.
 
-        A foot is considered touching if its z-position is below the threshold.
+        A foot is considered touching if its world z-position is below the threshold.
         """
-        # Get z-positions of all restricted foot bodies
-        foot_z_positions = pipeline_state.x.pos[self._restricted_body_ids, 2]
+        foot_z_positions = self._get_foot_world_positions(pipeline_state)
 
         # Check which feet are on the ground
         feet_touching = foot_z_positions < self._ground_threshold
@@ -250,7 +265,7 @@ class SafeAnt(PipelineEnv):
 
     def _count_feet_on_ground(self, pipeline_state: base.State) -> jax.Array:
         """Count how many restricted feet are on the ground."""
-        foot_z_positions = pipeline_state.x.pos[self._restricted_body_ids, 2]
+        foot_z_positions = self._get_foot_world_positions(pipeline_state)
         feet_touching = foot_z_positions < self._ground_threshold
         return jp.sum(feet_touching.astype(jp.float32))
 

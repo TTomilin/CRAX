@@ -1,7 +1,8 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 import jax
 import mujoco
+import numpy as np
 from jax import numpy as jp
 
 from brax import base
@@ -160,6 +161,16 @@ class SafeWalker(PipelineEnv):
         self._hazard_half_extents = (
             jp.stack(hazard_half_extents) if len(hazard_half_extents) > 0 else jp.zeros((0, 2))
         )
+
+        # Get indicator geom IDs for violation visualization
+        self._indicator_right_id = mujoco.mj_name2id(
+            mj_model, mujoco.mjtObj.mjOBJ_GEOM, 'indicator_foot_right'
+        )
+        self._indicator_left_id = mujoco.mj_name2id(
+            mj_model, mujoco.mjtObj.mjOBJ_GEOM, 'indicator_foot_left'
+        )
+        # Store the mj_model for rendering
+        self._mj_model = mj_model
 
     # ---------------- Core RL API ----------------
 
@@ -435,3 +446,119 @@ class SafeWalker(PipelineEnv):
 
         total_cost = jp.sum(per_hazard_cost)
         return jp.asarray(self._cost_scaler, dtype=jp.float32) * total_cost
+
+    # ---------------- Visualization ----------------
+
+    def render(
+        self,
+        trajectory: Union[List[base.State], base.State],
+        height: int = 240,
+        width: int = 320,
+        camera: Optional[str] = None,
+    ) -> Union[Sequence[np.ndarray], np.ndarray]:
+        """Renders trajectory with violation indicators shown as magenta spheres.
+
+        When a foot is inside a hazard zone, its indicator sphere becomes
+        visible (magenta, semi-transparent) to visualize the constraint violation.
+        """
+        renderer = mujoco.Renderer(self.sys.mj_model, height=height, width=width)
+        camera = camera or -1
+
+        # Store original indicator colors to restore after rendering
+        original_right_rgba = self.sys.mj_model.geom_rgba[self._indicator_right_id].copy()
+        original_left_rgba = self.sys.mj_model.geom_rgba[self._indicator_left_id].copy()
+
+        def get_image(state: base.State):
+            # Get hazard positions from state info
+            mocap_ids = np.array(self._hazard_mocap_ids)
+            hazard_positions = np.asarray(state.mocap_pos)[mocap_ids]
+
+            # Check which feet are in violation (inside hazards)
+            left_violating, right_violating = self._check_feet_in_hazards_render(state, hazard_positions)
+
+            # Update indicator colors based on violations
+            # Bright magenta for visibility against red hazards
+            if right_violating:
+                self.sys.mj_model.geom_rgba[self._indicator_right_id] = [1.0, 0.2, 0.8, 1.0]
+            else:
+                self.sys.mj_model.geom_rgba[self._indicator_right_id] = [1.0, 0.2, 0.8, 0.0]
+
+            if left_violating:
+                self.sys.mj_model.geom_rgba[self._indicator_left_id] = [1.0, 0.2, 0.8, 1.0]
+            else:
+                self.sys.mj_model.geom_rgba[self._indicator_left_id] = [1.0, 0.2, 0.8, 0.0]
+
+            # Render the frame
+            d = mujoco.MjData(self.sys.mj_model)
+            d.qpos, d.qvel = np.asarray(state.q), np.asarray(state.qd)
+            if hasattr(state, 'mocap_pos') and hasattr(state, 'mocap_quat'):
+                d.mocap_pos[:] = np.asarray(state.mocap_pos)
+                d.mocap_quat[:] = np.asarray(state.mocap_quat)
+            mujoco.mj_forward(self.sys.mj_model, d)
+            renderer.update_scene(d, camera=camera)
+            return renderer.render()
+
+        if isinstance(trajectory, list):
+            images = [get_image(s) for s in trajectory]
+        else:
+            images = get_image(trajectory)
+
+        # Restore original colors
+        self.sys.mj_model.geom_rgba[self._indicator_right_id] = original_right_rgba
+        self.sys.mj_model.geom_rgba[self._indicator_left_id] = original_left_rgba
+
+        return images
+
+    def _check_feet_in_hazards_render(
+        self, state: base.State, hazard_positions: np.ndarray
+    ) -> Tuple[bool, bool]:
+        """Check if feet are inside any hazards (for rendering).
+
+        Returns (left_violating, right_violating) booleans.
+        """
+        n_h = hazard_positions.shape[0]
+        if n_h == 0:
+            return False, False
+
+        # Get feet positions
+        left_pos = np.asarray(state.x.take(self._left_foot_link_id).pos)
+        right_pos = np.asarray(state.x.take(self._right_foot_link_id).pos)
+
+        # Check if feet are at ground level
+        ground_contact_threshold = self._hazard_height * 2 + 0.08
+        left_on_ground = left_pos[2] < ground_contact_threshold
+        right_on_ground = right_pos[2] < ground_contact_threshold
+
+        if not left_on_ground and not right_on_ground:
+            return False, False
+
+        feet_xy = np.stack([left_pos[:2], right_pos[:2]], axis=0)  # (2, 2)
+        centers = hazard_positions[:, :2]  # (N, 2)
+
+        # Distance from feet to hazard centers
+        d = np.sqrt(np.sum((feet_xy[:, None, :] - centers[None, :, :]) ** 2, axis=2) + 1e-8)  # (2, N)
+
+        # Check cylinder hazards
+        hazard_radii = np.asarray(self._hazard_radii)
+        hazard_is_rect = np.asarray(self._hazard_is_rect)
+        hazard_half_extents = np.asarray(self._hazard_half_extents)
+
+        # Cylinder: inside if d <= radius
+        cyl_inside = d <= hazard_radii[None, :]  # (2, N)
+
+        # Rect: inside if |dx| <= hx and |dy| <= hy
+        dxdy = np.abs(feet_xy[:, None, :] - centers[None, :, :])  # (2, N, 2)
+        rect_inside = np.logical_and(
+            dxdy[:, :, 0] <= hazard_half_extents[None, :, 0],
+            dxdy[:, :, 1] <= hazard_half_extents[None, :, 1]
+        )  # (2, N)
+
+        # Combine based on hazard type
+        is_rect = hazard_is_rect[None, :]  # (1, N)
+        inside = np.where(is_rect, rect_inside, cyl_inside)  # (2, N)
+
+        # Check if any hazard contains the foot (and foot is on ground)
+        left_violating = bool(left_on_ground and np.any(inside[0, :]))
+        right_violating = bool(right_on_ground and np.any(inside[1, :]))
+
+        return left_violating, right_violating

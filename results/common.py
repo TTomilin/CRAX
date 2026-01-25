@@ -32,6 +32,7 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
 REWARD_METRIC_MAP = {
     'safe_walker': 'episodic/reward_forward',
     'safe_velocity': 'episodic/forward_reward',
+    'safe_spider': 'episodic/reward_forward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
@@ -114,7 +115,7 @@ def get_series(
         reward_col_name = REWARD_METRIC_MAP.get(env_name, default_reward_col)
 
     if metric == "reward":
-        if algo == "ppo_cost" and env_name not in ["safe_point_goal", "safe_reacher"]:
+        if algo == "ppo_cost" and env_name not in ["safe_point_goal", "safe_reacher", "safe_spider"]:
             # Need both reward and cost columns to reconstruct original reward
             if reward_col_name not in df.columns or cost_col not in df.columns:
                  if default_reward_col not in df.columns or cost_col not in df.columns:

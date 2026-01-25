@@ -22,9 +22,9 @@ import json
 from pathlib import Path
 from typing import Optional, List, Tuple
 
+import imageio.v3 as iio
 import jax
 import numpy as np
-import imageio.v3 as iio
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -66,6 +66,15 @@ def load_policy(checkpoint_path: str, deterministic: bool = True):
     root_dir = Path(__file__).parent.parent.resolve()
     path = root_dir / "models" / checkpoint_path
     return ppo_checkpoint.load_policy(path)
+
+
+def make_random_policy(action_size: int):
+    """Creates a policy that returns random actions."""
+    def random_policy(obs, key):
+        del obs
+        action = jax.random.uniform(key, shape=(action_size,), minval=-1.0, maxval=1.0)
+        return action, {}
+    return random_policy
 
 
 def run_rollout(
@@ -161,7 +170,7 @@ def run_rollout(
 
 
 def save_video(
-        sys,
+        env,
         states,
         rewards_per_step: List[Tuple[float, float]],
         costs_per_step: List[Tuple[float, float]],
@@ -172,6 +181,7 @@ def save_video(
         camera: Optional[str] = None,
         show_metrics: bool = True,
         font: str = "DejaVuSans-Bold",
+        font_size: int = 20,
 ):
     """Save a video of the trajectory with optional metric overlay."""
     # Get pipeline states for rendering
@@ -179,14 +189,17 @@ def save_video(
 
     # Render all frames
     print(f"Rendering {len(pipeline_states)} frames...")
-    frames_np = brax_image.render_array(sys, pipeline_states, height=height, width=width, camera=camera)
+    if hasattr(env, 'render') and callable(getattr(env, 'render')):
+        frames_np = env.render(pipeline_states, height=height, width=width, camera=camera)
+    else:
+        frames_np = brax_image.render_array(env.sys, pipeline_states, height=height, width=width, camera=camera)
 
     frames_to_write = []
 
     if show_metrics:
         try:
             # Try to load specified font
-            font_obj = ImageFont.truetype(f"{font}.ttf", 20)
+            font_obj = ImageFont.truetype(f"{font}.ttf", font_size)
         except (OSError, IOError):
             # Fallback to default font if not found
             font_obj = ImageFont.load_default()
@@ -225,17 +238,20 @@ def save_video(
 
 
 def save_snapshots(
-        sys,
+        env,
         states,
         output_dir: str,
+        rewards_per_step: Optional[List[Tuple[float, float]]] = None,
+        costs_per_step: Optional[List[Tuple[float, float]]] = None,
         interval: int = 20,
         width: int = 640,
         height: int = 480,
         camera: Optional[str] = None,
+        show_metrics: bool = False,
+        font: str = "DejaVuSans-Bold",
+        font_size: int = 20,
 ):
-    """Save snapshot images at regular intervals."""
-    from PIL import Image
-
+    """Save snapshot images at regular intervals with optional metric overlay."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -246,14 +262,51 @@ def save_snapshots(
 
     print(f"Saving {len(snapshot_indices)} snapshots to {output_dir}...")
 
+    # Load font if showing metrics
+    font_obj = None
+    if show_metrics:
+        try:
+            font_obj = ImageFont.truetype(f"{font}.ttf", font_size)
+        except (OSError, IOError):
+            font_obj = ImageFont.load_default()
+            print(f"Warning: Could not load font '{font}'. Using default font.")
+
     for idx in snapshot_indices:
         state = states[idx]
 
         # Render single frame
-        frame = brax_image.render_array(sys, state.pipeline_state, height=height, width=width, camera=camera)
+        if hasattr(env, 'render') and callable(getattr(env, 'render')):
+            frame = env.render(state.pipeline_state, height=height, width=width, camera=camera)
+        else:
+            frame = brax_image.render_array(env.sys, state.pipeline_state, height=height, width=width, camera=camera)
+
+        # Create image from frame
+        img = Image.fromarray(frame)
+
+        # Add metric overlay if requested
+        if show_metrics and font_obj is not None and rewards_per_step is not None and costs_per_step is not None:
+            draw = ImageDraw.Draw(img)
+
+            # Get cumulative metrics for this frame
+            if idx > 0 and idx - 1 < len(rewards_per_step):
+                _, r_cum = rewards_per_step[idx - 1]
+                _, c_cum = costs_per_step[idx - 1]
+            else:
+                r_cum = 0.0
+                c_cum = 0.0
+
+            reward_text = f"Reward: {r_cum:.2f}"
+            cost_text = f"Cost: {c_cum:.2f}"
+            step_text = f"Step: {idx}"
+
+            draw.text((10, 10), reward_text, font=font_obj, fill=(50, 220, 50),
+                      stroke_width=2, stroke_fill=(0, 0, 0))
+            draw.text((10, 40), cost_text, font=font_obj, fill=(230, 60, 60),
+                      stroke_width=2, stroke_fill=(0, 0, 0))
+            draw.text((10, 70), step_text, font=font_obj, fill=(200, 200, 200),
+                      stroke_width=2, stroke_fill=(0, 0, 0))
 
         # Save as PNG
-        img = Image.fromarray(frame)
         img.save(output_path / f"frame_{idx:05d}.png")
 
     print(f"Saved snapshots: {snapshot_indices}")
@@ -263,13 +316,12 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize a trained CRAX policy")
 
     # Required arguments
-    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint directory")
+    parser.add_argument("--checkpoint", default=None, help="Path to checkpoint directory")
     parser.add_argument("--env", required=True, help="Environment name (e.g., safe_point_goal)")
 
     # Environment options
     parser.add_argument("--level", type=int, default=None, help="Environment difficulty level (1, 2, or 3)")
-    parser.add_argument("--episode_length", type=int, default=None,
-                        help="Episode length (default: use env default)")
+    parser.add_argument("--episode_length", type=int, default=None, help="Episode length (default: use env default)")
     parser.add_argument("--num_episodes", type=int, default=1, help="Number of episodes to run")
     parser.add_argument("--env_kwargs", type=str, default=None, help="JSON string of extra env kwargs")
 
@@ -293,19 +345,22 @@ def main():
     parser.add_argument("--no_snapshots", action="store_true", help="Skip snapshot generation")
     parser.add_argument("--show_metrics", action="store_true", help="Overlay reward and cost on video frames")
     parser.add_argument("--font", type=str, default="DejaVuSans-Bold", help="Font for metric overlay")
-
+    parser.add_argument("--font_size", type=int, default=20, help="Font size for metric overlay")
 
     args = parser.parse_args()
 
     # Create output directory
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / args.env
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine output name
     if args.name:
         name = args.name
     else:
-        checkpoint_name = Path(args.checkpoint).name
+        if args.checkpoint:
+            checkpoint_name = Path(args.checkpoint).name
+        else:
+            checkpoint_name = 'random_policy'
         level_str = f"_level_{args.level}" if args.level else ""
         name = f"{args.env}{level_str}_{checkpoint_name}"
 
@@ -329,9 +384,13 @@ def main():
         episode_length = getattr(env, 'episode_length', 1000)
     print(f"  Episode length: {episode_length}")
 
-    # Load policy
-    print(f"Loading policy from: {args.checkpoint}")
-    policy = load_policy(args.checkpoint, deterministic=args.deterministic)
+    # Load policy or create a random one
+    if args.checkpoint:
+        print(f"Loading policy from: {args.checkpoint}")
+        policy = load_policy(args.checkpoint, deterministic=args.deterministic)
+    else:
+        print("No checkpoint provided, using random policy.")
+        policy = make_random_policy(env.action_size)
 
     # Run rollout
     print(f"Running {args.num_episodes} episode(s) for up to {episode_length} steps each...")
@@ -360,18 +419,18 @@ def main():
     if not args.no_video:
         video_path = output_dir / f"{name}.mp4"
         save_video(
-            env.sys, states, all_rewards_per_step, all_costs_per_step, str(video_path),
-            fps=args.video_fps, width=args.width, height=args.height,
-            camera=args.camera, show_metrics=args.show_metrics, font=args.font
+            env, states, all_rewards_per_step, all_costs_per_step, str(video_path), fps=args.video_fps,
+            width=args.width, height=args.height, camera=args.camera, show_metrics=args.show_metrics, font=args.font,
+            font_size=args.font_size
         )
 
     # Save snapshots
     if not args.no_snapshots:
         snapshots_dir = output_dir / f"{name}_snapshots"
         save_snapshots(
-            env.sys, states, str(snapshots_dir),
-            interval=args.snapshot_interval, width=args.width, height=args.height,
-            camera=args.camera,
+            env, states, str(snapshots_dir), rewards_per_step=all_rewards_per_step, costs_per_step=all_costs_per_step,
+            interval=args.snapshot_interval, width=args.width, height=args.height, camera=args.camera,
+            show_metrics=args.show_metrics, font=args.font, font_size=args.font_size
         )
 
     # Save metadata

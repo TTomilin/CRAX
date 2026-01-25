@@ -29,14 +29,7 @@ TRANSLATIONS = {
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
     "safe_velocity": "Safe Velocity",
-}
-
-# Optional safety thresholds per env for cost bars (None disables)
-SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 25.0,
-    "safe_reacher": 25.0,
-    "safe_walker": 25.0,
-    "safe_velocity": 25.0,
+    "safe_spider": "Safe Spider",
 }
 
 
@@ -145,6 +138,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     metrics = args.metrics  # expects ["reward","cost"] by default
     levels = args.levels
     algos = args.algos
+    threshold = 25.0
 
     n_env = len(envs)
     nrows_env, ncols_env = _nice_grid(n_env, max_cols=args.max_cols)
@@ -207,7 +201,6 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
             # Determine y-clip for this subplot
             values = env_metric_values.get((env, metric), [])
-            threshold = SAFETY_THRESHOLDS.get(env, None)
 
             # Compute smart y-clip based on data distribution
             y_clip = None
@@ -305,9 +298,11 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
             ax.set_xlabel("Level")
             ax.set_ylabel(ylab)
 
+            ax.set_ylim(bottom=0)
+
             # Set y-limit if truncating
             if y_clip is not None:
-                ax.set_ylim(0, y_clip * 1.15)  # Add space for labels
+                ax.set_ylim(top=y_clip * 1.15)  # Add space for labels
 
             y_max = ax.get_ylim()[1]
             if y_max >= 1000:
@@ -318,9 +313,8 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
             # threshold only on cost axis
             if metric == "cost" and not args.no_threshold:
-                thr = SAFETY_THRESHOLDS.get(env, None)
-                if thr is not None:
-                    thr_line = ax.axhline(thr, linestyle="--", color="red", linewidth=1.5, zorder=5)
+                if threshold is not None:
+                    thr_line = ax.axhline(threshold, linestyle="--", color="red", linewidth=1.5, zorder=5)
                     if "Threshold" not in legend_handles:
                         legend_handles["Threshold"] = thr_line
 
@@ -362,22 +356,14 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     print(f"Saved figure: {out_path}")
 
 
-def generate_latex_table(
+def _build_lookup_and_best_algo(
         stats: pd.DataFrame,
         envs: List[str],
         levels: List[int],
         algos: List[str],
-        safety_threshold: float = 25.0,
-) -> str:
-    """
-    Generate a LaTeX table with results.
-
-    - Rows: algorithms
-    - Main columns: environments with levels as sub-columns
-    - Each level has reward (↑) and cost (↓)
-    - Safe costs (< threshold) are colored green
-    - Best result per (env, level) is bolded: highest reward among safe algorithms
-    """
+        safety_threshold: float,
+) -> tuple:
+    """Build lookup dict and best_algo dict for table generation."""
     # Build lookup: (env, level, algo, metric) -> (mean, ci)
     lookup = {}
     for _, row in stats.iterrows():
@@ -402,6 +388,359 @@ def generate_latex_table(
                     best_a = algo
             best_algo[(env, level)] = best_a
 
+    return lookup, best_algo
+
+
+def generate_latex_table_appendix(
+        stats: pd.DataFrame,
+        envs: List[str],
+        levels: List[int],
+        algos: List[str],
+        safety_threshold: float = 25.0,
+        envs_per_row: int = 2,
+) -> str:
+    """
+    Generate a LaTeX table split across multiple rows for the appendix.
+
+    - Each major row contains at most `envs_per_row` environments
+    - Column headers are repeated for each major row
+    - All rows use the same fixed column widths for vertical alignment
+    - Rows: algorithms
+    - Main columns: environments with levels as sub-columns
+    - Each level has reward (↑) and cost (↓)
+    - Safe costs (< threshold) are colored green
+    - Best result per (env, level) is bolded: highest reward among safe algorithms
+    """
+    lookup, best_algo = _build_lookup_and_best_algo(stats, envs, levels, algos, safety_threshold)
+
+    # Split envs into chunks
+    env_chunks = [envs[i:i + envs_per_row] for i in range(0, len(envs), envs_per_row)]
+
+    # Fixed column widths for consistent alignment
+    algo_col_width = "1.8cm"
+    data_col_width = "0.85cm"
+
+    lines = []
+
+    # Preamble comment
+    lines.append("% Auto-generated LaTeX table (Appendix - split across rows)")
+    lines.append("% Requires: \\usepackage{booktabs}, \\usepackage{xcolor}, \\usepackage{array}")
+    lines.append("% Define: \\definecolor{safegreen}{RGB}{34, 139, 34}")
+    lines.append("")
+
+    lines.append("\\begin{table*}[htbp]")
+    lines.append("\\centering")
+    lines.append("\\footnotesize")
+
+    # Full width column spec (always same number of columns for alignment)
+    n_full_data_cols = envs_per_row * len(levels) * 2
+    col_spec = f"p{{{algo_col_width}}}" + f"p{{{data_col_width}}}" * n_full_data_cols
+
+    for chunk_idx, env_chunk in enumerate(env_chunks):
+        # Use left-aligned minipage for partial rows
+        if len(env_chunk) < envs_per_row:
+            lines.append("\\noindent")
+
+        lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
+        lines.append("\\toprule")
+
+        # Header row 1: Environment names spanning their columns
+        header1_parts = [""]
+        for env in env_chunk:
+            env_label = TRANSLATIONS.get(env, env)
+            n_cols = len(levels) * 2
+            header1_parts.append(f"\\multicolumn{{{n_cols}}}{{c}}{{{env_label}}}")
+        # Fill remaining columns with empty multicolumn for alignment
+        remaining_envs = envs_per_row - len(env_chunk)
+        for _ in range(remaining_envs):
+            n_cols = len(levels) * 2
+            header1_parts.append(f"\\multicolumn{{{n_cols}}}{{c}}{{}}")
+        lines.append(" & ".join(header1_parts) + " \\\\")
+
+        # Add cmidrules under each environment name (only for actual envs)
+        cmidrule_parts = []
+        col_idx = 2
+        for env in env_chunk:
+            n_cols = len(levels) * 2
+            cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + n_cols - 1}}}")
+            col_idx += n_cols
+        lines.append(" ".join(cmidrule_parts))
+
+        # Header row 2: Level numbers spanning reward+cost pairs
+        header2_parts = [""]
+        for env in env_chunk:
+            for level in levels:
+                header2_parts.append(f"\\multicolumn{{2}}{{c}}{{Level {level}}}")
+        # Fill remaining columns
+        for _ in range(remaining_envs):
+            for level in levels:
+                header2_parts.append(f"\\multicolumn{{2}}{{c}}{{}}")
+        lines.append(" & ".join(header2_parts) + " \\\\")
+
+        # Add cmidrules under each level (only for actual envs)
+        cmidrule_parts = []
+        col_idx = 2
+        for env in env_chunk:
+            for level in levels:
+                cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + 1}}}")
+                col_idx += 2
+        lines.append(" ".join(cmidrule_parts))
+
+        # Header row 3: Reward↑ / Cost↓ labels
+        header3_parts = ["Algorithm"]
+        for env in env_chunk:
+            for level in levels:
+                header3_parts.append("R $\\uparrow$")
+                header3_parts.append("C $\\downarrow$")
+        # Fill remaining columns
+        for _ in range(remaining_envs):
+            for level in levels:
+                header3_parts.append("")
+                header3_parts.append("")
+        lines.append(" & ".join(header3_parts) + " \\\\")
+        lines.append("\\midrule")
+
+        # Data rows: one per algorithm
+        for algo in algos:
+            algo_label = TRANSLATIONS.get(algo, algo)
+            row_parts = [algo_label]
+
+            for env in env_chunk:
+                for level in levels:
+                    # Reward
+                    reward_key = (env, level, algo, "reward")
+                    if reward_key in lookup:
+                        r_mean, r_ci = lookup[reward_key]
+                        r_str = f"{r_mean:.1f}"
+                        if best_algo.get((env, level)) == algo:
+                            r_str = f"\\textbf{{{r_str}}}"
+                    else:
+                        r_str = "--"
+                    row_parts.append(r_str)
+
+                    # Cost
+                    cost_key = (env, level, algo, "cost")
+                    if cost_key in lookup:
+                        c_mean, c_ci = lookup[cost_key]
+                        c_str = f"{c_mean:.1f}"
+                        if c_mean < safety_threshold:
+                            c_str = f"\\textcolor{{safegreen}}{{{c_str}}}"
+                        if best_algo.get((env, level)) == algo:
+                            c_str = f"\\textbf{{{c_str}}}"
+                    else:
+                        c_str = "--"
+                    row_parts.append(c_str)
+
+            # Fill remaining columns with empty cells
+            for _ in range(remaining_envs):
+                for level in levels:
+                    row_parts.append("")
+                    row_parts.append("")
+
+            lines.append(" & ".join(row_parts) + " \\\\")
+
+        lines.append("\\bottomrule")
+        lines.append("\\end{tabular}")
+
+        # Add spacing between chunks (but not after the last one)
+        if chunk_idx < len(env_chunks) - 1:
+            lines.append("\\\\[1em]")  # Vertical space between sub-tables
+
+    lines.append("\\caption{Detailed algorithm comparison across environments and difficulty levels. "
+                 "R: Reward ($\\uparrow$ higher is better), C: Cost ($\\downarrow$ lower is better). "
+                 f"\\textcolor{{safegreen}}{{Green}} indicates safe (cost $< {safety_threshold:.0f}$). "
+                 "\\textbf{Bold} indicates best safe result.}")
+    lines.append("\\label{tab:alg_comparison_detailed}")
+    lines.append("\\end{table*}")
+
+    return "\n".join(lines)
+
+
+def generate_latex_summary_table(
+        stats: pd.DataFrame,
+        envs: List[str],
+        levels: List[int],
+        algos: List[str],
+        safety_threshold: float = 25.0,
+) -> str:
+    """
+    Generate a compact summary LaTeX table.
+
+    - Rows: algorithms
+    - Columns: levels (1, 2, 3) + Total
+    - Each cell shows: #Wins / %Safe
+      - #Wins: number of times this algo was the best (bold) across all envs for this level
+      - %Safe: percentage of envs where cost < threshold for this level
+    - Total column: sum of wins, average of safety percentage
+    """
+    lookup, best_algo = _build_lookup_and_best_algo(stats, envs, levels, algos, safety_threshold)
+
+    # Compute wins and safety percentage per (algo, level)
+    summary_data = {}
+    for algo in algos:
+        for level in levels:
+            wins = 0
+            safe_count = 0
+            total_envs = 0
+
+            for env in envs:
+                cost_key = (env, level, algo, "cost")
+                if cost_key not in lookup:
+                    continue
+
+                total_envs += 1
+                cost_mean, _ = lookup[cost_key]
+
+                # Check if safe
+                if cost_mean < safety_threshold:
+                    safe_count += 1
+
+                # Check if best
+                if best_algo.get((env, level)) == algo:
+                    wins += 1
+
+            safe_pct = (safe_count / total_envs * 100) if total_envs > 0 else 0
+            summary_data[(algo, level)] = (wins, safe_pct, total_envs)
+
+    # Compute totals per algorithm
+    algo_totals = {}
+    for algo in algos:
+        total_wins = 0
+        safe_pcts = []
+        for level in levels:
+            wins, safe_pct, _ = summary_data.get((algo, level), (0, 0, 0))
+            total_wins += wins
+            safe_pcts.append(safe_pct)
+        avg_safe_pct = sum(safe_pcts) / len(safe_pcts) if safe_pcts else 0
+        algo_totals[algo] = (total_wins, avg_safe_pct)
+
+    lines = []
+
+    # Preamble
+    lines.append("% Auto-generated LaTeX summary table")
+    lines.append("% Requires: \\usepackage{booktabs}, \\usepackage{xcolor}")
+    lines.append("% Define: \\definecolor{safegreen}{RGB}{34, 139, 34}")
+    lines.append("")
+
+    # Column spec: l for algo, then 2 columns per level (Wins, Safe%), plus 2 for Total
+    n_cols = (len(levels) + 1) * 2  # +1 for Total column
+    col_spec = "l" + "c" * n_cols
+
+    lines.append("\\begin{table}[htbp]")
+    lines.append("\\centering")
+    lines.append("\\small")
+    lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
+    lines.append("\\toprule")
+
+    # Header row 1: Level spanning + Total
+    header1_parts = [""]
+    for level in levels:
+        header1_parts.append(f"\\multicolumn{{2}}{{c}}{{Level {level}}}")
+    header1_parts.append("\\multicolumn{2}{c}{Total}")
+    lines.append(" & ".join(header1_parts) + " \\\\")
+
+    # Cmidrules under levels and Total
+    cmidrule_parts = []
+    col_idx = 2
+    for level in levels:
+        cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + 1}}}")
+        col_idx += 2
+    # Total column cmidrule
+    cmidrule_parts.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + 1}}}")
+    lines.append(" ".join(cmidrule_parts))
+
+    # Header row 2: Wins↑ / Safe%↑
+    header2_parts = ["Algorithm"]
+    for level in levels:
+        header2_parts.append("Wins $\\uparrow$")
+        header2_parts.append("Safe\\% $\\uparrow$")
+    # Total columns
+    header2_parts.append("Wins $\\uparrow$")
+    header2_parts.append("Safe\\% $\\uparrow$")
+    lines.append(" & ".join(header2_parts) + " \\\\")
+    lines.append("\\midrule")
+
+    # Find max wins per level and max total wins for highlighting
+    max_wins_per_level = {}
+    for level in levels:
+        max_wins = 0
+        for algo in algos:
+            wins, _, _ = summary_data.get((algo, level), (0, 0, 0))
+            if wins > max_wins:
+                max_wins = wins
+        max_wins_per_level[level] = max_wins
+
+    max_total_wins = max(algo_totals[algo][0] for algo in algos) if algos else 0
+
+    # Data rows
+    for algo in algos:
+        algo_label = TRANSLATIONS.get(algo, algo)
+        row_parts = [algo_label]
+
+        for level in levels:
+            wins, safe_pct, total_envs = summary_data.get((algo, level), (0, 0, 0))
+
+            # Wins column - bold if max
+            wins_str = str(wins)
+            if wins > 0 and wins == max_wins_per_level[level]:
+                wins_str = f"\\textbf{{{wins_str}}}"
+            row_parts.append(wins_str)
+
+            # Safe% column - green if 100%
+            safe_str = f"{safe_pct:.0f}"
+            if safe_pct == 100:
+                safe_str = f"\\textcolor{{safegreen}}{{{safe_str}}}"
+            row_parts.append(safe_str)
+
+        # Total columns
+        total_wins, avg_safe_pct = algo_totals[algo]
+
+        # Total wins - bold if max
+        total_wins_str = str(total_wins)
+        if total_wins > 0 and total_wins == max_total_wins:
+            total_wins_str = f"\\textbf{{{total_wins_str}}}"
+        row_parts.append(total_wins_str)
+
+        # Average safe% - green if 100%
+        avg_safe_str = f"{avg_safe_pct:.0f}"
+        if avg_safe_pct == 100:
+            avg_safe_str = f"\\textcolor{{safegreen}}{{{avg_safe_str}}}"
+        row_parts.append(avg_safe_str)
+
+        lines.append(" & ".join(row_parts) + " \\\\")
+
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append(f"\\caption{{Algorithm summary across {len(envs)} environments. "
+                 f"\\textbf{{Wins}}: number of environments where the algorithm achieved the highest reward "
+                 f"while being safe (cost $< {safety_threshold:.0f}$). "
+                 f"\\textbf{{Safe\\%}}: percentage of environments where the algorithm was safe. "
+                 f"\\textbf{{Total}}: sum of wins and average safety percentage across levels. "
+                 f"\\textcolor{{safegreen}}{{Green}} indicates 100\\% safe.}}")
+    lines.append("\\label{tab:alg_summary}")
+    lines.append("\\end{table}")
+
+    return "\n".join(lines)
+
+
+def generate_latex_table(
+        stats: pd.DataFrame,
+        envs: List[str],
+        levels: List[int],
+        algos: List[str],
+        safety_threshold: float = 25.0,
+) -> str:
+    """
+    Generate a LaTeX table with results (original single-table format).
+
+    - Rows: algorithms
+    - Main columns: environments with levels as sub-columns
+    - Each level has reward (↑) and cost (↓)
+    - Safe costs (< threshold) are colored green
+    - Best result per (env, level) is bolded: highest reward among safe algorithms
+    """
+    lookup, best_algo = _build_lookup_and_best_algo(stats, envs, levels, algos, safety_threshold)
+
     # Build LaTeX
     lines = []
 
@@ -418,9 +757,9 @@ def generate_latex_table(
     # Column spec: l for algo name, then c for each data column (no vertical lines)
     col_spec = "l" + "c" * n_data_cols
 
-    lines.append("\\begin{table}[htbp]")
+    lines.append("\\begin{table*}[htbp]")
     lines.append("\\centering")
-    lines.append("\\small")
+    lines.append("\\footnotesize")
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
     lines.append("\\toprule")
 
@@ -509,39 +848,67 @@ def generate_latex_table(
                  f"\\textcolor{{safegreen}}{{Green}} indicates safe (cost $< {safety_threshold:.0f}$). "
                  "\\textbf{Bold} indicates best safe result.}")
     lines.append("\\label{tab:alg_comparison}")
-    lines.append("\\end{table}")
+    lines.append("\\end{table*}")
 
     return "\n".join(lines)
 
 
 def print_latex_table(stats: pd.DataFrame, args: argparse.Namespace) -> None:
-    """Generate and print the LaTeX table."""
-    latex = generate_latex_table(
+    """Generate and print LaTeX tables (summary + detailed appendix)."""
+
+    # Generate summary table (compact, for main paper)
+    summary_latex = generate_latex_summary_table(
         stats=stats,
         envs=args.envs,
         levels=args.levels,
         algos=args.algos,
         safety_threshold=args.safety_threshold,
     )
+
+    # Generate detailed appendix table (split across rows)
+    appendix_latex = generate_latex_table_appendix(
+        stats=stats,
+        envs=args.envs,
+        levels=args.levels,
+        algos=args.algos,
+        safety_threshold=args.safety_threshold,
+        envs_per_row=args.envs_per_row,
+    )
+
+    # Print summary table
     print("\n" + "=" * 80)
-    print("LATEX TABLE (copy below into your .tex file):")
+    print("SUMMARY TABLE (for main paper):")
     print("=" * 80 + "\n")
-    print(latex)
+    print(summary_latex)
+
+    # Print detailed appendix table
+    print("\n" + "=" * 80)
+    print("DETAILED TABLE (for appendix):")
+    print("=" * 80 + "\n")
+    print(appendix_latex)
     print("\n" + "=" * 80)
 
-    # Optionally save to file
+    # Optionally save to files
     if args.output_latex:
         out_path = Path(args.output_latex)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(latex)
-        print(f"LaTeX table saved to: {out_path}")
+
+        # Save summary table
+        summary_path = out_path.with_stem(out_path.stem + "_summary")
+        summary_path.write_text(summary_latex)
+        print(f"Summary table saved to: {summary_path}")
+
+        # Save appendix table
+        appendix_path = out_path.with_stem(out_path.stem + "_appendix")
+        appendix_path.write_text(appendix_latex)
+        print(f"Appendix table saved to: {appendix_path}")
 
 
 def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
@@ -570,11 +937,14 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--out_name", type=str, default="baselines")
 
     # LaTeX table options
-    p.add_argument("--latex", action="store_true", help="Generate and print LaTeX table.")
+    p.add_argument("--latex", action="store_true", help="Generate and print LaTeX tables (summary + appendix).")
     p.add_argument("--output_latex", type=str, default=None,
-                   help="Optional path to save LaTeX table (e.g., tables/results.tex).")
+                   help="Optional base path to save LaTeX tables (e.g., tables/results.tex). "
+                        "Creates _summary.tex and _appendix.tex files.")
     p.add_argument("--safety_threshold", type=float, default=25.0,
                    help="Cost threshold for marking results as safe (green) in LaTeX table.")
+    p.add_argument("--envs_per_row", type=int, default=2,
+                   help="Max environments per major row in appendix table (default: 2).")
     p.add_argument("--no_plot", action="store_true", help="Skip plotting, only generate LaTeX table.")
     return p
 
