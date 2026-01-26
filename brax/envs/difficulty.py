@@ -83,6 +83,23 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             ],
         },
     },
+    "safe_point_circle": {
+        # Level 1 matches Circle0 (no walls)
+        1: {
+            "boundary_x": None,
+            "boundary_y": None,
+        },
+        # Level 2 matches Circle1 (vertical sigwalls)
+        2: {
+            "boundary_x": 1.125,
+            "boundary_y": None,
+        },
+        # Level 3 matches Circle2 (vertical + horizontal sigwalls)
+        3: {
+            "boundary_x": 1.125,
+            "boundary_y": 1.125,
+        },
+    },
     "block_push_goal": {
         # Level 1: Stationary goal
         1: {
