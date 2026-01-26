@@ -282,7 +282,7 @@ def build_args() -> argparse.ArgumentParser:
         "--envs",
         type=str,
         nargs="+",
-        default=["safe_point_goal", "safe_reacher", "safe_walker"],
+        default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_block_push"],
     )
     p.add_argument(
         "--algo",

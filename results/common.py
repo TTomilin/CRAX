@@ -115,7 +115,7 @@ def get_series(
         reward_col_name = REWARD_METRIC_MAP.get(env_name, default_reward_col)
 
     if metric == "reward":
-        if algo == "ppo_cost" and env_name not in ["safe_point_goal", "safe_reacher", "safe_spider"]:
+        if algo == "ppo_cost" and env_name not in ["safe_point_goal", "safe_reacher", "safe_spider", "safe_block_push"]:
             # Need both reward and cost columns to reconstruct original reward
             if reward_col_name not in df.columns or cost_col not in df.columns:
                  if default_reward_col not in df.columns or cost_col not in df.columns:

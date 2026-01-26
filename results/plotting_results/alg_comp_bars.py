@@ -30,6 +30,7 @@ TRANSLATIONS = {
     "safe_walker": "Safe Walker",
     "safe_velocity": "Safe Velocity",
     "safe_spider": "Safe Spider",
+    "safe_block_push": "Safe Block Push",
 }
 
 
@@ -287,7 +288,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                             xytext=(0, 4),
                             textcoords='offset points',
                             ha='center', va='bottom',
-                            fontsize=7,
+                            fontsize=8,
                             fontweight='bold',
                             color=BASELINES_COLORS.get(algo, 'black'),
                             rotation=90 if len(algos) > 5 else 0,
@@ -326,7 +327,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         right_bbox = get_ax(env_i, m - 1).get_position()
         mid_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
         top_y = max(left_bbox.y1, right_bbox.y1) + 0.01
-        fig.text(mid_x, top_y, env_title, ha="center", va="bottom", fontsize=13)
+        fig.text(mid_x, top_y, env_title, ha="center", va="bottom", fontsize=16)
 
     # hide unused env slots (all metric columns for that env cell)
     for env_i in range(n_env, nrows_env * ncols_env):
@@ -342,7 +343,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         fig.legend(
             handles, labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, -0.1),
+            bbox_to_anchor=(0.5, 0.0),
             ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
@@ -626,9 +627,8 @@ def generate_latex_summary_table(
     n_cols = (len(levels) + 1) * 2  # +1 for Total column
     col_spec = "l" + "c" * n_cols
 
-    lines.append("\\begin{table}[htbp]")
+    lines.append("\\begin{table*}[htbp]")
     lines.append("\\centering")
-    lines.append("\\small")
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
     lines.append("\\toprule")
 
@@ -718,7 +718,7 @@ def generate_latex_summary_table(
                  f"\\textbf{{Total}}: sum of wins and average safety percentage across levels. "
                  f"\\textcolor{{safegreen}}{{Green}} indicates 100\\% safe.}}")
     lines.append("\\label{tab:alg_summary}")
-    lines.append("\\end{table}")
+    lines.append("\\end{table*}")
 
     return "\n".join(lines)
 
@@ -908,7 +908,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider", "safe_block_push"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
