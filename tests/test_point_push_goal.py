@@ -21,7 +21,7 @@ import jax.random as jrandom
 import mujoco
 import pytest
 
-from brax.envs.block_push_goal import BlockPushGoal
+from brax.envs.safe_block_push import BlockPushGoal
 
 
 # -----------------------------------------------------------------------------
