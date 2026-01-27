@@ -210,7 +210,20 @@ def collect_rollout_metrics(env_name: str, make_inference_fn, params,
                 f"Rollout step {i + 1}/{num_steps} completed. Goals reached: {eval_state.metrics.get('goals_reached_count', 0)}")
 
         if eval_state.done:
-            print(f"Rollout terminated early at step {i + 1} due to done signal.")
+            def _scalar_bool(x):
+                x = jax.device_get(x)
+                x = np.asarray(x)
+                if x.size == 0:
+                    return False
+                return bool(x.reshape(-1)[0])
+
+            done_goal = _scalar_bool(eval_state.info.get('done_goal', False))
+            done_nan = _scalar_bool(eval_state.info.get('done_nan', False))
+            done_unhealthy = _scalar_bool(eval_state.info.get('done_unhealthy', False))
+            print(
+                f"Rollout terminated early at step {i + 1} due to done signal. "
+                f"done_goal={done_goal}, done_nan={done_nan}, done_unhealthy={done_unhealthy}"
+            )
             remaining_steps = num_steps - (i + 1)
             for key_metric in rollout_metrics_data.keys():
                 rollout_metrics_data[key_metric].extend([np.nan] * remaining_steps)
@@ -400,13 +413,18 @@ def record_episode_video(
             nan_done = jnp.isnan(reward) | jnp.any(jnp.isnan(next_state.obs))
             done_base = jnp.asarray(next_state.done, dtype=bool)
             done_flag = jnp.logical_or(done_base, nan_done)
+            done_goal = next_state.info.get("done_goal", jnp.zeros_like(done_base, dtype=bool))
+            done_nan = next_state.info.get("done_nan", jnp.zeros_like(done_base, dtype=bool))
+            done_unhealthy = next_state.info.get(
+                "done_unhealthy", jnp.zeros_like(done_base, dtype=bool)
+            )
 
-            return (next_state, key), (frame, reward, cost, done_flag)
+            return (next_state, key), (frame, reward, cost, done_flag, done_goal, done_nan, done_unhealthy)
 
-        (final_state, _), (frames, rewards, costs, dones) = jax.lax.scan(
+        (final_state, _), (frames, rewards, costs, dones, done_goal, done_nan, done_unhealthy) = jax.lax.scan(
             step_body, (state, key), xs=None, length=steps
         )
-        return frames, rewards, costs, dones
+        return frames, rewards, costs, dones, done_goal, done_nan, done_unhealthy
 
     # 3) Run N episodes to collect frames
     key = jax.random.PRNGKey(seed)
@@ -417,12 +435,15 @@ def record_episode_video(
 
     for ep in range(max(1, int(num_episodes))):
         key, ep_key = jax.random.split(key)
-        frames_batched, rewards_batched, costs_batched, dones_batched = rollout_one(ep_key)
+        frames_batched, rewards_batched, costs_batched, dones_batched, done_goal_batched, done_nan_batched, done_unhealthy_batched = rollout_one(ep_key)
 
         frames_batched = jax.device_get(frames_batched)
         rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
         costs_batched_np = np.asarray(jax.device_get(costs_batched))
         dones_batched_np = np.asarray(jax.device_get(dones_batched)).astype(bool)
+        done_goal_np = np.asarray(jax.device_get(done_goal_batched)).astype(bool)
+        done_nan_np = np.asarray(jax.device_get(done_nan_batched)).astype(bool)
+        done_unhealthy_np = np.asarray(jax.device_get(done_unhealthy_batched)).astype(bool)
 
         # Trim to first termination if any
         if dones_batched_np.ndim == 0:
@@ -432,6 +453,17 @@ def record_episode_video(
             done_index = int(done_hits[0] + 1) if done_hits.size > 0 else int(rewards_batched_np.shape[0])
 
         T = int(done_index)
+        if done_index > 0:
+            idx = done_index - 1
+            # Handle possible batch dimension by taking the first element
+            def _first(x):
+                return x[idx][0] if x.ndim > 1 else x[idx]
+            print(
+                f"Done flags at step {idx}: "
+                f"goal={_first(done_goal_np)}, "
+                f"nan={_first(done_nan_np)}, "
+                f"unhealthy={_first(done_unhealthy_np)}"
+            )
         frames = [jax.tree.map(lambda x, i=i: x[i], frames_batched) for i in range(T)]
 
         # Downsample per episode

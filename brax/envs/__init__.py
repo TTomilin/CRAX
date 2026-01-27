@@ -43,6 +43,7 @@ from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoal
 from brax.envs.safe_point_goal import SafePointGoal
 from brax.envs.safe_point_circle import SafePointCircle
 from brax.envs.safe_point_goal_weighted import SafePointGoalWeighted
+from brax.envs.safe_point_button import SafePointButton
 from brax.envs.block_push_goal import BlockPushGoal
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
@@ -73,6 +74,7 @@ _envs = {
     'safe_point_goal': SafePointGoal,
     'safe_point_circle': SafePointCircle,
     'safe_point_goal_weighted': SafePointGoalWeighted,
+    'safe_point_button': SafePointButton,
     'block_push_goal': BlockPushGoal,
 }
 

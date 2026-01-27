@@ -255,6 +255,72 @@ class CylinderHazard(BaseHazard):
         return "circle", jp.array([float(self.size)])
 
 
+class GremlinHazard(BaseHazard):
+    """Moving gremlin hazard that orbits around its center position.
+    
+    Gremlins move in circular paths with radius `travel` around their
+    initial placement center. They have contact-based cost and use
+    a keepout radius that includes the full orbit (travel + size).
+    """
+
+    def __init__(self, hazard_id: int, position: tuple = (0.0, 0.0, 0.1), size: float = 0.1, 
+                 height: float = 0.1, collidable: bool = True, fixed: bool = False, 
+                 density: float = 0.001, alpha_transparent: float = 0.35, travel: float = 0.3):
+        """Initialize a gremlin hazard.
+        
+        Args:
+            hazard_id: Unique identifier for this hazard
+            position: (x, y, z) center position of the orbit
+            size: Size parameter (half-extent for box)
+            height: Height parameter
+            collidable: Whether the hazard is collidable
+            fixed: Whether the hazard should be randomly relocated on reset
+            density: Density of the hazard
+            alpha_transparent: Transparency alpha value
+            travel: Radius of the circular orbit path
+        """
+        super().__init__(hazard_id, position, size, height, collidable, fixed, density, alpha_transparent)
+        self.travel = travel
+        self.center_position = position  # Store center for orbit calculation
+
+    def proximity_cost(self, agent_xy: jp.ndarray, hazard_xy: jp.ndarray) -> jp.ndarray:
+        """Distance-based cost for gremlin (typically uses contact cost instead)."""
+        diff = agent_xy - hazard_xy
+        dist = jp.sqrt(jp.sum(diff * diff) + 1e-8)
+        return jp.maximum(0.0, 1.0 - dist / (self.size + self.travel))
+
+    def get_xml_body(self) -> str:
+        """Generate XML body for gremlin hazard."""
+        x, y, z = self.position
+        # Gremlins are box-shaped, purple/magenta colored
+        return f"""
+        <body name="hazard{self.hazard_id}" pos="{x} {y} {z}" mocap="true">
+            <geom type="box" name="hazard{self.hazard_id}" size="{self.size} {self.size} {self.height}" condim="3"
+                  friction="1 .03 .003" rgba="0.5 0.0 1.0 {self.alpha}" contype="{self.contype}" 
+                  conaffinity="{self.conaffinity}" mass="{self.mass}" solref="0.01 1"/>
+        </body>"""
+
+    @property
+    def hazard_type(self) -> str:
+        return "gremlin"
+
+    def calculate_mass(self) -> float:
+        # Box volume: (2*sx) * (2*sy) * (2*sz)
+        sx = sy = float(self.size)
+        sz = float(self.height)
+        volume = (2.0 * sx) * (2.0 * sy) * (2.0 * sz)
+        rho = float(self.density)
+        return rho * volume
+
+    def get_keepout_radius(self) -> float:
+        # Keepout must include the full orbit: center + travel radius + size
+        return float(self.size + self.travel)
+
+    def get_keepout_shape(self):
+        # Circular keepout encompassing the orbit
+        return "circle", jp.array([float(self.size + self.travel)])
+
+
 class HazardManager:
     """Manages a collection of hazards and generates XML."""
 
@@ -267,14 +333,20 @@ class HazardManager:
 
     def add_hazards(self, hazard_type: str, count: int, positions: List[tuple] = None, size: float = None,
                     height: float = None, collidable: bool = None, fixed: bool = False, density: float = None,
-                    alpha_transparent = 0.35):
+                    alpha_transparent = 0.35, travel: float = None):
         """Add multiple hazards of the same type.
 
         Args:
-            hazard_type: "cube" or "cylinder"
+            hazard_type: "cube", "cylinder", "rect", or "gremlin"
             count: Number of hazards to add
             positions: List of (x, y, z) positions. If None, default positions will be used.
             size: Size parameter. If None, default size will be used.
+            height: Height parameter. If None, default height will be used.
+            collidable: Whether hazards are collidable. If None, default will be used.
+            fixed: Whether hazards should be randomly relocated on reset
+            density: Density of hazards. If None, default will be used.
+            alpha_transparent: Transparency alpha value
+            travel: Orbit radius for gremlin hazards. If None, default will be used.
         """
         cls = HAZARD_REGISTRY.get(hazard_type)
         if cls is None:
@@ -286,7 +358,13 @@ class HazardManager:
 
         for i in range(count):
             hazard_id = len(self.hazards) + 1
-            hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density, alpha_transparent)
+            if hazard_type == "gremlin":
+                if travel is None:
+                    hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density, alpha_transparent)
+                else:
+                    hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density, alpha_transparent, travel)
+            else:
+                hazard = cls(hazard_id, positions[i], size, height, collidable, fixed, density, alpha_transparent)
             self.add_hazard(hazard)
 
     def get_xml_assets(self) -> str:
@@ -333,6 +411,7 @@ HAZARD_REGISTRY: Dict[str, Type[BaseHazard]] = {
     "cube": CubeHazard,
     "cylinder": CylinderHazard,
     "rect": RectHazard,
+    "gremlin": GremlinHazard,
 }
 
 
@@ -347,7 +426,7 @@ def _type_defaults_from_registry():
 
         # pull whatever the class exposes; no hardcoding
         base = {}
-        for k in ("size", "height", "collidable", "movable", "density"):
+        for k in ("size", "height", "collidable", "movable", "density", "travel"):
             v = get(k)
             if v is not None:
                 base[k] = v

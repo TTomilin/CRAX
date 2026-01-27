@@ -114,6 +114,26 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "goal_velocity": 0.6,
         },
     },
+    "safe_point_button": {
+        # Level 1: Hazards and gremlins, constrained buttons
+        1: {
+            "placement_extents": (-1.5, -1.5, 1.5, 1.5),
+            "buttons_constrained": True,
+            "hazard_specs": [
+                {"type": "cylinder", "count": 4, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "gremlin", "count": 4, "size": 0.1, "height": 0.1, "travel": 0.35, "collidable": True, "fixed": False},
+            ],
+        },
+        # Level 2: More hazards and gremlins
+        2: {
+            "placement_extents": (-1.8, -1.8, 1.8, 1.8),
+            "buttons_constrained": True,
+            "hazard_specs": [
+                {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "gremlin", "count": 6, "size": 0.1, "height": 0.1, "travel": 0.35, "collidable": True, "fixed": False},
+            ],
+        },
+    },
 }
 
 
