@@ -69,6 +69,8 @@ class SafeHeightHumanoid(PipelineEnv):
 
     def __init__(
             self,
+            # Episode settings
+            episode_length: int = 1000,
             level: int | None = None,
             max_height: float | None = None,
             hinge_margin: float = 0.08,
@@ -79,6 +81,7 @@ class SafeHeightHumanoid(PipelineEnv):
         """Initialize the height-constrained humanoid environment.
 
         Args:
+            episode_length: Maximum number of steps per episode.
             level: Difficulty level (1, 2, or 3). If provided and max_height is None,
                    uses the level-specific max_height threshold.
             max_height: Maximum allowed height (z of torso CoM) determined by level. Exceeding this incurs cost.
@@ -87,6 +90,7 @@ class SafeHeightHumanoid(PipelineEnv):
             backend: Physics backend ('generalized', 'spring', 'positional').
             **kwargs: Additional arguments passed to parent PipelineEnv class.
         """
+        self.episode_length = episode_length
         # Determine max_height from level if not explicitly provided
         if max_height is None:
             max_height = get_max_height_for_level(level)
@@ -155,7 +159,10 @@ class SafeHeightHumanoid(PipelineEnv):
 
         # Reward structure: encourage forward movement while staying low
         reward = forward_reward + 1.0 - ctrl_cost  # Base reward of 1.0 like humanoidstandup
-        done = 0.0
+        
+        # Determine if episode is done
+        done_step = (step_count >= self.episode_length).astype(jp.float32)
+        done = done_step
 
         # Ensure all metrics have consistent shapes by expanding to match reward shape
         reward_shape = jp.shape(reward)
