@@ -8,6 +8,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+
+TRANSLATIONS = {
+    # Metrics
+    "reward": "Reward",
+    "cost": "Cost",
+    # Training Modes
+    "normal": "Normal",
+    "curriculum": "Curriculum",
+    "transfer": "Transfer",
+    # Baselines
+    "ppo": "PPO",
+    "ppo_cost": "PPOCost",
+    "ppo_lag": "PPOLag",
+    "ppo_pid": "PPOPID",
+    "ppo_saute": "PPOSaute",
+    "p3o": "P3O",
+    "focops": "FOCOPS",
+    # Environments
+    "safe_point_goal": "Safe Goal",
+    "safe_reacher": "Safe Reacher",
+    "safe_walker": "Safe Pathway",
+    "safe_velocity": "Safe Velocity",
+    "safe_spider": "Safe Spider",
+    "safe_block_push": "Safe Push",
+    "safe_point_circle": "Safe Circle",
+}
+
 # Define a consistent color palette for baselines across all plots
 # Using matplotlib's tab10 colormap
 _tab10_colors = cm.get_cmap("tab10").colors
@@ -33,6 +60,7 @@ REWARD_METRIC_MAP = {
     'safe_walker': 'episodic/reward_forward',
     'safe_velocity': 'episodic/forward_reward',
     'safe_spider': 'episodic/reward_forward',
+    'safe_height': 'episodic/forward_reward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
@@ -143,10 +171,19 @@ def get_series(
 
 
 def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
-    """Smooth data with a simple moving average."""
+    """Smooth data with a simple moving average that handles boundaries correctly."""
     if window_size <= 1:
         return data
-    return np.convolve(data, np.ones(window_size) / window_size, mode='same')
+    
+    # Convolve data with ones to get the sum over the window
+    data_sum = np.convolve(data, np.ones(window_size), 'same')
+    
+    # Create an array of ones with the same shape as data
+    # Convolving this with ones gives the number of valid (non-padded) points in the window
+    counts = np.convolve(np.ones_like(data), np.ones(window_size), 'same')
+    
+    # Divide sum by count to get the correct average
+    return data_sum / counts
 
 
 def align_and_stack(dfs: List[pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:
