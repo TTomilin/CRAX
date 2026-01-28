@@ -313,6 +313,9 @@ def save_snapshots(
 
 
 def main():
+    import time
+    start_time = time.time()
+
     parser = argparse.ArgumentParser(description="Visualize a trained CRAX policy")
 
     # Required arguments
@@ -458,6 +461,10 @@ def main():
     print(f"Saved metadata to: {metadata_path}")
 
     print("\nDone!")
+
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"Script finished in {duration:.2f} seconds.")
 
 
 if __name__ == "__main__":
