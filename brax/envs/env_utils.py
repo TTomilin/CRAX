@@ -33,6 +33,7 @@ def create_hazard_manager_from_config(hazards_cfg) -> HazardManager:
             collidable=spec.get("collidable", True),
             fixed=spec.get("fixed", False),
             density=spec.get("density", None),
+            travel=spec.get("travel", None),
         )
     return manager
 
@@ -60,7 +61,7 @@ def create_hazard_manager_from_specs(hazard_specs) -> HazardManager:
     """Create a HazardManager from a list of hazard spec dicts.
 
     hazard_specs: list of dicts with keys:
-      - type, count, size, height, collidable, fixed, density, positions/centers
+      - type, count, size, height, collidable, fixed, density, positions/centers, travel (for gremlins)
     """
     manager = HazardManager()
     for spec in hazard_specs:
@@ -75,6 +76,7 @@ def create_hazard_manager_from_specs(hazard_specs) -> HazardManager:
             collidable=spec.get("collidable", True),
             fixed=spec.get("fixed", False),
             density=spec.get("density"),
+            travel=spec.get("travel"),  # For gremlin hazards
         )
     return manager
 
@@ -697,3 +699,41 @@ def add_walls(hazards_cfg: ConfigDict, placement_cfg: ConfigDict) -> ConfigDict:
 def safe_norm(x, axis=None, keepdims=False, eps=1e-8):
     """Safely compute the norm with a small epsilon to avoid NaN."""
     return jp.sqrt(jp.sum(jp.square(x), axis=axis, keepdims=keepdims) + eps)
+
+
+def compute_gremlin_positions(
+    center_positions: jp.ndarray,
+    travel_radii: jp.ndarray,
+    step_count: jp.ndarray,
+    dt: float,
+) -> jp.ndarray:
+    """Compute current positions for gremlin hazards based on circular motion.
+    
+    This is a JAX-compatible function that computes gremlin positions vectorized.
+    Gremlins move in circular orbits: center + [travel * sin(phase), travel * cos(phase), z]
+    
+    Args:
+        center_positions: (N, 3) center/orbit positions for each gremlin
+        travel_radii: (N,) array of travel radii for each gremlin
+        step_count: Current step count (scalar)
+        dt: Time step duration
+        
+    Returns:
+        Current gremlin positions (N, 3)
+    """
+    # Phase for circular motion: time-based
+    phase = jp.array(step_count, dtype=jp.float32) * dt
+    
+    # Compute offsets for circular motion: [travel * sin(phase), travel * cos(phase)]
+    offset_x = travel_radii * jp.sin(phase)
+    offset_y = travel_radii * jp.cos(phase)
+    
+    # Update XY positions: center + offset
+    new_x = center_positions[:, 0] + offset_x
+    new_y = center_positions[:, 1] + offset_y
+    
+    # Keep Z position from center
+    new_z = center_positions[:, 2]
+    
+    # Combine into new positions
+    return jp.stack([new_x, new_y, new_z], axis=1)

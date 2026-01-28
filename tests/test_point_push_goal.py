@@ -21,7 +21,7 @@ import jax.random as jrandom
 import mujoco
 import pytest
 
-from brax.envs.safe_block_push import BlockPushGoal
+from brax.envs.safe_push import SafePush
 
 
 # -----------------------------------------------------------------------------
@@ -31,7 +31,7 @@ from brax.envs.safe_block_push import BlockPushGoal
 @pytest.fixture(scope="module")
 def env():
     """Create a standard test environment."""
-    return BlockPushGoal(
+    return SafePush(
         episode_length=1000,
         goal_size=0.3,
         goal_type='cube',
@@ -43,7 +43,7 @@ def env():
 @pytest.fixture(scope="module")
 def env_with_distance_reward():
     """Create environment with distance-based reward enabled."""
-    return BlockPushGoal(
+    return SafePush(
         episode_length=1000,
         goal_size=0.3,
         goal_type='cube',
@@ -137,7 +137,7 @@ class TestEnvironmentInstantiation:
             [dict(type='cylinder', count=2, size=0.15, height=0.3, collidable=True, movable=False)],
         ]
         for hazard_spec in configs:
-            env = BlockPushGoal(hazard_specs=hazard_spec, debug=False)
+            env = SafePush(hazard_specs=hazard_spec, debug=False)
             assert env is not None
 
 
@@ -414,7 +414,7 @@ class TestAgentBlockPushing:
 
     def test_agent_can_push_block(self):
         """Verify agent can physically displace the block."""
-        env = BlockPushGoal(
+        env = SafePush(
             debug=False,
             hazard_specs=[dict(type='cube', count=1, size=0.1, height=0.1, collidable=False, movable=False)],
         )
@@ -483,7 +483,7 @@ class TestGoalReached:
         """Verify goal is reached when block center is inside the goal box (SDF <= 0)."""
         goal_size = 0.3
 
-        env = BlockPushGoal(
+        env = SafePush(
             goal_size=goal_size,
             hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
             debug=False,
@@ -500,7 +500,7 @@ class TestGoalReached:
         the distance to the NEW goal position, not the old (near-zero) distance.
         Otherwise the agent would get a large negative reward on the next step.
         """
-        env = BlockPushGoal(
+        env = SafePush(
             goal_size=0.3,
             reward_distance_scale=1.0,
             hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
@@ -553,7 +553,7 @@ class TestMovingGoalRewardFairness:
         rewarded/penalized for their own actions (pushing the block), not for
         the goal's autonomous movement.
         """
-        env = BlockPushGoal(
+        env = SafePush(
             goal_size=0.3,
             goal_velocity=0.5,  # Moving goal
             reward_distance_scale=1.0,
@@ -604,7 +604,7 @@ class TestMovingGoalRewardFairness:
         reward should be positive regardless of which direction the goal
         subsequently moves.
         """
-        env = BlockPushGoal(
+        env = SafePush(
             goal_size=0.3,
             goal_velocity=0.5,  # Moving goal
             reward_distance_scale=1.0,
@@ -670,7 +670,7 @@ class TestBlockSurface:
 
     def test_stone_surface_is_default(self):
         """Verify stone is the default block surface."""
-        env = BlockPushGoal(
+        env = SafePush(
             hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
             debug=False,
         )
@@ -678,7 +678,7 @@ class TestBlockSurface:
 
     def test_icey_surface_can_be_set(self):
         """Verify icey surface can be configured."""
-        env = BlockPushGoal(
+        env = SafePush(
             block_surface="icey",
             hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
             debug=False,
@@ -688,7 +688,7 @@ class TestBlockSurface:
     def test_invalid_surface_raises_error(self):
         """Verify invalid surface type raises ValueError."""
         with pytest.raises(ValueError, match="Unknown block_surface"):
-            BlockPushGoal(
+            SafePush(
                 block_surface="invalid_surface",
                 hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
                 debug=False,
@@ -702,7 +702,7 @@ class TestBlockSurface:
         """
         def measure_block_slide(block_surface: str, seed: int = 42) -> float:
             """Push block and measure how far it slides after agent stops."""
-            env = BlockPushGoal(
+            env = SafePush(
                 block_surface=block_surface,
                 hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
                 debug=False,
@@ -744,7 +744,7 @@ class TestBlockSurface:
     def test_both_surfaces_run_without_errors(self):
         """Verify both surface types can complete a full episode without errors."""
         for surface in ["stone", "icey"]:
-            env = BlockPushGoal(
+            env = SafePush(
                 block_surface=surface,
                 hazard_specs=[dict(type='cube', count=1, size=0.1, collidable=False, movable=False)],
                 debug=False,

@@ -31,7 +31,7 @@ from brax.envs.hazards import _type_defaults_from_registry
 from brax.io import mjcf
 
 
-class BlockPushGoal(PipelineEnv):
+class SafePush(PipelineEnv):
     """
     Block Push Goal Environment
 
