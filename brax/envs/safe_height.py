@@ -160,9 +160,8 @@ class SafeHeightHumanoid(PipelineEnv):
         # Reward structure: encourage forward movement while staying low
         reward = forward_reward + 1.0 - ctrl_cost  # Base reward of 1.0 like humanoidstandup
         
-        # Determine if episode is done
-        done_step = (step_count >= self.episode_length).astype(jp.float32)
-        done = done_step
+        # #TODO Determine if episode is done
+        done = 0.0
 
         # Ensure all metrics have consistent shapes by expanding to match reward shape
         reward_shape = jp.shape(reward)
