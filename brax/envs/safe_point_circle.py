@@ -39,7 +39,7 @@ class SafePointCircle(PipelineEnv):
             # Physics settings
             backend: str = "mjx",
             n_frames: int = 5,
-            timestep: float = 0.002,
+            timestep: float = 0.02,
             terminate_when_unhealthy: bool = True,
             healthy_z_range: Tuple[float, float] = (0.05, 0.5),
             reset_noise_scale: float = 0.1,

@@ -93,7 +93,7 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "boundary_x": 1.05,
             "boundary_y": 1.05,
             "hazard_specs": [
-                {"type": "cylinder", "count": 1, "size": 0.075, "height": 0.075, "alpha_transparent": 1.0,
+                {"type": "cylinder", "count": 1, "size": 0.15, "height": 0.15, "alpha_transparent": 1.0,
                  "collidable": False, "fixed": False},
             ],
         },
@@ -102,7 +102,7 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "boundary_x": 0.975,
             "boundary_y": 0.975,
             "hazard_specs": [
-                {"type": "cylinder", "count": 2, "size": 0.1, "height": 0.1, "alpha_transparent": 1.0,
+                {"type": "cylinder", "count": 2, "size": 0.2, "height": 0.2, "alpha_transparent": 1.0,
                  "collidable": False, "fixed": False},
             ],
         },

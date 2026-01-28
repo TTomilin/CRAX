@@ -108,11 +108,10 @@ class SafeHeightHumanoid(PipelineEnv):
         current_height = com_after[2]
 
         # Forward reward: core task is moving forward (like humanoid.py)
-        forward_reward = 1.25 * velocity[0]
+        forward_reward = velocity[0]
 
         # Height bonus: encourage standing upright (reward shaping)
-        # Scale by 0.5 to make it secondary to forward movement
-        height_bonus = current_height * 0.5
+        height_bonus = current_height * 5.0
 
         # Control cost
         ctrl_cost = 0.01 * jp.sum(jp.square(action))
