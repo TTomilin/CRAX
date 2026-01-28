@@ -9,11 +9,11 @@ from utils import make_circular_policy
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from brax import envs
-from run_utils import record_episode_video_simple, record_episode_video
+from run_utils import record_episode_video
 
 
 def _init_safe_circle(level):
-    print(f"Creating SafeHeightHumanoid environment (level={level})")
+    print(f"Creating SafeCircle environment (level={level})")
     env = envs.get_environment('safe_point_circle', level=level)
     return env
 

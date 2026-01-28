@@ -24,13 +24,14 @@ from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 
 
-# Default max_height thresholds per difficulty level
+# Default max_height thresholds per difficulty level (based on humanoid CoM)
+# Humanoid CoM: lying ~0.15m, crouching ~0.5-0.7m, standing ~0.9-1.0m
 # Lower values = harder (agent must crouch lower)
 # Higher values = easier (more headroom)
 _LEVEL_MAX_HEIGHTS = {
-    1: 1.60,  # Easiest - high ceiling, plenty of room
-    2: 1.45,  # Medium
-    3: 1.30,  # Hardest - low ceiling, must crouch/crawl
+    1: 1.0,   # Easiest - can stand upright comfortably
+    2: 0.8,   # Medium - must crouch slightly
+    3: 0.6,   # Hardest - must crouch significantly or crawl
 }
 
 
@@ -62,9 +63,9 @@ class SafeHeightHumanoid(PipelineEnv):
     the maximum height boundary (ceiling).
 
     Difficulty Levels:
-        - Level 1: max_height=1.60 (easiest - high ceiling)
-        - Level 2: max_height=1.45 (medium)
-        - Level 3: max_height=1.30 (hardest - low ceiling)
+        - Level 1: max_height=1.0 (easiest - can stand upright)
+        - Level 2: max_height=0.8 (medium - must crouch slightly)
+        - Level 3: max_height=0.6 (hardest - must crouch significantly)
     """
 
     def __init__(

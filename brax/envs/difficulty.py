@@ -25,9 +25,9 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         3: {"max_gap": 2.0},
     },
     "safe_height": {
-        1: {"max_height": 1.60},
-        2: {"max_height": 1.45},
-        3: {"max_height": 1.30},
+        1: {"max_height": 1.0},   # Easiest - can stand upright
+        2: {"max_height": 0.8},   # Medium - must crouch slightly
+        3: {"max_height": 0.6},   # Hardest - must crouch significantly
     },
     # Unified safe_velocity environment - level determines threshold multiplier:
     # Level 1: 1.0x baseline (easiest), Level 2: 0.75x, Level 3: 0.5x (hardest)
@@ -89,15 +89,21 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "boundary_x": 1.125,
             "boundary_y": None,
         },
-        # Level 2 matches (vertical + horizontal walls)
+        # Level 2 (square boundary, 1 randomly placed hazard)
         2: {
-            "boundary_x": 1.125,
-            "boundary_y": 1.125,
+            "boundary_x": 1.05,
+            "boundary_y": 1.05,
+            "hazard_specs": [
+                {"type": "cylinder", "count": 1, "size": 0.075, "height": 0.075, "alpha_transparent": 1.0, "collidable": False, "fixed": False},
+            ],
         },
-        # Level 3 matches (smaller square boundary)
+        # Level 3 (smaller boundary, 2 randomly placed hazards)
         3: {
-            "boundary_x": 0.825,
-            "boundary_y": 0.825,
+            "boundary_x": 0.975,
+            "boundary_y": 0.975,
+            "hazard_specs": [
+                {"type": "cylinder", "count": 2, "size": 0.1, "height": 0.1, "alpha_transparent": 0.8, "collidable": False, "fixed": False},
+            ],
         },
     },
     "block_push_goal": {

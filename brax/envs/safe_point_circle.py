@@ -64,7 +64,7 @@ class SafePointCircle(PipelineEnv):
             ctrl_cost_weight: float = 0.0,
             boundary_x: Optional[float] = None,
             boundary_y: Optional[float] = None,
-            boundary_cost: float = 1.0,
+            boundary_cost: float = 0.1,
             # Lidar settings
             lidar_bins: int = 16,
             lidar_max_dist: float = 6.0,
@@ -120,6 +120,15 @@ class SafePointCircle(PipelineEnv):
         self._boundary_visual_y = boundary_visual_y
         self._boundary_visual_thickness = float(boundary_visual_thickness)
         self._boundary_visual_height = float(boundary_visual_height)
+
+        # Compute hazard placement extents based on boundaries (if set)
+        # Hazards should only spawn within the boundary area
+        if self._boundary_x is not None or self._boundary_y is not None:
+            haz_x = self._boundary_x if self._boundary_x is not None else placement_extents[2]
+            haz_y = self._boundary_y if self._boundary_y is not None else placement_extents[3]
+            self._hazard_placement_extents = (-haz_x, -haz_y, haz_x, haz_y)
+        else:
+            self._hazard_placement_extents = placement_extents
 
         # Build managers
         self._hazard_manager = create_hazard_manager_from_specs(hazard_specs)
@@ -364,7 +373,7 @@ class SafePointCircle(PipelineEnv):
                 per_item_keepouts=self._hazard_keepouts[:self._num_movable_hazards],
                 num_items=self._num_movable_hazards,
                 num_candidates=num_candidates,
-                placement_extents=self._placement_extents,
+                placement_extents=self._hazard_placement_extents,
                 placement_margin=self._placement_margin,
             )
 

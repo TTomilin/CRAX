@@ -76,6 +76,7 @@ def create_hazard_manager_from_specs(hazard_specs) -> HazardManager:
             collidable=spec.get("collidable", True),
             fixed=spec.get("fixed", False),
             density=spec.get("density"),
+            alpha_transparent=spec.get("alpha_transparent"),
             travel=spec.get("travel"),  # For gremlin hazards
         )
     return manager
