@@ -24,33 +24,6 @@ from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 
 
-# Default max_height thresholds per difficulty level (based on humanoid CoM)
-# Humanoid CoM: lying ~0.15m, crouching ~0.5-0.7m, standing ~0.9-1.0m
-# Lower values = harder (agent must crouch lower)
-# Higher values = easier (more headroom)
-_LEVEL_MAX_HEIGHTS = {
-    1: 1.0,   # Easiest - can stand upright comfortably
-    2: 0.8,   # Medium - must crouch slightly
-    3: 0.6,   # Hardest - must crouch significantly or crawl
-}
-
-
-def get_max_height_for_level(level: int | None = None) -> float:
-    """Get the max_height threshold for a given difficulty level.
-
-    Args:
-        level: Difficulty level (1, 2, or 3). If None, uses level 2 (default).
-
-    Returns:
-        The max_height threshold for the specified level.
-    """
-    if level is None:
-        level = 2
-    if level not in _LEVEL_MAX_HEIGHTS:
-        raise ValueError(f"Unknown level: {level}. Supported levels: {list(_LEVEL_MAX_HEIGHTS.keys())}")
-    return _LEVEL_MAX_HEIGHTS[level]
-
-
 class SafeHeightHumanoid(PipelineEnv):
     """Humanoid locomotion environment with height constraints.
 
@@ -62,20 +35,15 @@ class SafeHeightHumanoid(PipelineEnv):
     The environment includes a visual indicator (red transparent strip) showing
     the maximum height boundary (ceiling).
 
-    Difficulty Levels:
-        - Level 1: max_height=1.0 (easiest - can stand upright)
-        - Level 2: max_height=0.8 (medium - must crouch slightly)
-        - Level 3: max_height=0.6 (hardest - must crouch significantly)
     """
 
     def __init__(
             self,
-            # Episode settings
             episode_length: int = 1000,
-            level: int | None = None,
             max_height: float | None = None,
             hinge_margin: float = 0.08,
             height_cost_weight: float = 1.0,
+            reward_scaler: float = 0.01,
             backend: str = 'generalized',
             **kwargs,
     ):
@@ -92,12 +60,10 @@ class SafeHeightHumanoid(PipelineEnv):
             **kwargs: Additional arguments passed to parent PipelineEnv class.
         """
         self.episode_length = episode_length
-        # Determine max_height from level if not explicitly provided
-        if max_height is None:
-            max_height = get_max_height_for_level(level)
         self._max_height = float(max_height)
         self._hinge_margin = float(hinge_margin)
         self._height_cost_weight = height_cost_weight
+        self._reward_scaler = reward_scaler
 
         # Load humanoid_height XML and set the ceiling height
         path = epath.resource_path('brax') / 'envs/assets/safe/humanoid_height.xml'
@@ -131,25 +97,27 @@ class SafeHeightHumanoid(PipelineEnv):
         action_max = self.sys.actuator.ctrl_range[:, 1]
         action = (action + 1) * (action_max - action_min) * 0.5 + action_min
 
-        pipeline_state = self.pipeline_step(state.pipeline_state, action)
-
-        # Calculate center-of-mass (CoM) before/after step for velocity and height
+        # Store previous state for velocity calculation
         pipeline_state0 = state.pipeline_state
-        if pipeline_state0 is not None:
-            com_before, *_ = self._com(pipeline_state0)
-            com_after, *_ = self._com(pipeline_state)
-            velocity = (com_after - com_before) / self.dt
-            forward_reward = velocity[0]  # Reward forward movement
-            current_height = com_after[2]
-        else:
-            forward_reward = 0.0
-            # Fall back to root z if previous state not available
-            current_height = pipeline_state.x.pos[0, 2]
+        pipeline_state = self.pipeline_step(pipeline_state0, action)
+
+        # Calculate center-of-mass for forward velocity and height constraint
+        com_before, *_ = self._com(pipeline_state0)
+        com_after, *_ = self._com(pipeline_state)
+        velocity = (com_after - com_before) / self.dt
+        current_height = com_after[2]
+
+        # Forward reward: core task is moving forward (like humanoid.py)
+        forward_reward = 1.25 * velocity[0]
+
+        # Height bonus: encourage standing upright (reward shaping)
+        # Scale by 0.5 to make it secondary to forward movement
+        height_bonus = current_height * 0.5
 
         # Control cost
         ctrl_cost = 0.01 * jp.sum(jp.square(action))
 
-        # Height constraint cost (safety constraint): require torso height <= max_height
+        # Height constraint cost (safety constraint): require height <= max_height
         # Soft hinge: cost grows linearly when above the threshold within hinge_margin
         height_excess = jp.maximum(0.0, current_height - self._max_height)
         # Normalize by hinge margin to keep cost on [0, ~1] for small violations
@@ -158,10 +126,8 @@ class SafeHeightHumanoid(PipelineEnv):
 
         obs = self._get_obs(pipeline_state, action)
 
-        # Reward structure: encourage forward movement while staying low
-        reward = forward_reward + 1.0 - ctrl_cost  # Base reward of 1.0 like humanoidstandup
-        
-        # #TODO Determine if episode is done
+        reward = forward_reward + height_bonus - ctrl_cost
+
         done = 0.0
 
         # Ensure all metrics have consistent shapes by expanding to match reward shape
@@ -169,27 +135,24 @@ class SafeHeightHumanoid(PipelineEnv):
 
         # Update metrics with height-related information
         state.metrics.update(
-            reward_linup=forward_reward,  # Keep humanoidstandup naming
-            reward_quadctrl=-ctrl_cost,  # Keep humanoidstandup naming
-            forward_reward=forward_reward,
-            x_position=pipeline_state.x.pos[0, 0],
-            y_position=pipeline_state.x.pos[0, 1],
-            distance_from_origin=jp.linalg.norm(pipeline_state.x.pos[0, :2]),
-            x_velocity=velocity[0] if pipeline_state0 is not None else 0.0,
-            y_velocity=velocity[1] if pipeline_state0 is not None else 0.0,
+            forward_reward=jp.broadcast_to(forward_reward * self._reward_scaler, reward_shape),
+            height_bonus=jp.broadcast_to(height_bonus * self._reward_scaler, reward_shape),
+            reward_quadctrl=-ctrl_cost * self._reward_scaler,
+            x_position=com_after[0],
+            y_position=com_after[1],
+            distance_from_origin=jp.linalg.norm(com_after[:2]),
+            x_velocity=jp.broadcast_to(velocity[0], reward_shape),
+            y_velocity=jp.broadcast_to(velocity[1], reward_shape),
             height=jp.broadcast_to(current_height, reward_shape),
             height_violation=jp.broadcast_to(height_excess, reward_shape),
             height_cost=jp.broadcast_to(height_cost, reward_shape),
-            # Cost for PPO Lagrange (constraint violation)
             cost=jp.broadcast_to(height_cost, reward_shape),
         )
 
         # Update info dictionary with cost (required for PPO Lagrange v2)
-        # Get previous info or create new one
         current_info = getattr(state, 'info', {})
         step_count = current_info.get('step_count', 0) + 1
 
-        # Update info dictionary (copy existing and update)
         new_info = current_info.copy() if isinstance(current_info, dict) else {}
         new_info.update({
             "cost": height_cost,
@@ -210,6 +173,17 @@ class SafeHeightHumanoid(PipelineEnv):
         qpos = self.sys.init_q + jax.random.uniform(
             rng1, (self.sys.q_size(),), minval=-0.01, maxval=0.01
         )
+
+        # Spawn humanoid upright instead of lying down
+        # Set z position to ~1.25m for standing humanoid
+        qpos = qpos.at[2].set(1.25)
+        # Rotate 90 degrees around y-axis to stand upright: quaternion [w, x, y, z]
+        # For 90° rotation around y-axis: [cos(45°), 0, sin(45°), 0] = [0.707, 0, 0.707, 0]
+        qpos = qpos.at[3].set(0.707107)  # w
+        qpos = qpos.at[4].set(0.0)       # x
+        qpos = qpos.at[5].set(0.707107)  # y
+        qpos = qpos.at[6].set(0.0)       # z
+
         qvel = jax.random.uniform(
             rng2, (self.sys.qd_size(),), minval=low, maxval=hi
         )
@@ -218,11 +192,11 @@ class SafeHeightHumanoid(PipelineEnv):
         obs = self._get_obs(pipeline_state, jp.zeros(self.sys.act_size()))
         reward, done, zero = jp.zeros(3)
 
-        # Initialize metrics
+        # Initialize metrics matching step function
         metrics = {
-            'reward_linup': zero,
-            'reward_quadctrl': zero,
             'forward_reward': zero,
+            'height_bonus': zero,
+            'reward_quadctrl': zero,
             'x_position': zero,
             'y_position': zero,
             'distance_from_origin': zero,

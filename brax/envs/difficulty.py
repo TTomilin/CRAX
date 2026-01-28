@@ -24,9 +24,9 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         3: {"max_gap": 2.0},
     },
     "safe_height": {
-        1: {"max_height": 1.0},  # Easiest - can stand upright
-        2: {"max_height": 0.8},  # Medium - must crouch slightly
-        3: {"max_height": 0.6},  # Hardest - must crouch significantly
+        1: {"max_height": 1.30},
+        2: {"max_height": 1.15},
+        3: {"max_height": 1.00},
     },
     # Unified safe_velocity environment - level determines threshold multiplier:
     # Level 1: 1.0x baseline (easiest), Level 2: 0.75x, Level 3: 0.5x (hardest)

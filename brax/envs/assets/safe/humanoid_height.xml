@@ -43,8 +43,9 @@
 
         <!-- Height boundary ceiling (visual only, no collision) -->
         <!-- The z position (HEIGHT_PLACEHOLDER) is replaced at load time based on difficulty level -->
-        <geom name="height_boundary" type="box" pos="5.0 0 HEIGHT_PLACEHOLDER" size="10.0 3.0 0.005"
-              material="height_boundary_mat" contype="0" conaffinity="0" group="2"/>
+        <!-- Use rgba directly on geom to ensure transparency works, positioned centered on movement area -->
+        <geom name="height_boundary" type="box" pos="5.0 0 HEIGHT_PLACEHOLDER" size="10.0 3.0 0.01"
+              rgba="1.0 0.2 0.2 0.4" contype="0" conaffinity="0" group="2"/>
 
         <body name="torso" pos="0 0 0.15">
             <site name="agent" rgba="1 0 0 .1"/>
