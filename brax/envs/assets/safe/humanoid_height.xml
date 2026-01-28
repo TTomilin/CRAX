@@ -29,7 +29,7 @@
     </visual>
     <asset>
         <texture builtin="gradient" height="100" rgb1=".48 .52 .50" rgb2="0.08 0.10 0.09" type="skybox" width="100"/>
-        <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+        <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="30"/>
         <texture builtin="checker" height="100" name="texplane" rgb1="0.70 0.74 0.70" rgb2="0.64 0.68 0.64" type="2d" width="100"/>
         <material name="MatPlane" reflectance="0.18" shininess="0.1" specular="0.1" texrepeat="60 60" texture="texplane"/>
         <material name="geom" texture="texgeom" texuniform="true"/>
@@ -41,9 +41,9 @@
         <geom conaffinity="1" condim="3" friction="1 .1 .1" material="MatPlane" name="floor" pos="0 0 0" size="20 20 0.125" type="plane"/>
         <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1" mode="fixed"/>
 
-        <!-- Height boundary ceiling (visual only, no collision) -->
+        <!-- Height boundary ceiling (visual only, no collision, no shadows) -->
         <!-- The z position (HEIGHT_PLACEHOLDER) is replaced at load time based on difficulty level -->
-        <!-- Use rgba directly on geom to ensure transparency works, positioned centered on movement area -->
+        <!-- group="3" excludes from shadow computation, rgba for transparent red -->
         <geom name="height_boundary" type="box" pos="5.0 0 HEIGHT_PLACEHOLDER" size="10.0 3.0 0.01"
               rgba="1.0 0.2 0.2 0.4" contype="0" conaffinity="0" group="2"/>
 
@@ -52,7 +52,7 @@
             <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
             <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
 
-            <camera name="track" mode="trackcom" pos="0 -4 0" xyaxes="1 0 0 0 0 1"/>
+            <camera name="track" mode="trackcom" pos="0.5 -4 0.5" xyaxes="1 0 0 0 0.2 1"/>
             <joint armature="0" damping="0" limited="false" name="root" pos="0 0 0" stiffness="0" type="free"/>
             <geom contype="1" fromto="0 -.07 0 0 .07 0" name="torso1" size="0.07" type="capsule"/>
             <geom contype="1" name="head" pos="-.15 0 0" size=".09" type="sphere" user="258"/>
