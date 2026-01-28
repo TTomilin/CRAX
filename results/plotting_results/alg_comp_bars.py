@@ -25,12 +25,13 @@ TRANSLATIONS = {
     "ppo_saute": "PPOSaute",
     "p3o": "P3O",
     "focops": "FOCOPS",
-    "safe_point_goal": "Safe Point Goal",
+    "safe_point_goal": "Safe Goal",
     "safe_reacher": "Safe Reacher",
     "safe_walker": "Safe Walker",
     "safe_velocity": "Safe Velocity",
     "safe_spider": "Safe Spider",
-    "safe_block_push": "Safe Block Push",
+    "safe_block_push": "Safe Push",
+    "safe_point_circle": "Safe Circle",
 }
 
 
@@ -908,7 +909,7 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider", "safe_block_push"])
+    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider", "safe_block_push", "safe_point_circle"])
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
