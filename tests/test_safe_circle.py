@@ -12,9 +12,9 @@ from brax import envs
 from run_utils import record_episode_video
 
 
-def _init_safe_circle(level):
+def _init_safe_circle(level, seed):
     print(f"Creating SafeCircle environment (level={level})")
-    env = envs.get_environment('safe_point_circle', level=level)
+    env = envs.get_environment('safe_point_circle', level=level, seed=seed)
     return env
 
 
@@ -23,9 +23,10 @@ if __name__ == '__main__':
     parser.add_argument("--steps", type=int, default=300, help="Steps per episode")
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes")
     parser.add_argument("--level", type=int, default=1, help="Difficulty level")
+    parser.add_argument("--seed", type=int, default=1, help="seed")
     args = parser.parse_args()
 
-    env = _init_safe_circle(args.level)
+    env = _init_safe_circle(args.level, args.seed)
 
     # Make the constant-action circular policy
     make_infer = make_circular_policy(

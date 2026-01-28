@@ -365,17 +365,17 @@ class SafePointCircle(PipelineEnv):
             mpos = mpos.at[goal_ids].set(self._goal_positions)
 
         if self._num_movable_hazards > 0:
-            (rng_layout, positions_xy, keepouts, count, hazard_positions) = place_objects(
-                rng_key=rng_layout,
-                positions_xy=positions_xy,
-                keepouts_array=keepouts,
-                placed_count=count,
-                per_item_keepouts=self._hazard_keepouts[:self._num_movable_hazards],
-                num_items=self._num_movable_hazards,
-                num_candidates=num_candidates,
-                placement_extents=self._hazard_placement_extents,
-                placement_margin=self._placement_margin,
+            # Simple uniform random placement within hazard extents
+            min_x, min_y, max_x, max_y = self._hazard_placement_extents
+            rng_layout, rng_x, rng_y = jax.random.split(rng_layout, 3)
+            hazard_xs = jax.random.uniform(
+                rng_x, (self._num_movable_hazards,), minval=min_x, maxval=max_x
             )
+            hazard_ys = jax.random.uniform(
+                rng_y, (self._num_movable_hazards,), minval=min_y, maxval=max_y
+            )
+            hazard_zs = jp.full((self._num_movable_hazards,), 0.09)
+            hazard_positions = jp.stack([hazard_xs, hazard_ys, hazard_zs], axis=1)
 
             hazard_ids = jp.array(self._hazard_mocap_ids[:self._num_movable_hazards], dtype=jp.int32)
             mpos = mpos.at[hazard_ids].set(hazard_positions)
