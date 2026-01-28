@@ -59,7 +59,7 @@ class SafePointCircle(PipelineEnv):
             boundary_visual_thickness: float = 0.05,
             boundary_visual_height: float = 0.1,
             # Cost settings
-            proximity_cost_scaler: float = 1.0,
+            proximity_cost_scaler: float = 3.0,
             collision_cost: float = 1.0,
             ctrl_cost_weight: float = 0.0,
             boundary_x: Optional[float] = None,
