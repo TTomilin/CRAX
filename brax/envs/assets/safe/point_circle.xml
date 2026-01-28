@@ -13,8 +13,15 @@
     <velocity ctrlrange="-1 1" ctrllimited="true" forcerange="-.05 .05" forcelimited="true"/>
     <site size="0.032" type="sphere"/>
   </default>
+  <asset>
+    <texture builtin="gradient" height="100" rgb1=".55 .45 .35" rgb2="0.12 0.10 0.08" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.72 0.62 0.52" rgb2="0.66 0.56 0.46" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.15" shininess="0.1" specular="0.1" texrepeat="60 60" texture="texplane"/>
+    <material name="geom" texture="texgeom" texuniform="true"/>
+  </asset>
   <worldbody>
-    <geom name="floor" type="plane" size="10 10 0.1" condim="6" rgba="0.7 0.7 0.5 1"/>
+    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" size="10 10 0.1" type="plane"/>
     <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1.15" mode="fixed"/>
     <body name="agent" pos="0 0 .1">
       <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>

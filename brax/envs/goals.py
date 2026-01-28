@@ -134,7 +134,7 @@ class CylinderGoal(BaseGoal):
         return f'''    
         <body name="goal{self.goal_id}" pos="{x} {y} {z}" mocap="true">
             <geom type="cylinder" name="goal{self.goal_id}" size="{self.size} {self.height}" 
-                rgba="0 1 0 0.5" contype="0" conaffinity="0" solref="0.01 1"/>
+                rgba="0 1 0 0.2" contype="0" conaffinity="0" solref="0.01 1"/>
         </body>'''
 
     @property

@@ -188,7 +188,7 @@ class SafePointCircle(PipelineEnv):
                 pattern = rf'(<geom[^>]*name="goal{goal_id}"[^>]*rgba=")[^"]+(")'
                 xml_text, _ = re.subn(
                     pattern,
-                    lambda m: f"{m.group(1)}1 1 0 0.8{m.group(2)}",
+                    lambda m: f"{m.group(1)}1 1 0 0.3{m.group(2)}",
                     xml_text,
                 )
             with open(xml_path, "w", encoding="utf-8") as f:

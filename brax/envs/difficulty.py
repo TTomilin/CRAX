@@ -24,10 +24,10 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         2: {"max_gap": 4.0},
         3: {"max_gap": 2.0},
     },
-    "humanoid_height_constrained": {
-        1: {"max_height": 1.60},
-        2: {"max_height": 1.45},
-        3: {"max_height": 1.30},
+    "safe_height": {
+        1: {"min_height": 1.30},  # Easiest - low threshold
+        2: {"min_height": 1.45},  # Medium
+        3: {"min_height": 1.60},  # Hardest - high threshold
     },
     # Unified safe_velocity environment - level determines threshold multiplier:
     # Level 1: 1.0x baseline (easiest), Level 2: 0.75x, Level 3: 0.5x (hardest)
@@ -131,6 +131,15 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
             "hazard_specs": [
                 {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
                 {"type": "gremlin", "count": 6, "size": 0.1, "height": 0.1, "travel": 0.35, "collidable": True, "fixed": False},
+            ],
+        },
+        # Level 3: Even more hazards and gremlins in a smaller space
+        3: {
+            "placement_extents": (-1.2, -1.2, 1.2, 1.2),
+            "buttons_constrained": True,
+            "hazard_specs": [
+                {"type": "cylinder", "count": 12, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "gremlin", "count": 8, "size": 0.1, "height": 0.1, "travel": 0.45, "collidable": True, "fixed": False},
             ],
         },
     },
