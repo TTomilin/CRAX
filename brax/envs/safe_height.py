@@ -42,7 +42,7 @@ class SafeHeightHumanoid(PipelineEnv):
             episode_length: int = 1000,
             max_height: float | None = None,
             hinge_margin: float = 0.08,
-            height_cost_weight: float = 1.0,
+            height_cost_weight: float = 0.1,
             reward_scaler: float = 0.01,
             backend: str = 'generalized',
             **kwargs,
@@ -101,11 +101,14 @@ class SafeHeightHumanoid(PipelineEnv):
         pipeline_state0 = state.pipeline_state
         pipeline_state = self.pipeline_step(pipeline_state0, action)
 
-        # Calculate center-of-mass for forward velocity and height constraint
+        # Calculate center-of-mass for forward velocity
         com_before, *_ = self._com(pipeline_state0)
         com_after, *_ = self._com(pipeline_state)
         velocity = (com_after - com_before) / self.dt
-        current_height = com_after[2]
+
+        # Use torso z-position for height constraint (not CoM, which is at hip level)
+        # Torso is body index 0 in the humanoid model
+        current_height = pipeline_state.x.pos[0, 2]
 
         # Forward reward: core task is moving forward (like humanoid.py)
         forward_reward = velocity[0]
