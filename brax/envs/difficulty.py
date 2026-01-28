@@ -25,9 +25,9 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         3: {"max_gap": 2.0},
     },
     "safe_height": {
-        1: {"min_height": 1.30},  # Easiest - low threshold
-        2: {"min_height": 1.45},  # Medium
-        3: {"min_height": 1.60},  # Hardest - high threshold
+        1: {"max_height": 1.60},
+        2: {"max_height": 1.45},
+        3: {"max_height": 1.30},
     },
     # Unified safe_velocity environment - level determines threshold multiplier:
     # Level 1: 1.0x baseline (easiest), Level 2: 0.75x, Level 3: 0.5x (hardest)
@@ -84,20 +84,20 @@ _DIFFICULTY_OVERRIDES: dict[str, dict[int, dict[str, Any]]] = {
         },
     },
     "safe_point_circle": {
-        # Level 1 matches Circle0 (no walls)
+        # Level 1 (vertical walls)
         1: {
-            "boundary_x": None,
+            "boundary_x": 1.125,
             "boundary_y": None,
         },
-        # Level 2 matches Circle1 (vertical sigwalls)
+        # Level 2 matches (vertical + horizontal walls)
         2: {
             "boundary_x": 1.125,
-            "boundary_y": None,
-        },
-        # Level 3 matches Circle2 (vertical + horizontal sigwalls)
-        3: {
-            "boundary_x": 1.125,
             "boundary_y": 1.125,
+        },
+        # Level 3 matches (smaller square boundary)
+        3: {
+            "boundary_x": 0.825,
+            "boundary_y": 0.825,
         },
     },
     "block_push_goal": {
