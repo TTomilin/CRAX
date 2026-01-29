@@ -15,13 +15,19 @@
 """Height-constrained humanoid locomotion environment."""
 
 import jax
+import mujoco
 from jax import numpy as jp
 from etils import epath
 
 from brax import actuator
 from brax import base
+from brax import math as brax_math
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
+
+# Head geometry constants from humanoid_height.xml
+_HEAD_LOCAL_OFFSET = jp.array([-0.15, 0.0, 0.0])  # Head position relative to torso
+_HEAD_RADIUS = 0.09  # Head sphere radius
 
 
 class SafeHeightHumanoid(PipelineEnv):
@@ -39,31 +45,43 @@ class SafeHeightHumanoid(PipelineEnv):
 
     def __init__(
             self,
-            episode_length: int = 1000,
+            forward_reward_weight=1.25,
+            ctrl_cost_weight=0.1,
+            healthy_reward=5.0,
+            terminate_when_unhealthy=False,
+            healthy_z_range=(1.0, 2.0),
+            reset_noise_scale=1e-2,
+            exclude_current_positions_from_observation=True,
             max_height: float | None = None,
             hinge_margin: float = 0.08,
             height_cost_weight: float = 0.1,
-            reward_scaler: float = 0.01,
+            episode_length: int = 1000,
             backend: str = 'generalized',
             **kwargs,
     ):
         """Initialize the height-constrained humanoid environment.
 
+        Uses the same reward structure as regular humanoid (forward + healthy - ctrl),
+        with an additional height constraint cost for safety.
+
         Args:
-            episode_length: Maximum number of steps per episode.
-            level: Difficulty level (1, 2, or 3). If provided and max_height is None,
-                   uses the level-specific max_height threshold.
-            max_height: Maximum allowed height (z of torso CoM) determined by level. Exceeding this incurs cost.
-            hinge_margin: Soft hinge width. Violations scale linearly over this margin.
+            forward_reward_weight: Weight for forward velocity reward.
+            ctrl_cost_weight: Weight for control cost penalty.
+            healthy_reward: Reward for staying healthy (alive).
+            terminate_when_unhealthy: Whether to terminate episode when unhealthy.
+            healthy_z_range: (min, max) z-range for healthy state.
+            reset_noise_scale: Scale of noise added to initial state.
+            exclude_current_positions_from_observation: Whether to exclude x,y from obs.
+            max_height: Maximum allowed head tip height. Exceeding incurs cost.
+            hinge_margin: Soft hinge width for height constraint.
             height_cost_weight: Weight for height constraint violation cost.
-            backend: Physics backend ('generalized', 'spring', 'positional').
-            **kwargs: Additional arguments passed to parent PipelineEnv class.
+            episode_length: Maximum number of steps per episode.
+            backend: Physics backend ('generalized', 'spring', 'positional', 'mjx').
         """
         self.episode_length = episode_length
         self._max_height = float(max_height)
         self._hinge_margin = float(hinge_margin)
         self._height_cost_weight = height_cost_weight
-        self._reward_scaler = reward_scaler
 
         # Load humanoid_height XML and set the ceiling height
         path = epath.resource_path('brax') / 'envs/assets/safe/humanoid_height.xml'
@@ -80,15 +98,33 @@ class SafeHeightHumanoid(PipelineEnv):
         if backend in ['spring', 'positional']:
             sys = sys.tree_replace({'opt.timestep': 0.0015})
             n_frames = 10
-            sys = sys.replace(
-                actuator=sys.actuator.replace(
-                    gear=jp.array([350.0, 350.0, 350.0, 350.0, 350.0, 350.0,
-                                   350.0, 350.0, 350.0, 350.0, 350.0, 100.0, 100.0,
-                                   100.0, 100.0, 100.0, 100.0])))
+            gear = jp.array([
+                350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0,
+                350.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0])
+            sys = sys.replace(actuator=sys.actuator.replace(gear=gear))
 
+        if backend == 'mjx':
+            sys = sys.tree_replace({
+                'opt.solver': mujoco.mjtSolver.mjSOL_NEWTON,
+                'opt.disableflags': mujoco.mjtDisableBit.mjDSBL_EULERDAMP,
+                'opt.iterations': 1,
+                'opt.ls_iterations': 4,
+            })
+        
         kwargs['n_frames'] = kwargs.get('n_frames', n_frames)
 
         super().__init__(sys=sys, backend=backend, **kwargs)
+
+        self.episode_length = episode_length
+        self._forward_reward_weight = forward_reward_weight
+        self._ctrl_cost_weight = ctrl_cost_weight
+        self._healthy_reward = healthy_reward
+        self._terminate_when_unhealthy = terminate_when_unhealthy
+        self._healthy_z_range = healthy_z_range
+        self._reset_noise_scale = reset_noise_scale
+        self._exclude_current_positions_from_observation = (
+            exclude_current_positions_from_observation
+        )
 
     def step(self, state: State, action: jax.Array) -> State:
         """Run one timestep of the environment's dynamics with height constraints."""
@@ -101,64 +137,70 @@ class SafeHeightHumanoid(PipelineEnv):
         pipeline_state0 = state.pipeline_state
         pipeline_state = self.pipeline_step(pipeline_state0, action)
 
-        # Calculate center-of-mass for forward velocity
+        # Calculate center-of-mass for forward velocity (same as humanoid.py)
         com_before, *_ = self._com(pipeline_state0)
         com_after, *_ = self._com(pipeline_state)
         velocity = (com_after - com_before) / self.dt
 
-        # Use torso z-position for height constraint (not CoM, which is at hip level)
-        # Torso is body index 0 in the humanoid model
-        current_height = pipeline_state.x.pos[0, 2]
+        # Forward reward (same as humanoid.py)
+        forward_reward = self._forward_reward_weight * velocity[0]
 
-        # Forward reward: core task is moving forward (like humanoid.py)
-        forward_reward = velocity[0]
+        # Healthy reward (same as humanoid.py)
+        min_z, max_z = self._healthy_z_range
+        is_healthy = jp.where(pipeline_state.x.pos[0, 2] < min_z, 0.0, 1.0)
+        is_healthy = jp.where(pipeline_state.x.pos[0, 2] > max_z, 0.0, is_healthy)
+        if self._terminate_when_unhealthy:
+            healthy_reward = self._healthy_reward
+        else:
+            healthy_reward = self._healthy_reward * is_healthy
 
-        # Height bonus: encourage standing upright (reward shaping)
-        height_bonus = current_height * 5.0
+        # Control cost (same as humanoid.py)
+        ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
 
-        # Control cost
-        ctrl_cost = 0.01 * jp.sum(jp.square(action))
+        # Calculate head tip height for constraint (highest point of humanoid)
+        torso_pos = pipeline_state.x.pos[0]
+        torso_rot = pipeline_state.x.rot[0]
+        head_offset_world = brax_math.rotate(_HEAD_LOCAL_OFFSET, torso_rot)
+        head_center = torso_pos + head_offset_world
+        head_tip_height = head_center[2] + _HEAD_RADIUS
 
         # Height constraint cost (safety constraint): require height <= max_height
-        # Soft hinge: cost grows linearly when above the threshold within hinge_margin
-        height_excess = jp.maximum(0.0, current_height - self._max_height)
-        # Normalize by hinge margin to keep cost on [0, ~1] for small violations
+        height_excess = jp.maximum(0.0, head_tip_height - self._max_height)
         normalized_excess = height_excess / self._hinge_margin
         height_cost = self._height_cost_weight * normalized_excess
 
         obs = self._get_obs(pipeline_state, action)
 
-        reward = forward_reward + height_bonus - ctrl_cost
+        # Reward structure from humanoid.py
+        reward = forward_reward + healthy_reward - ctrl_cost
+        done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
 
-        done = 0.0
-
-        # Ensure all metrics have consistent shapes by expanding to match reward shape
-        reward_shape = jp.shape(reward)
-
-        # Update metrics with height-related information
+        # Update metrics
         state.metrics.update(
-            forward_reward=jp.broadcast_to(forward_reward * self._reward_scaler, reward_shape),
-            height_bonus=jp.broadcast_to(height_bonus * self._reward_scaler, reward_shape),
-            reward_quadctrl=-ctrl_cost * self._reward_scaler,
+            forward_reward=forward_reward,
+            reward_linvel=forward_reward,
+            reward_quadctrl=-ctrl_cost,
+            reward_alive=healthy_reward,
             x_position=com_after[0],
             y_position=com_after[1],
-            distance_from_origin=jp.linalg.norm(com_after[:2]),
-            x_velocity=jp.broadcast_to(velocity[0], reward_shape),
-            y_velocity=jp.broadcast_to(velocity[1], reward_shape),
-            height=jp.broadcast_to(current_height, reward_shape),
-            height_violation=jp.broadcast_to(height_excess, reward_shape),
-            height_cost=jp.broadcast_to(height_cost, reward_shape),
-            cost=jp.broadcast_to(height_cost, reward_shape),
+            distance_from_origin=jp.linalg.norm(com_after),
+            x_velocity=velocity[0],
+            y_velocity=velocity[1],
+            # Height constraint metrics
+            head_height=head_tip_height,
+            height_violation=height_excess,
+            height_cost=height_cost,
+            cost=height_cost,
         )
 
-        # Update info dictionary with cost (required for PPO Lagrange v2)
+        # Update info dictionary with cost (required for constrained RL)
         current_info = getattr(state, 'info', {})
         step_count = current_info.get('step_count', 0) + 1
 
         new_info = current_info.copy() if isinstance(current_info, dict) else {}
         new_info.update({
             "cost": height_cost,
-            "height": current_height,
+            "head_height": head_tip_height,
             "height_violation": height_excess,
             "step_count": step_count,
         })
@@ -168,19 +210,18 @@ class SafeHeightHumanoid(PipelineEnv):
         )
 
     def reset(self, rng: jax.Array) -> State:
-        """Reset the environment with height constraint metrics."""
+        """Resets the environment to an initial state."""
         rng, rng1, rng2 = jax.random.split(rng, 3)
 
-        low, hi = -0.01, 0.01
+        low, hi = -self._reset_noise_scale, self._reset_noise_scale
         qpos = self.sys.init_q + jax.random.uniform(
-            rng1, (self.sys.q_size(),), minval=-0.01, maxval=0.01
+            rng1, (self.sys.q_size(),), minval=low, maxval=hi
         )
 
-        # Spawn humanoid upright instead of lying down
+        # Spawn humanoid upright (XML has torso at z=0.15 lying down)
         # Set z position to ~1.25m for standing humanoid
         qpos = qpos.at[2].set(1.25)
         # Rotate 90 degrees around y-axis to stand upright: quaternion [w, x, y, z]
-        # For 90° rotation around y-axis: [cos(45°), 0, sin(45°), 0] = [0.707, 0, 0.707, 0]
         qpos = qpos.at[3].set(0.707107)  # w
         qpos = qpos.at[4].set(0.0)       # x
         qpos = qpos.at[5].set(0.707107)  # y
@@ -194,26 +235,27 @@ class SafeHeightHumanoid(PipelineEnv):
         obs = self._get_obs(pipeline_state, jp.zeros(self.sys.act_size()))
         reward, done, zero = jp.zeros(3)
 
-        # Initialize metrics matching step function
+        # Initialize metrics matching
         metrics = {
             'forward_reward': zero,
-            'height_bonus': zero,
+            'reward_linvel': zero,
             'reward_quadctrl': zero,
+            'reward_alive': zero,
             'x_position': zero,
             'y_position': zero,
             'distance_from_origin': zero,
             'x_velocity': zero,
             'y_velocity': zero,
-            'height': zero,
+            'head_height': zero,
             'height_violation': zero,
             'height_cost': zero,
             'cost': zero,
         }
 
-        # Initialize info dictionary with cost (required for PPO Lagrange v2)
+        # Initialize info dictionary with cost (required for constrained RL)
         info = {
             "cost": zero,
-            "height": zero,
+            "head_height": zero,
             "height_violation": zero,
             "step_count": 0,
         }
