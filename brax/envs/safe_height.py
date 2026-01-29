@@ -45,7 +45,7 @@ class SafeHeightHumanoid(PipelineEnv):
 
     def __init__(
             self,
-            forward_reward_weight=1.25,
+            forward_reward_weight=5.0,
             ctrl_cost_weight=0.1,
             healthy_reward=5.0,
             terminate_when_unhealthy=False,
