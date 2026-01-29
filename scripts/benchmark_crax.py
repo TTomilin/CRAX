@@ -399,7 +399,7 @@ def main():
     sys.stdout.flush()
     
     # Configuration - powers of 2 up to 2048
-    num_envs_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+    num_envs_list = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
     output_dir = Path(f"safebrax_benchmark_results_{time.strftime('%Y%m%d_%H%M%S')}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
