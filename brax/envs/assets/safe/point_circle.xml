@@ -22,7 +22,7 @@
   </asset>
   <worldbody>
     <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" size="10 10 0.1" type="plane"/>
-    <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1.15" mode="fixed"/>
+    <camera name="fixedfar" pos="0 -3 3" zaxis="0 -1 1.15" mode="fixed"/>
     <body name="agent" pos="0 0 .1">
       <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
       <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
