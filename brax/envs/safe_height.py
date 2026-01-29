@@ -55,6 +55,9 @@ class SafeHeightHumanoid(PipelineEnv):
             max_height: float | None = None,
             hinge_margin: float = 0.08,
             height_cost_weight: float = 0.1,
+            # Forward progress termination
+            progress_check_window: int = 200,
+            min_forward_progress: float = 0.5,
             episode_length: int = 1000,
             backend: str = 'generalized',
             **kwargs,
@@ -75,6 +78,8 @@ class SafeHeightHumanoid(PipelineEnv):
             max_height: Maximum allowed head tip height. Exceeding incurs cost.
             hinge_margin: Soft hinge width for height constraint.
             height_cost_weight: Weight for height constraint violation cost.
+            progress_check_window: Number of steps to check for forward progress.
+            min_forward_progress: Minimum distance to move in progress_check_window steps.
             episode_length: Maximum number of steps per episode.
             backend: Physics backend ('generalized', 'spring', 'positional', 'mjx').
         """
@@ -125,6 +130,9 @@ class SafeHeightHumanoid(PipelineEnv):
         self._exclude_current_positions_from_observation = (
             exclude_current_positions_from_observation
         )
+        # Forward progress termination settings
+        self._progress_check_window = progress_check_window
+        self._min_forward_progress = min_forward_progress
 
     def step(self, state: State, action: jax.Array) -> State:
         """Run one timestep of the environment's dynamics with height constraints."""
@@ -175,6 +183,31 @@ class SafeHeightHumanoid(PipelineEnv):
         reward = forward_reward + healthy_reward - ctrl_cost
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
 
+        # Forward progress termination check
+        current_info = getattr(state, 'info', {})
+        checkpoint_x = current_info.get('checkpoint_x', 0.0)
+        steps_since_checkpoint = current_info.get('steps_since_checkpoint', 0) + 1
+
+        # Check progress every N steps
+        progress_since_checkpoint = com_after[0] - checkpoint_x
+        no_progress = jp.logical_and(
+            steps_since_checkpoint >= self._progress_check_window,
+            progress_since_checkpoint < self._min_forward_progress
+        )
+        done = jp.where(no_progress, 1.0, done)
+
+        # Reset checkpoint if we've made progress or hit the window
+        new_checkpoint_x = jp.where(
+            steps_since_checkpoint >= self._progress_check_window,
+            com_after[0],
+            checkpoint_x
+        )
+        new_steps_since_checkpoint = jp.where(
+            steps_since_checkpoint >= self._progress_check_window,
+            0,
+            steps_since_checkpoint
+        )
+
         # Update metrics
         state.metrics.update(
             forward_reward=forward_reward,
@@ -193,8 +226,7 @@ class SafeHeightHumanoid(PipelineEnv):
             cost=height_cost,
         )
 
-        # Update info dictionary with cost (required for constrained RL)
-        current_info = getattr(state, 'info', {})
+        # Update info dictionary with cost and progress tracking
         step_count = current_info.get('step_count', 0) + 1
 
         new_info = current_info.copy() if isinstance(current_info, dict) else {}
@@ -203,6 +235,8 @@ class SafeHeightHumanoid(PipelineEnv):
             "head_height": head_tip_height,
             "height_violation": height_excess,
             "step_count": step_count,
+            "checkpoint_x": new_checkpoint_x,
+            "steps_since_checkpoint": new_steps_since_checkpoint,
         })
 
         return state.replace(
@@ -235,7 +269,11 @@ class SafeHeightHumanoid(PipelineEnv):
         obs = self._get_obs(pipeline_state, jp.zeros(self.sys.act_size()))
         reward, done, zero = jp.zeros(3)
 
-        # Initialize metrics matching
+        # Get initial x position for progress tracking
+        initial_com, *_ = self._com(pipeline_state)
+        initial_x = initial_com[0]
+
+        # Initialize metrics
         metrics = {
             'forward_reward': zero,
             'reward_linvel': zero,
@@ -252,12 +290,14 @@ class SafeHeightHumanoid(PipelineEnv):
             'cost': zero,
         }
 
-        # Initialize info dictionary with cost (required for constrained RL)
+        # Initialize info dictionary with cost and progress tracking
         info = {
             "cost": zero,
             "head_height": zero,
             "height_violation": zero,
             "step_count": 0,
+            "checkpoint_x": initial_x,
+            "steps_since_checkpoint": 0,
         }
 
         return State(pipeline_state, obs, reward, done, metrics, info)
