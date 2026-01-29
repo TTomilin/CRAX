@@ -30,6 +30,7 @@ tensorboardX
 matplotlib>=3.10.0
 imageio>=2.37.0
 Pillow
+seaborn
 
 # Web server (for visualization)
 flask>=3.1.0
@@ -40,6 +41,7 @@ jinja2
 scipy
 trimesh
 typing-extensions
+pandas
 
 # Optional: Gym compatibility
 gym>=0.26.0

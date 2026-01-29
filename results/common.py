@@ -11,7 +11,7 @@ import pandas as pd
 
 TRANSLATIONS = {
     # Metrics
-    "reward": "Score",
+    "reward": "Reward",
     "cost": "Cost",
     # Training Modes
     "normal": "Normal",
@@ -33,6 +33,7 @@ TRANSLATIONS = {
     "safe_spider": "Safe Spider",
     "safe_block_push": "Safe Push",
     "safe_point_circle": "Safe Circle",
+    "safe_height": "Safe Height",
 }
 
 # Define a consistent color palette for baselines across all plots

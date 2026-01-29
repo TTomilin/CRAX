@@ -505,7 +505,7 @@ def plot_final_comparison(
 
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_final.pdf"
+    out_path = out_dir / f"{args.out_name}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved final comparison: {out_path}")
@@ -565,7 +565,7 @@ def build_args() -> argparse.ArgumentParser:
                    help="Base data directory")
     p.add_argument(
         "--envs", type=str, nargs="+",
-        default=["safe_point_goal", "safe_reacher", "safe_walker"],
+        default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_height"],
         help="Environments to compare"
     )
     p.add_argument(

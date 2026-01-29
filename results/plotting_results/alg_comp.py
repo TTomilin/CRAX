@@ -16,13 +16,6 @@ from results.common import (
     BASELINES_COLORS, TRANSLATIONS,
 )
 
-# Optional safety thresholds per env for the cost plot (None disables line)
-SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 25.0,
-    "safe_reacher": 25.0,
-    "safe_walker": 25.0,
-}
-
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
     "safe_point_goal": 5_000_000_00,
@@ -77,7 +70,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.0, wspace=0.35, hspace=0.55)
 
     # map (env_i, metric_i) -> axis
     def get_ax(env_i: int, metric_i: int):
@@ -149,11 +142,9 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
             # safety threshold line (red dashed) with legend entry, no text on plot
             if metric == "cost" and not args.no_threshold:
-                thr = SAFETY_THRESHOLDS.get(env, None)
-                if thr is not None:
-                    thr_line = ax.axhline(thr, linestyle="--", color="red", linewidth=1.8)
-                    if "Threshold" not in legend_handles:
-                        legend_handles["Threshold"] = thr_line
+                thr_line = ax.axhline(25.0, linestyle="--", color="red", linewidth=1.8)
+                if "Threshold" not in legend_handles:
+                    legend_handles["Threshold"] = thr_line
 
             # Per-env x max takes priority, then CLI x_max, then data-driven max
             x_max = ENV_X_MAX.get(env, None)
@@ -184,7 +175,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.1), ncol=min(len(labels), 10),
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.09), ncol=min(len(labels), 10),
                    fancybox=True,
                    shadow=True)
 
@@ -192,7 +183,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{args.out_name}_level_{args.level}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
-    plt.show()
+    # plt.show()
     print(f"Saved figure: {out_path}")
 
 
@@ -212,7 +203,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
+                   default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider", "safe_block_push", "safe_point_circle", "safe_height"])
     p.add_argument("--algos", type=str, nargs="+",
                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
@@ -226,7 +217,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--smoothing_window", type=int, default=1, help="Moving average window size for smoothing.")
     p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
     p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
-    p.add_argument("--panel_h", type=float, default=2.3, help="Height per env row.")
+    p.add_argument("--panel_h", type=float, default=3.0, help="Height per env row.")
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="baselines")
     return p
