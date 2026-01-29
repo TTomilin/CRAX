@@ -55,7 +55,6 @@ class SafeHeightHumanoid(PipelineEnv):
             max_height: float | None = None,
             hinge_margin: float = 0.08,
             height_cost_weight: float = 0.1,
-            # Forward progress termination
             progress_check_window: int = 200,
             min_forward_progress: float = 0.5,
             episode_length: int = 1000,
