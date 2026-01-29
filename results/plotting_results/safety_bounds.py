@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import FormatStrFormatter
 
-from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, DEFAULT_REWARD_METRIC
+from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, \
+    DEFAULT_REWARD_METRIC, TRANSLATIONS
 
 # Map short metric names -> Parquet column names
 METRIC_COLS = {
@@ -15,18 +16,12 @@ METRIC_COLS = {
     "cost": "episodic/cost",
 }
 
-# Pretty labels
-TRANSLATIONS = {
-    "reward": "Reward",
-    "cost": "Cost",
-    "ppo_pid": "PPOPID",
-}
-
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
     "safe_point_goal": 1_000_000_00,
     "safe_reacher": 5_000_000_00,
-    "safe_walker": 5_000_000_00,
+    "safe_block_push": 5_000_000_00,
+    "safe_point_circle": 5_000_000_00,
 }
 
 
@@ -282,7 +277,7 @@ def build_args() -> argparse.ArgumentParser:
         "--envs",
         type=str,
         nargs="+",
-        default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_block_push"],
+        default=["safe_point_goal", "safe_reacher", "safe_block_push", "safe_point_circle"],
     )
     p.add_argument(
         "--algo",

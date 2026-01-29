@@ -5,7 +5,6 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import FormatStrFormatter
 
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
@@ -14,21 +13,8 @@ from results.common import (
     set_mpl_style,
     nice_grid,
     moving_average,
-    BASELINES_COLORS,
+    BASELINES_COLORS, TRANSLATIONS,
 )
-
-# Pretty labels (edit if you care)
-TRANSLATIONS = {
-    "reward": "Reward",
-    "cost": "Cost",
-    "ppo": "PPO",
-    "ppo_cost": "PPOCost",
-    "ppo_lag": "PPOLag",
-    "ppo_pid": "PPOPID",
-    "ppo_saute": "PPOSaute",
-    "p3o": "P3O",
-    "focops": "FOCOPS",
-}
 
 # Optional safety thresholds per env for the cost plot (None disables line)
 SAFETY_THRESHOLDS: Dict[str, float] = {
@@ -157,8 +143,9 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
             if y_max >= 1000:
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             else:
-                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
-            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
+                ax.ticklabel_format(axis="y", style="plain",
+                                    useOffset=False)  # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False)  # Ensure no offset is used for formatting
 
             # safety threshold line (red dashed) with legend entry, no text on plot
             if metric == "cost" and not args.no_threshold:
@@ -224,7 +211,8 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot Safe-Brax Parquet results.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
+    p.add_argument("--envs", type=str, nargs="+",
+                   default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity"])
     p.add_argument("--algos", type=str, nargs="+",
                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])

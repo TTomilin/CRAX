@@ -22,24 +22,8 @@ from results.common import (
     align_and_stack,
     set_mpl_style,
     nice_grid,
-    BASELINES_COLORS,
+    BASELINES_COLORS, TRANSLATIONS,
 )
-
-# Labels for display
-TRANSLATIONS = {
-    "reward": "Reward",
-    "cost": "Cost",
-    "ppo": "PPO",
-    "ppo_cost": "PPOCost",
-    "ppo_lag": "PPOLag",
-    "ppo_pid": "PPOPID",
-    "ppo_saute": "PPOSaute",
-    "p3o": "P3O",
-    "focops": "FOCOPS",
-    "normal": "Normal",
-    "curriculum": "Curriculum",
-    "transfer": "Transfer",
-}
 
 METHOD_LINESTYLES = {
     "normal": "-",
@@ -619,7 +603,7 @@ def build_args() -> argparse.ArgumentParser:
 
     # Output
     p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="method_comparison")
+    p.add_argument("--out_name", type=str, default="curriculum_transfer")
 
     return p
 

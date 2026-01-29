@@ -11,7 +11,7 @@ import pandas as pd
 
 TRANSLATIONS = {
     # Metrics
-    "reward": "Reward",
+    "reward": "Score",
     "cost": "Cost",
     # Training Modes
     "normal": "Normal",

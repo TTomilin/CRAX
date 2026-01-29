@@ -11,28 +11,8 @@ from results.common import (
     get_series,
     set_mpl_style,
     nice_grid as _nice_grid,
-    BASELINES_COLORS,
+    BASELINES_COLORS, TRANSLATIONS,
 )
-
-# Pretty labels
-TRANSLATIONS = {
-    "reward": "Reward",
-    "cost": "Cost",
-    "ppo": "PPO",
-    "ppo_cost": "PPOCost",
-    "ppo_lag": "PPOLag",
-    "ppo_pid": "PPOPID",
-    "ppo_saute": "PPOSaute",
-    "p3o": "P3O",
-    "focops": "FOCOPS",
-    "safe_point_goal": "Safe Goal",
-    "safe_reacher": "Safe Reacher",
-    "safe_walker": "Safe Walker",
-    "safe_velocity": "Safe Velocity",
-    "safe_spider": "Safe Spider",
-    "safe_block_push": "Safe Push",
-    "safe_point_circle": "Safe Circle",
-}
 
 
 def load_final_values(
@@ -154,7 +134,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.14, wspace=0.35, hspace=0.55)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12, wspace=0.35, hspace=0.55)
 
     legend_handles: Dict[str, plt.Line2D] = {}
 
