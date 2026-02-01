@@ -1,0 +1,87 @@
+<!-- Walker2D Agent - A bipedal walking robot -->
+<!-- Navigation type: 1D forward (x-axis locomotion) -->
+<!-- Suitable tasks: forward_run, velocity_constrained -->
+<agent name="walker2d" navigation="1d_forward">
+  <compiler angle="radian" autolimits="true"/>
+
+  <option timestep="0.002" iterations="4" gravity="0 0 -6.5"/>
+
+  <default>
+    <joint limited="true" armature="0.01" damping="0.1"/>
+    <geom contype="0" conaffinity="0" friction="0.7 0.1 0.1" rgba="0.75 0.65 0.55 0.8"/>
+  </default>
+
+  <custom>
+    <numeric data="5000" name="constraint_limit_stiffness"/>
+    <numeric data="10000" name="constraint_stiffness"/>
+    <numeric data="20" name="constraint_ang_damping"/>
+    <numeric data="1" name="vel_damping"/>
+    <numeric data="-0.05" name="ang_damping"/>
+    <numeric data="0" name="spring_mass_scale"/>
+    <numeric data="1" name="spring_inertia_scale"/>
+    <numeric data="15" name="solver_maxls"/>
+    <numeric data="20" name="matrix_inv_iterations"/>
+  </custom>
+
+  <!-- Agent body - will be inserted into worldbody -->
+  <!-- torso_name: torso, root_body: torso -->
+  <body name="torso" pos="0 0 1.25">
+    <site name="agent" rgba="1 0 0 .1"/>
+    <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
+    <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
+
+    <joint name="rootx" pos="0 0 0" axis="1 0 0" limited="false" type="slide" armature="0" damping="0"/>
+    <joint name="rootz" pos="0 0 0" axis="0 0 1" limited="false" type="slide" armature="0" damping="0"/>
+    <joint name="rooty" pos="0 0 0" axis="0 1 0" limited="false" armature="0" damping="0"/>
+    <geom name="torso_geom" size="0.05 0.2" type="capsule" contype="1" friction="0.9 0.1 0.1" rgba="0.82 0.71 0.55 1.0"/>
+    <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1" mode="trackcom"/>
+    <camera name="track" pos="0 -3 -0.25" quat="0.707107 0.707107 0 0" mode="trackcom"/>
+
+    <body name="thigh" pos="0 0 -0.2">
+      <joint name="thigh_joint" pos="0 0 0" axis="0 -1 0" range="-2.61799 0"/>
+      <geom name="thigh_geom" size="0.05 0.225" pos="0 0 -0.225" type="capsule" friction="0.9 0.1 0.1" rgba="0.76 0.65 0.50 1.0"/>
+      <body name="leg" pos="0 0 -0.7">
+        <joint name="leg_joint" pos="0 0 0.25" axis="0 -1 0" range="-2.61799 0"/>
+        <geom name="leg_geom" size="0.04 0.25" type="capsule" friction="0.9 0.1 0.1" rgba="0.70 0.58 0.45 1.0"/>
+        <body name="foot" pos="0.2 0 -0.35">
+          <joint name="foot_joint" pos="-0.2 0 0.1" axis="0 -1 0" range="-0.785398 0.785398"/>
+          <geom name="foot_geom" size="0.06 0.1" pos="-0.1 0 0.1" quat="0.707107 0 -0.707107 0" type="capsule" contype="1" friction="0.9 0.1 0.1" rgba="0.62 0.50 0.38 1.0"/>
+          <geom name="indicator_foot_right" type="sphere" size="0.25" pos="-0.1 0 0.05" contype="0" conaffinity="0" rgba="1 0.2 0.8 0" mass="0"/>
+        </body>
+      </body>
+    </body>
+
+    <body name="thigh_left" pos="0 0 -0.2">
+      <joint name="thigh_left_joint" pos="0 0 0" axis="0 -1 0" range="-2.61799 0"/>
+      <geom name="thigh_left_geom" size="0.05 0.225" pos="0 0 -0.225" type="capsule" friction="0.9 0.1 0.1" rgba="0.76 0.65 0.50 1.0"/>
+      <body name="leg_left" pos="0 0 -0.7">
+        <joint name="leg_left_joint" pos="0 0 0.25" axis="0 -1 0" range="-2.61799 0"/>
+        <geom name="leg_left_geom" size="0.04 0.25" type="capsule" friction="0.9 0.1 0.1" rgba="0.70 0.58 0.45 1.0"/>
+        <body name="foot_left" pos="0.2 0 -0.35">
+          <joint name="foot_left_joint" pos="-0.2 0 0.1" axis="0 -1 0" range="-0.785398 0.785398"/>
+          <geom name="foot_left_geom" size="0.06 0.1" pos="-0.1 0 0.1" quat="0.707107 0 -0.707107 0" type="capsule" contype="1" friction="1.9 0.1 0.1" rgba="0.62 0.50 0.38 1.0"/>
+          <geom name="indicator_foot_left" type="sphere" size="0.25" pos="-0.1 0 0.05" contype="0" conaffinity="0" rgba="1 0.2 0.8 0" mass="0"/>
+        </body>
+      </body>
+    </body>
+  </body>
+
+  <sensor>
+    <accelerometer site="agent" name="accelerometer"/>
+    <velocimeter site="agent" name="velocimeter"/>
+    <gyro site="agent" name="gyro"/>
+    <magnetometer site="agent" name="magnetometer"/>
+    <subtreecom body="torso" name="subtreecom"/>
+    <subtreelinvel body="torso" name="subtreelinvel"/>
+    <subtreeangmom body="torso" name="subtreeangmom"/>
+  </sensor>
+
+  <actuator>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="thigh_joint"/>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="leg_joint"/>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="foot_joint"/>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="thigh_left_joint"/>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="leg_left_joint"/>
+    <motor ctrlrange="-1.0 1.0" gear="100" joint="foot_left_joint"/>
+  </actuator>
+</agent>

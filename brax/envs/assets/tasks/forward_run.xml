@@ -1,0 +1,38 @@
+<!-- Forward Run Task - Run forward on a track while avoiding hazard zones -->
+<!-- Navigation type: 1D forward (requires agents with 1d_forward navigation) -->
+<!-- Compatible agents: walker2d, hopper, half_cheetah -->
+<task name="forward_run" navigation="1d_forward">
+  <visual>
+    <map znear="0.02"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".45 .50 .55" rgb2="0.1 0.1 0.12" width="100" height="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.6 0.6 0.6" rgb2="0.6 0.6 0.6" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.72 0.72 0.72" rgb2="0.68 0.68 0.68" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.2" shininess="0.1" specular="0.1" texrepeat="60 60" texture="texplane"/>
+    <material name="MatTrack" rgba="0.75 0.75 0.75 0.4" reflectance="0.1" shininess="0.05" specular="0.02"/>
+    <material name="geom" texture="texgeom" texuniform="true"/>
+  </asset>
+
+  <!-- World elements - agent body will be inserted here -->
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true" cutoff="100" exponent="1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>
+    <geom name="floor" size="40 40 40" type="plane" conaffinity="1" material="MatPlane"/>
+    <geom name="track" type="box" size="40 1.0 0.001" pos="0 0 0.0012" material="MatTrack" contype="0" conaffinity="0"/>
+
+    <!-- AGENT_PLACEHOLDER: Agent body will be inserted here by XMLBuilder -->
+
+    <!-- Hazard zones are added dynamically by the environment along the track -->
+  </worldbody>
+
+  <!-- Task parameters for environment configuration -->
+  <custom>
+    <!-- Task-specific parameters -->
+    <numeric data="40.0" name="track_length"/>
+    <numeric data="2.0" name="track_width"/>
+    <numeric data="0.5" name="hazard_width"/>
+    <numeric data="1.0" name="hazard_length"/>
+    <numeric data="5.0" name="hazard_spacing"/>
+  </custom>
+</task>

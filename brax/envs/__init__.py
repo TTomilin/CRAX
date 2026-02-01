@@ -40,9 +40,8 @@ from brax.envs import safe_spider
 from brax.envs import safe_walker
 from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
 from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
-from brax.envs.safe_point_goal import SafePointGoal
-from brax.envs.safe_point_circle import SafePointCircle
-from brax.envs.safe_point_button import SafePointButton
+from brax.envs.safe_goal import SafePointGoal
+from brax.envs.safe_circle import SafePointCircle
 from brax.envs.safe_push import SafePush
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
 from brax.envs.wrappers import training
