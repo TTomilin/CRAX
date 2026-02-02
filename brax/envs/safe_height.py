@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Height-constrained humanoid locomotion environment."""
+"""Height-constrained locomotion environment.
+
+Abstract base class and agent-specific implementations for height-constrained tasks.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Tuple
 
 import jax
 import mujoco
@@ -25,23 +31,60 @@ from brax import math as brax_math
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 
-# Head geometry constants from humanoid_height.xml
-_HEAD_LOCAL_OFFSET = jp.array([-0.15, 0.0, 0.0])  # Head position relative to torso
-_HEAD_RADIUS = 0.09  # Head sphere radius
 
+class SafeHeight(PipelineEnv, ABC):
+    """Abstract base class for height-constrained locomotion environments.
 
-class SafeHeightHumanoid(PipelineEnv):
-    """Humanoid locomotion environment with height constraints.
+    The agent must learn to move forward while staying below a height constraint.
+    The constraint violation (cost) is computed based on the agent's height
+    exceeding a specified threshold.
 
-    This environment extends the standard HumanoidStandup environment by adding
-    height constraints that serve as safety constraints for constrained RL training.
-    The constraint violation (cost) is computed based on the humanoid's height
-    exceeding a specified threshold, forcing it to learn to crouch or crawl.
-
-    The environment includes a visual indicator (red transparent strip) showing
-    the maximum height boundary (ceiling).
-
+    Subclasses must implement agent-specific properties for:
+    - XML file path
+    - Body configuration
+    - Height tracking geometry
     """
+
+    @property
+    @abstractmethod
+    def agent_xml_path(self) -> str:
+        """Return the path to the agent's XML file."""
+        pass
+
+    @property
+    @abstractmethod
+    def head_local_offset(self) -> jp.ndarray:
+        """Return the local offset of the head from the torso body."""
+        pass
+
+    @property
+    @abstractmethod
+    def head_radius(self) -> float:
+        """Return the radius of the head geometry for height calculation."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_spawn_height(self) -> float:
+        """Return the default z-position for spawning the agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_spawn_rotation(self) -> Tuple[float, float, float, float]:
+        """Return the default quaternion [w, x, y, z] for spawning."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        """Return the default (min, max) z-range for healthy state."""
+        pass
+
+    @abstractmethod
+    def _get_gear_for_backend(self, backend: str) -> jp.ndarray:
+        """Return actuator gear values for the given backend."""
+        pass
 
     def __init__(
             self,
@@ -49,10 +92,10 @@ class SafeHeightHumanoid(PipelineEnv):
             ctrl_cost_weight=0.1,
             healthy_reward=5.0,
             terminate_when_unhealthy=False,
-            healthy_z_range=(1.0, 2.0),
+            healthy_z_range: Tuple[float, float] = None,
             reset_noise_scale=1e-2,
             exclude_current_positions_from_observation=True,
-            max_height: float | None = None,
+            max_height: float = None,
             hinge_margin: float = 0.08,
             height_cost_weight: float = 0.1,
             progress_check_window: int = 200,
@@ -61,10 +104,7 @@ class SafeHeightHumanoid(PipelineEnv):
             backend: str = 'generalized',
             **kwargs,
     ):
-        """Initialize the height-constrained humanoid environment.
-
-        Uses the same reward structure as regular humanoid (forward + healthy - ctrl),
-        with an additional height constraint cost for safety.
+        """Initialize the height-constrained environment.
 
         Args:
             forward_reward_weight: Weight for forward velocity reward.
@@ -74,7 +114,7 @@ class SafeHeightHumanoid(PipelineEnv):
             healthy_z_range: (min, max) z-range for healthy state.
             reset_noise_scale: Scale of noise added to initial state.
             exclude_current_positions_from_observation: Whether to exclude x,y from obs.
-            max_height: Maximum allowed head tip height. Exceeding incurs cost.
+            max_height: Maximum allowed height. Exceeding incurs cost.
             hinge_margin: Soft hinge width for height constraint.
             height_cost_weight: Weight for height constraint violation cost.
             progress_check_window: Number of steps to check for forward progress.
@@ -87,8 +127,12 @@ class SafeHeightHumanoid(PipelineEnv):
         self._hinge_margin = float(hinge_margin)
         self._height_cost_weight = height_cost_weight
 
-        # Load humanoid_height XML and set the ceiling height
-        path = epath.resource_path('brax') / 'envs/assets/safe/humanoid_height.xml'
+        # Use default healthy z range if not provided
+        if healthy_z_range is None:
+            healthy_z_range = self.default_healthy_z_range
+
+        # Load XML and set the ceiling height
+        path = epath.resource_path('brax') / self.agent_xml_path
         xml_string = path.read_text()
 
         # Replace the placeholder with the actual max_height value
@@ -102,9 +146,7 @@ class SafeHeightHumanoid(PipelineEnv):
         if backend in ['spring', 'positional']:
             sys = sys.tree_replace({'opt.timestep': 0.0015})
             n_frames = 10
-            gear = jp.array([
-                350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0,
-                350.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0])
+            gear = self._get_gear_for_backend(backend)
             sys = sys.replace(actuator=sys.actuator.replace(gear=gear))
 
         if backend == 'mjx':
@@ -114,7 +156,7 @@ class SafeHeightHumanoid(PipelineEnv):
                 'opt.iterations': 1,
                 'opt.ls_iterations': 4,
             })
-        
+
         kwargs['n_frames'] = kwargs.get('n_frames', n_frames)
 
         super().__init__(sys=sys, backend=backend, **kwargs)
@@ -144,15 +186,15 @@ class SafeHeightHumanoid(PipelineEnv):
         pipeline_state0 = state.pipeline_state
         pipeline_state = self.pipeline_step(pipeline_state0, action)
 
-        # Calculate center-of-mass for forward velocity (same as humanoid.py)
+        # Calculate center-of-mass for forward velocity
         com_before, *_ = self._com(pipeline_state0)
         com_after, *_ = self._com(pipeline_state)
         velocity = (com_after - com_before) / self.dt
 
-        # Forward reward (same as humanoid.py)
+        # Forward reward
         forward_reward = self._forward_reward_weight * velocity[0]
 
-        # Healthy reward (same as humanoid.py)
+        # Healthy reward
         min_z, max_z = self._healthy_z_range
         is_healthy = jp.where(pipeline_state.x.pos[0, 2] < min_z, 0.0, 1.0)
         is_healthy = jp.where(pipeline_state.x.pos[0, 2] > max_z, 0.0, is_healthy)
@@ -161,15 +203,11 @@ class SafeHeightHumanoid(PipelineEnv):
         else:
             healthy_reward = self._healthy_reward * is_healthy
 
-        # Control cost (same as humanoid.py)
+        # Control cost
         ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
 
-        # Calculate head tip height for constraint (highest point of humanoid)
-        torso_pos = pipeline_state.x.pos[0]
-        torso_rot = pipeline_state.x.rot[0]
-        head_offset_world = brax_math.rotate(_HEAD_LOCAL_OFFSET, torso_rot)
-        head_center = torso_pos + head_offset_world
-        head_tip_height = head_center[2] + _HEAD_RADIUS
+        # Calculate height for constraint
+        head_tip_height = self._get_head_tip_height(pipeline_state)
 
         # Height constraint cost (safety constraint): require height <= max_height
         height_excess = jp.maximum(0.0, head_tip_height - self._max_height)
@@ -178,7 +216,7 @@ class SafeHeightHumanoid(PipelineEnv):
 
         obs = self._get_obs(pipeline_state, action)
 
-        # Reward structure from humanoid.py
+        # Reward structure
         reward = forward_reward + healthy_reward - ctrl_cost
         done = 1.0 - is_healthy if self._terminate_when_unhealthy else 0.0
 
@@ -251,14 +289,13 @@ class SafeHeightHumanoid(PipelineEnv):
             rng1, (self.sys.q_size(),), minval=low, maxval=hi
         )
 
-        # Spawn humanoid upright (XML has torso at z=0.15 lying down)
-        # Set z position to ~1.25m for standing humanoid
-        qpos = qpos.at[2].set(1.25)
-        # Rotate 90 degrees around y-axis to stand upright: quaternion [w, x, y, z]
-        qpos = qpos.at[3].set(0.707107)  # w
-        qpos = qpos.at[4].set(0.0)       # x
-        qpos = qpos.at[5].set(0.707107)  # y
-        qpos = qpos.at[6].set(0.0)       # z
+        # Set spawn position and rotation from subclass defaults
+        qpos = qpos.at[2].set(self.default_spawn_height)
+        w, x, y, z = self.default_spawn_rotation
+        qpos = qpos.at[3].set(w)
+        qpos = qpos.at[4].set(x)
+        qpos = qpos.at[5].set(y)
+        qpos = qpos.at[6].set(z)
 
         qvel = jax.random.uniform(
             rng2, (self.sys.qd_size(),), minval=low, maxval=hi
@@ -301,10 +338,19 @@ class SafeHeightHumanoid(PipelineEnv):
 
         return State(pipeline_state, obs, reward, done, metrics, info)
 
+    def _get_head_tip_height(self, pipeline_state: base.State) -> jax.Array:
+        """Calculate the height of the highest point (head tip) of the agent."""
+        torso_pos = pipeline_state.x.pos[0]
+        torso_rot = pipeline_state.x.rot[0]
+        head_offset_world = brax_math.rotate(self.head_local_offset, torso_rot)
+        head_center = torso_pos + head_offset_world
+        head_tip_height = head_center[2] + self.head_radius
+        return head_tip_height
+
     def _get_obs(
             self, pipeline_state: base.State, action: jax.Array
     ) -> jax.Array:
-        """Observes humanoid body position, velocities, and angles."""
+        """Observes body position, velocities, and angles."""
         position = pipeline_state.q[2:]
         velocity = pipeline_state.qd
 
@@ -353,3 +399,42 @@ class SafeHeightHumanoid(PipelineEnv):
             jp.sum(jax.vmap(jp.multiply)(inertia.mass, x_i.pos), axis=0) / mass_sum
         )
         return com, inertia, mass_sum, x_i
+
+
+class SafeHeightHumanoid(SafeHeight):
+    """Humanoid locomotion environment with height constraints.
+
+    The humanoid must learn to move forward while staying below a height ceiling,
+    forcing it to learn to crouch or crawl.
+    """
+
+    @property
+    def agent_xml_path(self) -> str:
+        return 'envs/assets/safe/humanoid_height.xml'
+
+    @property
+    def head_local_offset(self) -> jp.ndarray:
+        return jp.array([-0.15, 0.0, 0.0])
+
+    @property
+    def head_radius(self) -> float:
+        return 0.09
+
+    @property
+    def default_spawn_height(self) -> float:
+        return 1.25
+
+    @property
+    def default_spawn_rotation(self) -> Tuple[float, float, float, float]:
+        # Rotate 90 degrees around y-axis to stand upright: quaternion [w, x, y, z]
+        return (0.707107, 0.0, 0.707107, 0.0)
+
+    @property
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        return (1.0, 2.0)
+
+    def _get_gear_for_backend(self, backend: str) -> jp.ndarray:
+        return jp.array([
+            350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0, 350.0,
+            350.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0
+        ])

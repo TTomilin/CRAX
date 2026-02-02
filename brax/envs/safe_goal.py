@@ -1,11 +1,17 @@
 """
-SafePointGoal Environment
+SafeGoal Environment - Modular Navigation Task
 
-A cleaned-up point navigation environment with configurable circular hazards.
-Features goal resetting, safety costs, and simplified lidar observations.
+A navigation environment with configurable agents and hazards.
+Base class provides task logic; agent-specific classes provide agent configuration.
+
+Usage:
+    env = SafeGoalPoint()  # Point agent
+    # or via registry:
+    env = brax.envs.get_environment("safe_goal_point")
 """
 
 import os
+from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
 import jax
@@ -31,39 +37,66 @@ from brax.envs.hazards import _type_defaults_from_registry
 from brax.io import mjcf
 
 
-class SafePointGoal(PipelineEnv):
+class SafeGoal(PipelineEnv, ABC):
     """
-    Safe Point Goal Navigation Environment
+    Abstract Safe Goal Navigation Environment
 
-    A point navigation environment with:
-    - Configurable number of circular hazards (default: 8)
-    - Smaller hazard sizes (0.3 radius) for more challenging navigation
+    A navigation environment with:
+    - Configurable number of hazards
     - Goal resetting mechanism when goal is reached
     - Safety costs for hazard collisions
-    - Rich sensor suite (accelerometer, velocimeter, gyro, magnetometer)
+    - Rich sensor suite
     - Dual lidar system with separate goal and hazard detection
-    - Agent-centric observations for better learning
-    - Individual compass observations for goal and each hazard
+    - Agent-centric observations
 
-    Default observation space (62 dimensions):
-    - Sensor data: 12 values (3 each for accel, velocity, gyro, magnetometer)
-    - Goal lidar: 16 bins
-    - Hazard lidar: 16 bins
-    - Goal compass: 2 values
-    - Hazard compasses: 16 values (8 hazards × 2 values each)
+    Subclasses must implement agent-specific configuration.
     """
+
+    @property
+    @abstractmethod
+    def agent_xml_file(self) -> str:
+        """Return the XML file name for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def agent_body_index(self) -> int:
+        """Return the body index for this agent in the MuJoCo model."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        """Return the default healthy z range for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_agent_keepout(self) -> float:
+        """Return the default keepout radius for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def required_sensors(self) -> List[str]:
+        """Return the list of required sensor names for this agent."""
+        pass
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle. Override for different agents."""
+        # Default: use qpos[2] as z-rotation (suitable for point agents)
+        return data.qpos[2]
 
     def __init__(
             self,
             # Episode settings
             episode_length: int = 1000,
-            base_agent_file_name: str = "point.xml",
             # Physics settings
             backend: str = 'mjx',
             n_frames: int = 4,
             timestep: float = 0.02,
             terminate_when_unhealthy: bool = True,
-            healthy_z_range: Tuple[float, float] = (0.05, 0.3),
+            healthy_z_range: Optional[Tuple[float, float]] = None,
             reset_noise_scale: float = 0.005,
             max_velocity: float = 5.0,
             # Reward settings
@@ -80,7 +113,7 @@ class SafePointGoal(PipelineEnv):
             hazard_compass_k: int = 8,
             # Placement settings
             placement_extents: Tuple[float, float, float, float] = (-2.5, -2.5, 2.5, 2.5),
-            agent_keepout: float = 0.1,
+            agent_keepout: Optional[float] = None,
             placement_margin: float = 0.01,
             max_placement_attempts: int = 100,
             max_layout_attempts: int = 1000,
@@ -100,17 +133,31 @@ class SafePointGoal(PipelineEnv):
         # Store debug flag early for use in initialization
         self._debug = debug
 
+        # Use agent-specific defaults if not provided
+        if healthy_z_range is None:
+            healthy_z_range = self.default_healthy_z_range
+        if agent_keepout is None:
+            agent_keepout = self.default_agent_keepout
+
         # Build default hazard specs if none provided
         if hazard_specs is None:
             hazard_specs = [
                 dict(
-                    type='cube',
+                    type='cylinder',
                     count=8,
-                    size=0.2,
-                    height=0.2,
-                    collidable=True,
+                    size=0.3,
+                    height=0.01,
+                    collidable=False,
                     movable=False,
                     density=1.0,
+                ),
+                dict(
+                    type='outer_wall',
+                    offset=0.5,
+                    height=0.1,
+                    thickness=0.06,
+                    collidable=True,
+                    fixed=True,
                 ),
             ]
 
@@ -179,8 +226,8 @@ class SafePointGoal(PipelineEnv):
         self._goal_yaws = jp.array([p.yaw for p in packed], dtype=jp.float32)
 
         # Generate XML dynamically with the configured goals and hazards
-        xml_path = generate_goal_xml_from_base(base_agent_file_name, self._goal_manager, self._hazard_manager)
-        self._xml_base_file_path = base_xml_file_path(base_agent_file_name)
+        xml_path = generate_goal_xml_from_base(self.agent_xml_file, self._goal_manager, self._hazard_manager)
+        self._xml_base_file_path = base_xml_file_path(self.agent_xml_file)
 
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
@@ -212,7 +259,7 @@ class SafePointGoal(PipelineEnv):
         self.episode_length = episode_length
 
         # Get body IDs
-        self._agent_body = 1  # agent body
+        self._agent_body = self.agent_body_index
 
         # goals (the names must match what XMLBuilder emits)
         self._goal_mocap_ids = []
@@ -244,14 +291,13 @@ class SafePointGoal(PipelineEnv):
 
         # --- Find Sensor Indices, Addresses, and Dimensions ---
         self._sensor_info = {}
-        required_sensors = ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
-        sensor_found_flags = {name: False for name in required_sensors}
+        sensor_found_flags = {name: False for name in self.required_sensors}
         if mj_model.nsensor > 0:
             if self._debug:
                 print(f"Model has {mj_model.nsensor} sensors. Searching for required sensors...")
             for i in range(mj_model.nsensor):
                 name = mj_model.sensor(i).name
-                if name in required_sensors:
+                if name in self.required_sensors:
                     start_adr = mj_model.sensor_adr[i]
                     dim = mj_model.sensor_dim[i]
                     self._sensor_info[name] = (start_adr, dim)
@@ -296,7 +342,7 @@ class SafePointGoal(PipelineEnv):
 
         if self._debug:
             print(
-                f"SafePointGoal initialized with {self._num_hazards} hazards and {self._num_goals} goals")
+                f"SafeGoal initialized with {self._num_hazards} hazards and {self._num_goals} goals")
             cube_hazards = self._hazard_manager.get_hazards_by_type("cube")
             cylinder_hazards = self._hazard_manager.get_hazards_by_type("cylinder")
             print(f"Hazard composition: {len(cube_hazards)} cubes, {len(cylinder_hazards)} cylinders")
@@ -715,8 +761,8 @@ class SafePointGoal(PipelineEnv):
         rel_goal_pos_3d_world = goal_pos - agent_pos
 
         # --- Agent-centric transformation ---
-        # Get agent's current Z rotation from qpos
-        agent_z_angle = data.qpos[2]  # z_hinge_angle
+        # Get agent's current Z rotation
+        agent_z_angle = self.get_agent_heading(data)
         cos_a = jp.cos(agent_z_angle)
         sin_a = jp.sin(agent_z_angle)
 
@@ -974,3 +1020,34 @@ class SafePointGoal(PipelineEnv):
                 2 +  # Goal compass
                 self._hazard_compass_k * 2  # Hazard compasses
         )
+
+
+class SafeGoalPoint(SafeGoal):
+    """Point agent for goal navigation task.
+
+    The point agent is a simple 2D navigation agent with thrust and yaw control.
+    """
+
+    @property
+    def agent_xml_file(self) -> str:
+        return "point.xml"
+
+    @property
+    def agent_body_index(self) -> int:
+        return 1  # Point agent body is at index 1
+
+    @property
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        return (0.05, 0.3)
+
+    @property
+    def default_agent_keepout(self) -> float:
+        return 0.1
+
+    @property
+    def required_sensors(self) -> List[str]:
+        return ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle from z_hinge rotation."""
+        return data.qpos[2]  # z_hinge_angle for point agent

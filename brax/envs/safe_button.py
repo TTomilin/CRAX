@@ -1,11 +1,19 @@
 """
-SafePointButton Environment
+SafeButton Environment - Modular Button Task
 
-A point navigation environment where the agent must press the correct button
-among multiple buttons, aligned with safety-gymnasium's Button task.
+A navigation environment with configurable agents where the agent must press
+the correct button among multiple buttons.
+
+Base class provides task logic; agent-specific classes provide agent configuration.
+
+Usage:
+    env = SafeButtonPoint()  # Point agent
+    # or via registry:
+    env = brax.envs.get_environment("safe_button_point")
 """
 
 import os
+from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
 import jax
@@ -27,11 +35,11 @@ from brax.envs.builder import XMLBuilder
 from brax.io import mjcf
 
 
-class SafePointButton(PipelineEnv):
+class SafeButton(PipelineEnv, ABC):
     """
-    Safe Point Button Environment
-    
-    A point navigation environment where the agent must press the correct button:
+    Abstract Safe Button Environment
+
+    A navigation environment where the agent must press the correct button:
     - Multiple fixed buttons (default: 4)
     - One active goal button selected randomly
     - Dense reward for moving closer to goal button
@@ -39,26 +47,55 @@ class SafePointButton(PipelineEnv):
     - Wrong-button cost when buttons_constrained=True
     - Button timer/resampling delay (buttons hidden in lidar initially)
     - Support for hazards and gremlins
-    
-    Default observation space:
-    - Sensor data: 12 values (3 each for accel, velocity, gyro, magnetometer)
-    - Button lidar: 16 bins (all buttons, hidden when timer > 0)
-    - Button compass: 2 values (active button)
-    - Hazard lidar: 16 bins (if hazards exist)
-    - Hazard compasses: 16 values (8 hazards × 2 values each, if hazards exist)
+
+    Subclasses must implement agent-specific configuration.
     """
+
+    @property
+    @abstractmethod
+    def agent_xml_file(self) -> str:
+        """Return the XML file name for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def agent_body_index(self) -> int:
+        """Return the body index for this agent in the MuJoCo model."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        """Return the default healthy z range for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_agent_keepout(self) -> float:
+        """Return the default keepout radius for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def required_sensors(self) -> List[str]:
+        """Return the list of required sensor names for this agent."""
+        pass
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle. Override for different agents."""
+        # Default: use qpos[2] as z-rotation (suitable for point agents)
+        return data.qpos[2]
 
     def __init__(
             self,
             # Episode settings
             episode_length: int = 1000,
-            base_agent_file_name: str = "point_circle.xml",
             # Physics settings
             backend: str = 'mjx',
             n_frames: int = 4,
             timestep: float = 0.02,
             terminate_when_unhealthy: bool = True,
-            healthy_z_range: Tuple[float, float] = (0.05, 0.3),
+            healthy_z_range: Optional[Tuple[float, float]] = None,
             reset_noise_scale: float = 0.005,
             max_velocity: float = 5.0,
             # Reward settings
@@ -84,7 +121,7 @@ class SafePointButton(PipelineEnv):
             hazard_compass_k: int = 8,
             # Placement settings
             placement_extents: Tuple[float, float, float, float] = (-1.0, -1.0, 1.0, 1.0),
-            agent_keepout: float = 0.1,
+            agent_keepout: Optional[float] = None,
             placement_margin: float = 0.01,
             max_placement_attempts: int = 100,
             max_layout_attempts: int = 1000,
@@ -95,6 +132,12 @@ class SafePointButton(PipelineEnv):
             **kwargs,
     ):
         self._debug = debug
+
+        # Use agent-specific defaults if not provided
+        if healthy_z_range is None:
+            healthy_z_range = self.default_healthy_z_range
+        if agent_keepout is None:
+            agent_keepout = self.default_agent_keepout
 
         # Build default hazard specs if none provided
         if hazard_specs is None:
@@ -167,8 +210,8 @@ class SafePointButton(PipelineEnv):
         self._hazard_radii = jp.array(radii) if len(hazards) > 0 else jp.zeros((0,))
 
         # Generate XML with buttons and hazards
-        xml_path = self._generate_button_xml(base_agent_file_name)
-        self._xml_base_file_path = base_xml_file_path(base_agent_file_name)
+        xml_path = self._generate_button_xml()
+        self._xml_base_file_path = base_xml_file_path(self.agent_xml_file)
 
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
@@ -194,7 +237,7 @@ class SafePointButton(PipelineEnv):
         super().__init__(sys, backend=backend, n_frames=n_frames)
 
         self.episode_length = episode_length
-        self._agent_body = 1
+        self._agent_body = self.agent_body_index
 
         # Button mocap IDs
         self._button_mocap_ids = []
@@ -232,7 +275,7 @@ class SafePointButton(PipelineEnv):
         self._num_hazards = self._hazard_manager.get_hazard_count()
         self._num_fixed_hazards = self._hazard_manager.get_fixed_hazard_count()
         self._num_movable_hazards = self._num_hazards - self._num_fixed_hazards
-        
+
         # Gremlin info
         gremlin_hazards = self._hazard_manager.get_hazards_by_type("gremlin")
         self._num_gremlins = len(gremlin_hazards)
@@ -247,14 +290,13 @@ class SafePointButton(PipelineEnv):
 
         # Sensor info
         self._sensor_info = {}
-        required_sensors = ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
-        sensor_found_flags = {name: False for name in required_sensors}
+        sensor_found_flags = {name: False for name in self.required_sensors}
         if mj_model.nsensor > 0:
             if self._debug:
                 print(f"Model has {mj_model.nsensor} sensors. Searching for required sensors...")
             for i in range(mj_model.nsensor):
                 name = mj_model.sensor(i).name
-                if name in required_sensors:
+                if name in self.required_sensors:
                     start_adr = mj_model.sensor_adr[i]
                     dim = mj_model.sensor_dim[i]
                     self._sensor_info[name] = (start_adr, dim)
@@ -302,19 +344,19 @@ class SafePointButton(PipelineEnv):
         self._max_layout_attempts = max_layout_attempts
 
         if self._debug:
-            print(f"SafePointButton initialized with {self._button_count} buttons, {self._num_hazards} hazards ({self._num_gremlins} gremlins)")
+            print(f"SafeButton initialized with {self._button_count} buttons, {self._num_hazards} hazards ({self._num_gremlins} gremlins)")
 
-    def _generate_button_xml(self, base_agent_file_name: str) -> str:
+    def _generate_button_xml(self) -> str:
         """Generate XML with buttons and hazards."""
-        base_xml_path = base_xml_file_path(base_agent_file_name)
-        
+        base_xml_path = base_xml_file_path(self.agent_xml_file)
+
         # Generate button bodies XML (sphere to avoid cylinder-box collisions in MJX)
         button_bodies = []
         for i in range(self._button_count):
             z = self._button_size
             button_bodies.append(f"""
         <body name="button{i}" pos="0 0 {z}" mocap="true">
-            <geom type="sphere" name="button{i}" size="{self._button_size}" 
+            <geom type="sphere" name="button{i}" size="{self._button_size}"
                 rgba="0.8 0.8 0.2 0.8" contype="1" conaffinity="1" solref="0.01 1"/>
         </body>""")
 
@@ -324,26 +366,26 @@ class SafePointButton(PipelineEnv):
             <geom type="sphere" name="goal_marker" size="{self._marker_size}"
                 rgba="0.1 0.9 0.1 0.9" contype="0" conaffinity="0" solref="0.01 1"/>
         </body>""")
-        
+
         # Use XMLBuilder to combine base agent, buttons, and hazards
-        builder = XMLBuilder("safe_point_button")
+        builder = XMLBuilder("safe_button")
         xml_content = builder.build_xml(
             base_xml_path,
             goal_manager=None,  # No goals, we use buttons
             hazard_manager=self._hazard_manager,
             additional_bodies=button_bodies
         )
-        
+
         # Create temporary file
         import tempfile
-        temp_fd, temp_path = tempfile.mkstemp(suffix=".xml", prefix="safe_point_button_")
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".xml", prefix="safe_button_")
         try:
             with os.fdopen(temp_fd, "w") as f:
                 f.write(xml_content)
         except:
             os.close(temp_fd)
             raise
-        
+
         return temp_path
 
     def reset(self, rng: jp.ndarray) -> State:
@@ -415,13 +457,13 @@ class SafePointButton(PipelineEnv):
         button_ids = jp.array(self._button_mocap_ids, dtype=jp.int32)
         mpos = data.mocap_pos
         mpos = mpos.at[button_ids].set(button_positions)
-        
+
         if self._num_movable_hazards > 0:
             hazard_ids = self._hazard_mocap_ids_arr[:self._num_movable_hazards]
             mpos = mpos.at[hazard_ids].set(hazard_positions)
-        
+
         data = data.replace(mocap_pos=mpos)
-        
+
         # Get all hazard positions (including fixed ones)
         all_hazard_positions = data.mocap_pos[self._hazard_mocap_ids_arr]
 
@@ -498,16 +540,16 @@ class SafePointButton(PipelineEnv):
         ids2 = getattr(data.contact, "geom2", None)
         contact_dist = getattr(data.contact, "dist", None)
         ncon = getattr(data, "ncon", None)
-        
+
         goal_achieved = jp.array(False)
         wrong_button_pressed = jp.array(False)
-        
+
         if ids1 is not None and ids2 is not None and ncon is not None and contact_dist is not None:
             # Create valid mask for contacts
             max_contacts = ids1.shape[0]
             valid_mask = jp.arange(max_contacts) < ncon
             touch = contact_dist <= 0.0
-            
+
             # Vectorized check: for each button, check if it contacts agent
             def check_button_contact(i):
                 button_geom_id = self._button_geom_ids[i]
@@ -516,25 +558,25 @@ class SafePointButton(PipelineEnv):
                 button_in_geom2 = (ids2 == button_geom_id) & valid_mask & touch
                 agent_in_geom1 = jp.any(ids1[:, None] == self._agent_geom_ids[None, :], axis=1) & valid_mask & touch
                 agent_in_geom2 = jp.any(ids2[:, None] == self._agent_geom_ids[None, :], axis=1) & valid_mask & touch
-                
+
                 contact1 = jp.any(button_in_geom1 & agent_in_geom2)
                 contact2 = jp.any(button_in_geom2 & agent_in_geom1)
                 return contact1 | contact2
-            
+
             # Check all buttons
             button_contacts = jax.vmap(check_button_contact)(jp.arange(self._button_count))
-            
+
             # Goal achieved if active button is contacted
             goal_achieved = button_contacts[active_button_idx]
-            
+
             # Wrong button pressed if any non-active button is contacted
             def check_wrong():
                 non_active_mask = jp.arange(self._button_count) != active_button_idx
                 return jp.any(button_contacts & non_active_mask)
-            
+
             def no_wrong():
                 return jp.array(False)
-            
+
             wrong_button_pressed = jax.lax.cond(
                 self._buttons_constrained,
                 check_wrong,
@@ -698,7 +740,7 @@ class SafePointButton(PipelineEnv):
         sensor_obs = jp.concatenate([accelerometer, velocimeter, gyro, magnetometer])
 
         # Agent-centric transformation
-        agent_z_angle = data.qpos[2]
+        agent_z_angle = self.get_agent_heading(data)
         cos_a = jp.cos(agent_z_angle)
         sin_a = jp.sin(agent_z_angle)
 
@@ -816,3 +858,34 @@ class SafePointButton(PipelineEnv):
             self._lidar_num_bins +  # Hazard lidar
             self._hazard_compass_k * 2  # Hazard compasses
         )
+
+
+class SafeButtonPoint(SafeButton):
+    """Point agent for button task.
+
+    The point agent is a simple 2D navigation agent with thrust and yaw control.
+    """
+
+    @property
+    def agent_xml_file(self) -> str:
+        return "point_circle.xml"
+
+    @property
+    def agent_body_index(self) -> int:
+        return 1  # Point agent body is at index 1
+
+    @property
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        return (0.05, 0.3)
+
+    @property
+    def default_agent_keepout(self) -> float:
+        return 0.1
+
+    @property
+    def required_sensors(self) -> List[str]:
+        return ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle from z_hinge rotation."""
+        return data.qpos[2]  # z_hinge_angle for point agent

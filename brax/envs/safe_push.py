@@ -1,11 +1,12 @@
 """
 BlockPushGoal Environment
 
-A point agent must push a block to a goal while avoiding hazards.
-Based on SafePointGoal but with a pushable block that must reach the goal.
+Abstract base class and agent-specific implementations for block pushing tasks.
+The agent must push a block to a goal while avoiding hazards.
 """
 
 import os
+from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
 import jax
@@ -31,11 +32,11 @@ from brax.envs.hazards import _type_defaults_from_registry
 from brax.io import mjcf
 
 
-class SafePush(PipelineEnv):
+class SafePush(PipelineEnv, ABC):
     """
-    Block Push Goal Environment
+    Abstract base class for block pushing environments.
 
-    A point agent must push a block to a goal while avoiding hazards.
+    The agent must push a block to a goal while avoiding hazards.
     The block (not the agent) must reach the goal to trigger success/respawn.
 
     Features:
@@ -45,19 +46,54 @@ class SafePush(PipelineEnv):
     - Rich sensor suite (accelerometer, velocimeter, gyro, magnetometer)
     - Lidar for goals, hazards, and block
     - Agent-centric observations
+
+    Subclasses must implement agent-specific properties.
     """
+
+    @property
+    @abstractmethod
+    def agent_xml_file(self) -> str:
+        """Return the XML file name for this agent (e.g., 'point_push.xml')."""
+        pass
+
+    @property
+    @abstractmethod
+    def agent_body_index(self) -> int:
+        """Return the body index of the agent in the MuJoCo model."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        """Return the default (min, max) z-range for healthy state."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_agent_keepout(self) -> float:
+        """Return the default keepout radius for placement."""
+        pass
+
+    @property
+    @abstractmethod
+    def required_sensors(self) -> List[str]:
+        """Return list of required sensor names."""
+        pass
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle. Override for different agents."""
+        return data.qpos[2]  # Default: z_hinge_angle for point agent
 
     def __init__(
             self,
             # Episode settings
             episode_length: int = 2000,
-            base_agent_file_name: str = "point_push.xml",
             # Physics settings
             backend: str = 'mjx',
             n_frames: int = 4,
             timestep: float = 0.02,
             terminate_when_unhealthy: bool = True,
-            healthy_z_range: Tuple[float, float] = (0.05, 0.3),
+            healthy_z_range: Tuple[float, float] = None,
             reset_noise_scale: float = 0.005,
             max_velocity: float = 5.0,
             # Reward settings
@@ -75,7 +111,7 @@ class SafePush(PipelineEnv):
             hazard_compass_k: int = 8,
             # Placement settings
             placement_extents: Tuple[float, float, float, float] = (-2.5, -2.5, 2.5, 2.5),
-            agent_keepout: float = 0.1,
+            agent_keepout: float = None,
             placement_margin: float = 0.01,
             max_placement_attempts: int = 100,
             max_layout_attempts: int = 1000,
@@ -97,6 +133,15 @@ class SafePush(PipelineEnv):
     ):
         # Store debug flag early for use in initialization
         self._debug = debug
+
+        # Use defaults from abstract properties if not provided
+        if healthy_z_range is None:
+            healthy_z_range = self.default_healthy_z_range
+        if agent_keepout is None:
+            agent_keepout = self.default_agent_keepout
+
+        # Get agent XML file from abstract property
+        base_agent_file_name = self.agent_xml_file
 
         # Build default hazard specs if none provided
         if hazard_specs is None:
@@ -249,7 +294,7 @@ class SafePush(PipelineEnv):
         self.episode_length = episode_length
 
         # Get body IDs
-        self._agent_body = 1  # agent body
+        self._agent_body = self.agent_body_index
 
         # Block body ID - the pushable block
         self._block_body = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "block")
@@ -288,7 +333,7 @@ class SafePush(PipelineEnv):
 
         # --- Find Sensor Indices, Addresses, and Dimensions ---
         self._sensor_info = {}
-        required_sensors = ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
+        required_sensors = self.required_sensors
         sensor_found_flags = {name: False for name in required_sensors}
         if mj_model.nsensor > 0:
             if self._debug:
@@ -906,7 +951,7 @@ class SafePush(PipelineEnv):
 
         # --- Agent-centric transformation ---
         # Get agent's current Z rotation from qpos
-        agent_z_angle = data.qpos[2]  # z_hinge_angle
+        agent_z_angle = self.get_agent_heading(data)
         cos_a = jp.cos(agent_z_angle)
         sin_a = jp.sin(agent_z_angle)
 
@@ -1196,3 +1241,39 @@ class SafePush(PipelineEnv):
                 1 +  # Agent-to-block distance
                 1  # Block-to-goal distance
         )
+
+
+class SafePushPoint(SafePush):
+    """Point agent that pushes a block to a goal while avoiding hazards.
+
+    Uses the point_push.xml agent model with accelerometer, velocimeter,
+    gyro, and magnetometer sensors.
+    """
+
+    @property
+    def agent_xml_file(self) -> str:
+        return "point_push.xml"
+
+    @property
+    def agent_body_index(self) -> int:
+        return 1
+
+    @property
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        return (0.05, 0.3)
+
+    @property
+    def default_agent_keepout(self) -> float:
+        return 0.1
+
+    @property
+    def required_sensors(self) -> List[str]:
+        return ['accelerometer', 'velocimeter', 'gyro', 'magnetometer']
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the point agent's current heading angle from z_hinge."""
+        return data.qpos[2]
+
+
+# Backward compatibility: SafePush used to be the point agent directly
+# Now it's an abstract base class, so we provide SafePushPoint as default

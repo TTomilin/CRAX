@@ -58,6 +58,74 @@ ENV_DEFAULTS = {
         "extra_metrics": [],
         "cameras": ["track"],
     },
+    # New naming convention: safe_[task]_[agent]
+    "safe_goal_point": {
+        "steps": 300,
+        "episodes": 1,
+        "fps": 100,
+        "action_mode": "random",
+        "extra_metrics": [],
+        "cameras": [0],
+    },
+    "safe_circle_point": {
+        "steps": 300,
+        "episodes": 1,
+        "fps": 100,
+        "action_mode": "circular",  # Special case for circular policy
+        "extra_metrics": [],
+        "cameras": ["fixedfar"],
+    },
+    "safe_push_point": {
+        "steps": 500,
+        "episodes": 1,
+        "fps": 50,
+        "action_mode": "random",
+        "extra_metrics": [],
+        "cameras": [0],
+    },
+    "safe_height_humanoid": {
+        "steps": 300,
+        "episodes": 1,
+        "fps": 50,
+        "action_mode": "random",
+        "extra_metrics": ["head_height", "height_violation"],
+        "cameras": ["track"],
+    },
+    "safe_lift_ant": {
+        "steps": 300,
+        "episodes": 2,
+        "fps": 50,
+        "action_mode": "periodic",
+        "extra_metrics": ["feet_on_ground"],
+        "cameras": [0],
+    },
+    "safe_lift_spider": {
+        "steps": 300,
+        "episodes": 1,
+        "fps": 50,
+        "action_mode": "periodic",
+        "extra_metrics": ["feet_on_ground"],
+        "cameras": ["track"],
+        "width": 640,
+        "height": 480,
+    },
+    "safe_pathway_walker2d": {
+        "steps": 1000,
+        "episodes": 1,
+        "fps": 100,
+        "action_mode": "random",
+        "extra_metrics": [],
+        "cameras": ["fixedfar"],
+    },
+    "safe_button_point": {
+        "steps": 300,
+        "episodes": 1,
+        "fps": 50,
+        "action_mode": "random",
+        "extra_metrics": [],
+        "cameras": [0],
+    },
+    # Backward compatibility: old naming convention
     "safe_point_goal": {
         "steps": 300,
         "episodes": 1,
@@ -71,14 +139,6 @@ ENV_DEFAULTS = {
         "episodes": 1,
         "fps": 100,
         "action_mode": "circular",  # Special case for circular policy
-        "extra_metrics": [],
-        "cameras": ["fixedfar"],
-    },
-    "safe_circle": {
-        "steps": 300,
-        "episodes": 1,
-        "fps": 100,
-        "action_mode": "circular",
         "extra_metrics": [],
         "cameras": ["fixedfar"],
     },
@@ -124,7 +184,7 @@ def load_policy_from_checkpoint(model_path: str):
     return None
 
 
-def create_environment(env_name: str, level: int = None, agent: str = None, seed: int = None, **extra_kwargs):
+def create_environment(env_name: str, level: int = None, agent: str = None, **extra_kwargs):
     """Create an environment with optional level and agent parameters."""
     from brax import envs
 
@@ -145,17 +205,13 @@ def create_environment(env_name: str, level: int = None, agent: str = None, seed
 
     # Use registry-based creation
     kwargs = {}
-    if level is not None:
-        kwargs["level"] = level
     if agent is not None:
         kwargs["agent"] = agent
-    if seed is not None:
-        kwargs["seed"] = seed
     kwargs.update(defaults.get("env_kwargs", {}))
     kwargs.update(extra_kwargs)
 
     print(f"Creating {env_name} environment (level={level}, agent={agent})")
-    return envs.get_environment(env_name, **kwargs)
+    return envs.get_environment(env_name, level=level, **kwargs)
 
 
 def make_circular_policy(action_dim: int, thrust: float = 1.0, yaw_rate: float = 0.0,
@@ -187,7 +243,7 @@ Examples:
   %(prog)s --env safe_velocity --agent halfcheetah --level 3
 """)
     p.add_argument("--env", type=str, required=True, help="Environment name")
-    p.add_argument("--level", type=int, default=None, help="Difficulty level")
+    p.add_argument("--level", type=int, default=1, help="Difficulty level")
     p.add_argument("--agent", type=str, default=None,
                    help="Agent type (for multi-agent envs like safe_velocity)")
     p.add_argument("--steps", type=int, default=None, help="Steps per episode")
@@ -246,7 +302,6 @@ def main(args: argparse.Namespace) -> None:
         args.env,
         level=args.level,
         agent=args.agent,
-        seed=args.seed,
     )
 
     # Handle policy loading or action mode

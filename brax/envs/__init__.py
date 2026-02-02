@@ -20,58 +20,83 @@ from typing import Optional, Type
 import jax
 from jax import numpy as jp
 
-from brax.envs import ant, humanoid_hop
+from brax.envs import ant
 from brax.envs import fast
 from brax.envs import half_cheetah
 from brax.envs import hopper
 from brax.envs import humanoid
-from brax.envs import safe_height
 from brax.envs import humanoidstandup
 from brax.envs import inverted_double_pendulum
 from brax.envs import inverted_pendulum
 from brax.envs import pusher
 from brax.envs import reacher
+from brax.envs import safe_ant
+from brax.envs import safe_height
+from brax.envs import safe_lift
 from brax.envs import safe_reacher
+from brax.envs import safe_spider
 from brax.envs import safe_velocity
+from brax.envs import safe_pathway
 from brax.envs import swimmer
 from brax.envs import walker2d
-from brax.envs import safe_ant
-from brax.envs import safe_spider
-from brax.envs import safe_walker
-from brax.envs.PointResettingGoalRandomHazardLidarSensorObs import PointResettingGoalRandomHazardLidarSensorObs
-from brax.envs.PointResettingGoalRandomHazardSensorObs import PointResettingGoalRandomHazardSensorObs
-from brax.envs.safe_goal import SafePointGoal
-from brax.envs.safe_circle import SafePointCircle
-from brax.envs.safe_push import SafePush
 from brax.envs.base import Env, PipelineEnv, State, Wrapper
+from brax.envs.difficulty import apply_difficulty, get_supported_levels, get_task_for_env, register_env_task_mapping, \
+    register_task_difficulty, supports_difficulty
+from brax.envs.safe_ant import SafeLiftAnt
+from brax.envs.safe_button import SafeButton, SafeButtonPoint
+from brax.envs.safe_circle import SafeCircle, SafeCirclePoint
+from brax.envs.safe_goal import SafeGoal, SafeGoalPoint
+from brax.envs.safe_height import SafeHeight, SafeHeightHumanoid
+from brax.envs.safe_lift import SafeLift, SafeLiftHumanoid
+from brax.envs.safe_push import SafePush, SafePushPoint
+from brax.envs.safe_reacher import SafeReacher
+from brax.envs.safe_spider import SafeLiftSpider
+from brax.envs.safe_velocity import (
+    SafeVelocity,
+    SafeVelocityAnt,
+    SafeVelocityHumanoid,
+    SafeVelocityHalfcheetah,
+    SafeVelocityHopper,
+    SafeVelocitySwimmer,
+    SafeVelocityWalker2d,
+)
+from brax.envs.safe_pathway import SafePathway, SafePathwayWalker2D
 from brax.envs.wrappers import training
-from brax.envs.difficulty import apply_difficulty, get_supported_levels, supports_difficulty
 
 _envs = {
+    # Original Brax environments
     'ant': ant.Ant,
     'fast': fast.Fast,
     'halfcheetah': half_cheetah.Halfcheetah,
     'hopper': hopper.Hopper,
     'humanoid': humanoid.Humanoid,
-    'humanoid_hop': humanoid_hop.Humanoid,
-    'safe_height': safe_height.SafeHeightHumanoid,
     'humanoidstandup': humanoidstandup.HumanoidStandup,
     'inverted_pendulum': inverted_pendulum.InvertedPendulum,
     'inverted_double_pendulum': inverted_double_pendulum.InvertedDoublePendulum,
     'pusher': pusher.Pusher,
     'reacher': reacher.Reacher,
-    'safe_reacher': safe_reacher.SafeReacher,
-    'safe_velocity': safe_velocity.SafeVelocity,
     'swimmer': swimmer.Swimmer,
     'walker2d': walker2d.Walker2d,
-    'safe_walker': safe_walker.SafeWalker,
-    'safe_ant': safe_ant.SafeAnt,
-    'safe_spider': safe_spider.SafeSpider,
-    'point_resetting_goal_random_hazard_sensor_obs': PointResettingGoalRandomHazardSensorObs,
-    'point_resetting_goal_random_hazard_lidar_sensor_obs': PointResettingGoalRandomHazardLidarSensorObs,
-    'safe_point_goal': SafePointGoal,
-    'safe_point_circle': SafePointCircle,
-    'block_push_goal': SafePush,
+    # Safety environment suites. Naming convention: safe_[task]_[agent]
+    'safe_button_point': SafeButtonPoint,
+    'safe_circle_point': SafeCirclePoint,
+    'safe_goal_point': SafeGoalPoint,
+    'safe_height_humanoid': SafeHeightHumanoid,
+    'safe_lift_ant': SafeLiftAnt,
+    'safe_lift_humanoid': SafeLiftHumanoid,
+    'safe_lift_spider': SafeLiftSpider,
+    'safe_pathway_walker2d': SafePathwayWalker2D,
+    'safe_push_point': SafePushPoint,
+    # Velocity-constrained environments
+    'safe_velocity': SafeVelocity,  # Factory (backward compat)
+    'safe_velocity_ant': SafeVelocityAnt,
+    'safe_velocity_humanoid': SafeVelocityHumanoid,
+    'safe_velocity_halfcheetah': SafeVelocityHalfcheetah,
+    'safe_velocity_hopper': SafeVelocityHopper,
+    'safe_velocity_swimmer': SafeVelocitySwimmer,
+    'safe_velocity_walker2d': SafeVelocityWalker2d,
+    # Stand-alone tasks
+    'safe_reacher': safe_reacher.SafeReacher,
 }
 
 
@@ -126,6 +151,11 @@ class UnifiedEnvAdapter(Wrapper):
 def get_environment(env_name: str, level: Optional[int] = None, **kwargs) -> Env:
     """Returns an environment from the environment registry.
 
+    This is the primary function for creating environments. It handles:
+    - Looking up the environment class from the registry
+    - Applying difficulty overrides if a level is specified
+    - Wrapping with UnifiedEnvAdapter for consistent cost/info fields
+
     Args:
       env_name: environment name string
       level: optional difficulty level (1, 2, 3). If provided, applies difficulty
@@ -133,15 +163,18 @@ def get_environment(env_name: str, level: Optional[int] = None, **kwargs) -> Env
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
-      env: an environment
+      env: an environment wrapped with UnifiedEnvAdapter
     """
+    if env_name not in _envs:
+        raise ValueError(f"Unknown environment: {env_name}. Available: {list(_envs.keys())}")
+
     # Apply difficulty overrides if level is specified
     if level is not None:
         kwargs = apply_difficulty(env_name, kwargs, level)
 
     env_cls = _envs[env_name]
     base_env = env_cls(**kwargs)
-    # Always wrap with unified adapter so downstream code can rely on cost/info fields
+    # Wrap with unified adapter so downstream code can rely on cost/info fields
     return UnifiedEnvAdapter(base_env, **kwargs)
 
 
@@ -164,11 +197,17 @@ def create(
         level: Optional[int] = None,
         **kwargs,
 ) -> Env:
-    """Creates an environment from the registry.
+    """Creates an environment with training wrappers.
+
+    This is a convenience function that calls get_environment() and then
+    optionally wraps the result with training wrappers (EpisodeWrapper,
+    VmapWrapper, AutoResetWrapper).
+
+    For basic environment creation without training wrappers, use get_environment().
 
     Args:
       env_name: environment name string
-      episode_length: length of episode
+      episode_length: length of episode (if None, uses env's default if available)
       action_repeat: how many repeated actions to take per environment step
       auto_reset: whether to auto reset the environment after an episode is done
       batch_size: the number of environments to batch together
@@ -177,19 +216,10 @@ def create(
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
-      env: an environment
+      env: an environment with training wrappers applied
     """
-    # Apply difficulty overrides if level is specified
-    if level is not None:
-        kwargs = apply_difficulty(env_name, kwargs, level)
-
-    env_cls = _envs[env_name]
-    try:
-        base_env = env_cls(**kwargs)
-    except TypeError:
-        base_env = env_cls()
-
-    env = UnifiedEnvAdapter(base_env, **kwargs)
+    # Get the base environment using get_environment
+    env = get_environment(env_name, level=level, **kwargs)
 
     # Resolve episode length: prefer explicit, else environment default if available
     if episode_length is None:

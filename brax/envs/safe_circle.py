@@ -1,12 +1,18 @@
 """
-SafePointCircle Environment
+SafeCircle Environment - Modular Circular Orbit Task
 
-A point agent task that rewards maintaining a circular orbit around a target
-radius. Hazards are optional and contribute safety costs.
+A point agent task that rewards maintaining a circular orbit around a target radius.
+Hazards are optional and contribute safety costs.
+
+Usage:
+    env = SafeCirclePoint()  # Point agent
+    # or via registry:
+    env = brax.envs.get_environment("safe_circle_point")
 """
 
 import os
 import re
+from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
 import jax
@@ -28,20 +34,59 @@ from brax.envs.hazards import _type_defaults_from_registry
 from brax.io import mjcf
 
 
-class SafePointCircle(PipelineEnv):
-    """Point agent environment that rewards circular orbiting."""
+class SafeCircle(PipelineEnv, ABC):
+    """Abstract Safe Circle Orbit Environment.
+
+    A circular orbit task with configurable agents and hazards.
+    The agent is rewarded for maintaining tangential velocity around a circle.
+
+    Subclasses must implement agent-specific configuration.
+    """
+
+    @property
+    @abstractmethod
+    def agent_xml_file(self) -> str:
+        """Return the XML file name for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def agent_body_index(self) -> int:
+        """Return the body index for this agent in the MuJoCo model."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        """Return the default healthy z range for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_agent_keepout(self) -> float:
+        """Return the default keepout radius for this agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def required_sensors(self) -> List[str]:
+        """Return the list of required sensor names for this agent."""
+        pass
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle. Override for different agents."""
+        return data.qpos[2]
 
     def __init__(
             self,
             # Episode settings
             episode_length: int = 1000,
-            base_agent_file_name: str = "point_circle.xml",
             # Physics settings
             backend: str = "mjx",
             n_frames: int = 5,
             timestep: float = 0.02,
             terminate_when_unhealthy: bool = True,
-            healthy_z_range: Tuple[float, float] = (0.05, 0.5),
+            healthy_z_range: Optional[Tuple[float, float]] = None,
             reset_noise_scale: float = 0.1,
             init_xy_range: float = 0.8,
             init_angle_range: float = 3.141592653589793,
@@ -72,7 +117,7 @@ class SafePointCircle(PipelineEnv):
             include_hazard_lidar: bool = True,
             # Placement settings
             placement_extents: Tuple[float, float, float, float] = (-3.0, -3.0, 3.0, 3.0),
-            agent_keepout: float = 0.1,
+            agent_keepout: Optional[float] = None,
             placement_margin: float = 0.01,
             max_placement_attempts: int = 100,
             max_layout_attempts: int = 1000,
@@ -83,6 +128,12 @@ class SafePointCircle(PipelineEnv):
             **kwargs,
     ):
         self._debug = debug
+
+        # Use agent-specific defaults if not provided
+        if healthy_z_range is None:
+            healthy_z_range = self.default_healthy_z_range
+        if agent_keepout is None:
+            agent_keepout = self.default_agent_keepout
 
         if hazard_specs is None:
             hazard_specs = []
@@ -122,7 +173,6 @@ class SafePointCircle(PipelineEnv):
         self._boundary_visual_height = float(boundary_visual_height)
 
         # Compute hazard placement extents based on boundaries (if set)
-        # Hazards should only spawn within the boundary area
         if self._boundary_x is not None or self._boundary_y is not None:
             haz_x = self._boundary_x if self._boundary_x is not None else placement_extents[2]
             haz_y = self._boundary_y if self._boundary_y is not None else placement_extents[3]
@@ -189,7 +239,7 @@ class SafePointCircle(PipelineEnv):
         ) if hazards else jp.zeros((0,), dtype=jp.float32)
 
         # Generate XML dynamically with goals/hazards
-        xml_path = generate_goal_xml_from_base(base_agent_file_name, self._goal_manager, self._hazard_manager)
+        xml_path = generate_goal_xml_from_base(self.agent_xml_file, self._goal_manager, self._hazard_manager)
         if self._boundary_goal_ids:
             with open(xml_path, "r", encoding="utf-8") as f:
                 xml_text = f.read()
@@ -202,7 +252,7 @@ class SafePointCircle(PipelineEnv):
                 )
             with open(xml_path, "w", encoding="utf-8") as f:
                 f.write(xml_text)
-        self._xml_base_file_path = base_xml_file_path(base_agent_file_name)
+        self._xml_base_file_path = base_xml_file_path(self.agent_xml_file)
 
         try:
             mj_model = mujoco.MjModel.from_xml_path(xml_path)
@@ -229,7 +279,7 @@ class SafePointCircle(PipelineEnv):
         self.episode_length = episode_length
 
         # Body IDs
-        self._agent_body = 1
+        self._agent_body = self.agent_body_index
 
         # Hazards (names match XMLBuilder)
         self._hazard_mocap_ids = []
@@ -263,12 +313,11 @@ class SafePointCircle(PipelineEnv):
 
         # Sensor info
         self._sensor_info = {}
-        required_sensors = ["accelerometer", "velocimeter", "gyro", "magnetometer"]
-        sensor_found_flags = {name: False for name in required_sensors}
+        sensor_found_flags = {name: False for name in self.required_sensors}
         if mj_model.nsensor > 0:
             for i in range(mj_model.nsensor):
                 name = mj_model.sensor(i).name
-                if name in required_sensors:
+                if name in self.required_sensors:
                     start_adr = mj_model.sensor_adr[i]
                     dim = mj_model.sensor_dim[i]
                     self._sensor_info[name] = (start_adr, dim)
@@ -307,7 +356,7 @@ class SafePointCircle(PipelineEnv):
         self._max_layout_attempts = max_layout_attempts
 
         if self._debug:
-            print(f"SafePointCircle initialized with {self._num_hazards} hazards")
+            print(f"SafeCircle initialized with {self._num_hazards} hazards")
 
     def reset(self, rng: jp.ndarray) -> State:
         """Reset the environment with constrained hazard placement."""
@@ -365,17 +414,18 @@ class SafePointCircle(PipelineEnv):
             mpos = mpos.at[goal_ids].set(self._goal_positions)
 
         if self._num_movable_hazards > 0:
-            # Simple uniform random placement within hazard extents
-            min_x, min_y, max_x, max_y = self._hazard_placement_extents
-            rng_layout, rng_x, rng_y = jax.random.split(rng_layout, 3)
-            hazard_xs = jax.random.uniform(
-                rng_x, (self._num_movable_hazards,), minval=min_x, maxval=max_x
+            # Use keepout-based placement to prevent overlapping hazards
+            (rng_layout, positions_xy, keepouts, count, hazard_positions) = place_objects(
+                rng_key=rng_layout,
+                positions_xy=positions_xy,
+                keepouts_array=keepouts,
+                placed_count=count,
+                per_item_keepouts=self._hazard_keepouts[:self._num_movable_hazards],
+                num_items=self._num_movable_hazards,
+                num_candidates=num_candidates,
+                placement_extents=self._hazard_placement_extents,
+                placement_margin=self._placement_margin,
             )
-            hazard_ys = jax.random.uniform(
-                rng_y, (self._num_movable_hazards,), minval=min_y, maxval=max_y
-            )
-            hazard_zs = jp.full((self._num_movable_hazards,), 0.09)
-            hazard_positions = jp.stack([hazard_xs, hazard_ys, hazard_zs], axis=1)
 
             hazard_ids = jp.array(self._hazard_mocap_ids[:self._num_movable_hazards], dtype=jp.int32)
             mpos = mpos.at[hazard_ids].set(hazard_positions)
@@ -545,7 +595,7 @@ class SafePointCircle(PipelineEnv):
         world_dx = agent_pos[0] - self._circle_center[0]
         world_dy = agent_pos[1] - self._circle_center[1]
 
-        agent_z_angle = data.qpos[2]
+        agent_z_angle = self.get_agent_heading(data)
         cos_a = jp.cos(agent_z_angle)
         sin_a = jp.sin(agent_z_angle)
 
@@ -751,3 +801,34 @@ class SafePointCircle(PipelineEnv):
         if self._include_hazard_compass:
             size += self._hazard_compass_k * 2
         return size
+
+
+class SafeCirclePoint(SafeCircle):
+    """Point agent for circular orbit task.
+
+    The point agent uses a circle-specific XML with thrust and yaw control.
+    """
+
+    @property
+    def agent_xml_file(self) -> str:
+        return "point_circle.xml"
+
+    @property
+    def agent_body_index(self) -> int:
+        return 1  # Point agent body is at index 1
+
+    @property
+    def default_healthy_z_range(self) -> Tuple[float, float]:
+        return (0.05, 0.5)
+
+    @property
+    def default_agent_keepout(self) -> float:
+        return 0.1
+
+    @property
+    def required_sensors(self) -> List[str]:
+        return ["accelerometer", "velocimeter", "gyro", "magnetometer"]
+
+    def get_agent_heading(self, data: mjx.Data) -> jp.ndarray:
+        """Get the agent's current heading angle from z_hinge rotation."""
+        return data.qpos[2]

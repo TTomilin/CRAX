@@ -82,7 +82,7 @@ def measure_safebrax_throughput(num_envs: int, num_steps: int = 1_000_000) -> Di
     # Create a batched environment
     try:
         env = envs.create(
-            env_name='safe_point_goal',
+            env_name='safe_goal_point',
             batch_size=num_envs,
             episode_length=1000,
             action_repeat=1,
@@ -90,7 +90,7 @@ def measure_safebrax_throughput(num_envs: int, num_steps: int = 1_000_000) -> Di
         )
     except Exception:
         # Fallback in case create is unavailable
-        env = envs.get_environment('safe_point_goal')
+        env = envs.get_environment('safe_goal_point')
     
     # Monitor resources after environment creation
     mem_after_creation = process.memory_info().rss / 1024 / 1024

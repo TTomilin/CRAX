@@ -67,18 +67,29 @@ def create_hazard_manager_from_specs(hazard_specs) -> HazardManager:
     for spec in hazard_specs:
         if not isinstance(spec, dict):
             continue
-        manager.add_hazards(
-            hazard_type=spec.get("type", "cube"),
-            count=spec.get("count", 0),
-            positions=spec.get("positions") or spec.get("centers"),
-            size=spec.get("size"),
-            height=spec.get("height"),
-            collidable=spec.get("collidable", True),
-            fixed=spec.get("fixed", False),
-            density=spec.get("density"),
-            alpha_transparent=spec.get("alpha_transparent"),
-            travel=spec.get("travel"),  # For gremlin hazards
-        )
+
+        # Build kwargs, only including non-None values to preserve defaults
+        kwargs = {
+            "hazard_type": spec.get("type", "cube"),
+            "count": spec.get("count", 0),
+            "positions": spec.get("positions") or spec.get("centers"),
+            "collidable": spec.get("collidable", True),
+            "fixed": spec.get("fixed", False),
+        }
+
+        # Only add optional parameters if they're explicitly specified
+        if spec.get("size") is not None:
+            kwargs["size"] = spec["size"]
+        if spec.get("height") is not None:
+            kwargs["height"] = spec["height"]
+        if spec.get("density") is not None:
+            kwargs["density"] = spec["density"]
+        if spec.get("alpha_transparent") is not None:
+            kwargs["alpha_transparent"] = spec["alpha_transparent"]
+        if spec.get("travel") is not None:
+            kwargs["travel"] = spec["travel"]
+
+        manager.add_hazards(**kwargs)
     return manager
 
 

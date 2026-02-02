@@ -1,8 +1,19 @@
-"""Unified velocity-constrained environment for multiple agents."""
+"""Velocity-constrained environments with modular agent structure.
+
+Abstract base class and agent-specific implementations for velocity-constrained locomotion.
+The agent must move forward while staying below a velocity threshold.
+
+Usage:
+    env = SafeVelocityAnt()  # Ant with velocity constraint
+    env = SafeVelocityHumanoid(level=2)  # Humanoid with medium difficulty
+    # or via registry:
+    env = brax.envs.get_environment("safe_velocity_ant", level=1)
+"""
 
 from __future__ import annotations
 
-from typing import Callable, Type
+from abc import ABC, abstractmethod
+from typing import Callable, Dict, Tuple, Type
 
 import jax
 from jax import numpy as jp
@@ -22,6 +33,7 @@ from brax.envs.velocity_constraints import (
     planar_speed,
 )
 from brax.envs.walker2d import Walker2d
+
 
 # Default velocity thresholds per agent (used as level 1 baseline)
 DEFAULT_THRESHOLDS = {
@@ -69,15 +81,6 @@ def get_threshold_for_level(agent: str, level: int | None = None) -> float:
 
     return LEVEL_THRESHOLDS[level][agent]
 
-# Base environment classes
-_BASE_ENVS: dict[str, Type[PipelineEnv]] = {
-    "ant": Ant,
-    "halfcheetah": Halfcheetah,
-    "hopper": Hopper,
-    "humanoid": Humanoid,
-    "swimmer": Swimmer,
-    "walker2d": Walker2d,
-}
 
 # Velocity computation modes
 VELOCITY_MODE_X = "x"  # x-axis velocity only
@@ -85,49 +88,266 @@ VELOCITY_MODE_PLANAR = "planar"  # 2D planar speed
 VELOCITY_MODE_COM_PLANAR = "com_planar"  # Planar speed from center of mass
 VELOCITY_MODE_Q = "q"  # Velocity from generalized coordinates
 
-_VELOCITY_MODES = {
-    "ant": VELOCITY_MODE_PLANAR,
-    "halfcheetah": VELOCITY_MODE_X,
-    "hopper": VELOCITY_MODE_X,
-    "humanoid": VELOCITY_MODE_COM_PLANAR,
-    "swimmer": VELOCITY_MODE_Q,
-    "walker2d": VELOCITY_MODE_X,
-}
+
+class SafeVelocityBase(PipelineEnv, ABC):
+    """Abstract base class for velocity-constrained locomotion environments.
+
+    Extends a base locomotion environment by adding velocity constraints
+    as safety constraints for constrained RL training.
+
+    Subclasses must implement agent-specific configuration.
+    """
+
+    @property
+    @abstractmethod
+    def agent_name(self) -> str:
+        """Return the agent name (e.g., 'ant', 'humanoid')."""
+        pass
+
+    @property
+    @abstractmethod
+    def velocity_mode(self) -> str:
+        """Return the velocity computation mode."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_threshold(self) -> float:
+        """Return the default velocity threshold for this agent."""
+        pass
+
+    def _compute_velocity(self, pipeline_state0, pipeline_state) -> jax.Array:
+        """Compute velocity based on the agent's velocity mode."""
+        if self.velocity_mode == VELOCITY_MODE_X:
+            return compute_velocity(
+                pipeline_state0.x.pos[0, 0], pipeline_state.x.pos[0, 0], self.dt
+            )
+        elif self.velocity_mode == VELOCITY_MODE_PLANAR:
+            velocity = compute_velocity(
+                pipeline_state0.x.pos[0], pipeline_state.x.pos[0], self.dt
+            )
+            return planar_speed(velocity[..., :2])
+        elif self.velocity_mode == VELOCITY_MODE_COM_PLANAR:
+            com_before, *_ = self._com(pipeline_state0)
+            com_after, *_ = self._com(pipeline_state)
+            velocity = compute_velocity(com_before, com_after, self.dt)
+            return planar_speed(velocity[..., :2])
+        elif self.velocity_mode == VELOCITY_MODE_Q:
+            return compute_velocity(pipeline_state0.q[0], pipeline_state.q[0], self.dt)
+        else:
+            raise ValueError(f"Unknown velocity mode: {self.velocity_mode}")
+
+    def __init__(
+            self,
+            level: int | None = None,
+            velocity_threshold: float | None = None,
+            velocity_cost_weight: float = 1.0,
+            cost_mode: str = "binary",
+            reward_scaler: float = 0.01,
+            **kwargs,
+    ):
+        """Initialize the velocity-constrained environment.
+
+        Args:
+            level: Difficulty level (1, 2, or 3). Higher = stricter threshold.
+            velocity_threshold: Maximum allowed velocity. Overrides level-based threshold.
+            velocity_cost_weight: Weight for velocity constraint violation cost.
+            cost_mode: Cost computation mode ('binary' or 'hinge').
+            reward_scaler: Coefficient for the reward.
+            **kwargs: Additional arguments passed to the base environment.
+        """
+        super().__init__(**kwargs)
+
+        # Determine threshold: explicit > level-based > default
+        if velocity_threshold is not None:
+            self._velocity_threshold = float(velocity_threshold)
+        else:
+            self._velocity_threshold = get_threshold_for_level(self.agent_name, level)
+
+        self._velocity_cost_weight = float(velocity_cost_weight)
+        self._cost_mode = cost_mode
+        self._reward_scaler = reward_scaler
+
+    def step(self, state: State, action: jax.Array) -> State:
+        pipeline_state0 = state.pipeline_state
+        assert pipeline_state0 is not None
+        next_state = super().step(state, action)
+        pipeline_state = next_state.pipeline_state
+
+        velocity_value = self._compute_velocity(pipeline_state0, pipeline_state)
+
+        if self._cost_mode == "binary":
+            cost, violation = binary_velocity_cost(
+                velocity_value, self._velocity_threshold, self._velocity_cost_weight
+            )
+        elif self._cost_mode == "hinge":
+            cost, violation = hinge_velocity_cost(
+                velocity_value, self._velocity_threshold, self._velocity_cost_weight
+            )
+        else:
+            raise ValueError(f"Unknown cost_mode: {self._cost_mode}")
+
+        metrics = dict(next_state.metrics)
+        add_velocity_cost_metrics(
+            metrics,
+            next_state.reward,
+            velocity_value=velocity_value,
+            threshold=self._velocity_threshold,
+            violation=violation,
+            cost=cost,
+        )
+
+        current_info = next_state.info if isinstance(next_state.info, dict) else {}
+        step_count = current_info.get("step_count", 0) + 1
+        info = build_velocity_info(
+            current_info,
+            cost=cost,
+            velocity_value=velocity_value,
+            threshold=self._velocity_threshold,
+            violation=violation,
+            step_count=step_count,
+        )
+
+        return next_state.replace(
+            reward=next_state.reward * self._reward_scaler,
+            metrics=metrics,
+            info=info
+        )
+
+    def reset(self, rng: jax.Array) -> State:
+        state = super().reset(rng)
+        zero = jp.zeros_like(state.reward)
+        metrics = dict(state.metrics)
+        add_velocity_cost_metrics(
+            metrics,
+            state.reward,
+            velocity_value=zero,
+            threshold=self._velocity_threshold,
+            violation=zero,
+            cost=zero,
+        )
+        info = build_velocity_info(
+            state.info,
+            cost=zero,
+            velocity_value=zero,
+            threshold=self._velocity_threshold,
+            violation=zero,
+            step_count=0,
+        )
+        return state.replace(metrics=metrics, info=info)
 
 
-def _compute_x_velocity(env, pipeline_state0, pipeline_state) -> jax.Array:
-    """Compute x-axis velocity from body position."""
-    return compute_velocity(
-        pipeline_state0.x.pos[0, 0], pipeline_state.x.pos[0, 0], env.dt
-    )
+# ============================================================================
+# Concrete agent implementations
+# ============================================================================
+
+class SafeVelocityAnt(SafeVelocityBase, Ant):
+    """Ant with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "ant"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_PLANAR
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["ant"]
 
 
-def _compute_planar_velocity(env, pipeline_state0, pipeline_state) -> jax.Array:
-    """Compute planar speed from body position."""
-    velocity = compute_velocity(
-        pipeline_state0.x.pos[0], pipeline_state.x.pos[0], env.dt
-    )
-    return planar_speed(velocity[..., :2])
+class SafeVelocityHumanoid(SafeVelocityBase, Humanoid):
+    """Humanoid with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "humanoid"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_COM_PLANAR
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["humanoid"]
 
 
-def _compute_com_planar_velocity(env, pipeline_state0, pipeline_state) -> jax.Array:
-    """Compute planar speed from center of mass (for humanoid)."""
-    com_before, *_ = env._com(pipeline_state0)
-    com_after, *_ = env._com(pipeline_state)
-    velocity = compute_velocity(com_before, com_after, env.dt)
-    return planar_speed(velocity[..., :2])
+class SafeVelocityHalfcheetah(SafeVelocityBase, Halfcheetah):
+    """Halfcheetah with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "halfcheetah"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_X
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["halfcheetah"]
 
 
-def _compute_q_velocity(env, pipeline_state0, pipeline_state) -> jax.Array:
-    """Compute x-velocity from generalized coordinates (for swimmer)."""
-    return compute_velocity(pipeline_state0.q[0], pipeline_state.q[0], env.dt)
+class SafeVelocityHopper(SafeVelocityBase, Hopper):
+    """Hopper with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "hopper"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_X
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["hopper"]
 
 
-_VELOCITY_COMPUTERS: dict[str, Callable] = {
-    VELOCITY_MODE_X: _compute_x_velocity,
-    VELOCITY_MODE_PLANAR: _compute_planar_velocity,
-    VELOCITY_MODE_COM_PLANAR: _compute_com_planar_velocity,
-    VELOCITY_MODE_Q: _compute_q_velocity,
+class SafeVelocitySwimmer(SafeVelocityBase, Swimmer):
+    """Swimmer with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "swimmer"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_Q
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["swimmer"]
+
+
+class SafeVelocityWalker2d(SafeVelocityBase, Walker2d):
+    """Walker2d with velocity constraints."""
+
+    @property
+    def agent_name(self) -> str:
+        return "walker2d"
+
+    @property
+    def velocity_mode(self) -> str:
+        return VELOCITY_MODE_X
+
+    @property
+    def default_threshold(self) -> float:
+        return DEFAULT_THRESHOLDS["walker2d"]
+
+
+# ============================================================================
+# Factory function for backward compatibility
+# ============================================================================
+
+_AGENT_CLASSES: Dict[str, Type[SafeVelocityBase]] = {
+    "ant": SafeVelocityAnt,
+    "halfcheetah": SafeVelocityHalfcheetah,
+    "hopper": SafeVelocityHopper,
+    "humanoid": SafeVelocityHumanoid,
+    "swimmer": SafeVelocitySwimmer,
+    "walker2d": SafeVelocityWalker2d,
 }
 
 
@@ -157,117 +377,28 @@ def create_safe_velocity_env(
         A velocity-constrained environment instance.
     """
     agent = agent.lower()
-    if agent not in _BASE_ENVS:
-        raise ValueError(f"Unknown agent: {agent}. Supported agents: {list(_BASE_ENVS.keys())}")
+    if agent not in _AGENT_CLASSES:
+        raise ValueError(f"Unknown agent: {agent}. Supported agents: {list(_AGENT_CLASSES.keys())}")
 
-    base_cls = _BASE_ENVS[agent]
-
-    # Determine threshold: explicit > level-based > default (level 1)
-    if velocity_threshold is not None:
-        threshold = velocity_threshold
-    else:
-        threshold = get_threshold_for_level(agent, level)
-    velocity_mode = _VELOCITY_MODES[agent]
-    compute_vel = _VELOCITY_COMPUTERS[velocity_mode]
-
-    class SafeVelocityEnv(base_cls):
-        """Velocity-constrained locomotion environment.
-
-        Extends the base locomotion environment by adding velocity constraints
-        as safety constraints for constrained RL training.
-        """
-
-        def __init__(self, **init_kwargs):
-            super().__init__(**init_kwargs)
-            self._velocity_threshold = float(threshold)
-            self._velocity_cost_weight = float(velocity_cost_weight)
-            self._cost_mode = cost_mode
-            self._velocity_mode = velocity_mode
-            self._agent_name = agent
-            self._reward_scaler = reward_scaler
-
-        def step(self, state: State, action: jax.Array) -> State:
-            pipeline_state0 = state.pipeline_state
-            assert pipeline_state0 is not None
-            next_state = super().step(state, action)
-            pipeline_state = next_state.pipeline_state
-
-            velocity_value = compute_vel(self, pipeline_state0, pipeline_state)
-
-            if self._cost_mode == "binary":
-                cost, violation = binary_velocity_cost(
-                    velocity_value, self._velocity_threshold, self._velocity_cost_weight
-                )
-            elif self._cost_mode == "hinge":
-                cost, violation = hinge_velocity_cost(
-                    velocity_value, self._velocity_threshold, self._velocity_cost_weight
-                )
-            else:
-                raise ValueError(f"Unknown cost_mode: {self._cost_mode}")
-
-            metrics = dict(next_state.metrics)
-            add_velocity_cost_metrics(
-                metrics,
-                next_state.reward,
-                velocity_value=velocity_value,
-                threshold=self._velocity_threshold,
-                violation=violation,
-                cost=cost,
-            )
-
-            current_info = next_state.info if isinstance(next_state.info, dict) else {}
-            step_count = current_info.get("step_count", 0) + 1
-            info = build_velocity_info(
-                current_info,
-                cost=cost,
-                velocity_value=velocity_value,
-                threshold=self._velocity_threshold,
-                violation=violation,
-                step_count=step_count,
-            )
-
-            return next_state.replace(reward=next_state.reward * self._reward_scaler, metrics=metrics, info=info)
-
-        def reset(self, rng: jax.Array) -> State:
-            state = super().reset(rng)
-            zero = jp.zeros_like(state.reward)
-            metrics = dict(state.metrics)
-            add_velocity_cost_metrics(
-                metrics,
-                state.reward,
-                velocity_value=zero,
-                threshold=self._velocity_threshold,
-                violation=zero,
-                cost=zero,
-            )
-            info = build_velocity_info(
-                state.info,
-                cost=zero,
-                velocity_value=zero,
-                threshold=self._velocity_threshold,
-                violation=zero,
-                step_count=0,
-            )
-            return state.replace(metrics=metrics, info=info)
-
-    return SafeVelocityEnv(**kwargs)
+    env_class = _AGENT_CLASSES[agent]
+    return env_class(
+        level=level,
+        velocity_threshold=velocity_threshold,
+        velocity_cost_weight=velocity_cost_weight,
+        cost_mode=cost_mode,
+        reward_scaler=reward_scaler,
+        **kwargs,
+    )
 
 
 class SafeVelocity:
-    """Wrapper class that provides a consistent interface for safe velocity environments.
+    """Wrapper class for backward compatibility.
 
     This class acts as a factory that creates the appropriate velocity-constrained
     environment based on the specified agent and difficulty level.
 
-    Difficulty Levels:
-        - Level 1: Baseline thresholds (easiest)
-        - Level 2: 75% of baseline (medium)
-        - Level 3: 50% of baseline (hardest)
-
     Usage:
         env = SafeVelocity(agent="ant", level=1)
-        # or via brax.envs.create:
-        env = brax.envs.create("safe_velocity", agent="ant", level=2)
     """
 
     def __new__(
@@ -280,23 +411,6 @@ class SafeVelocity:
         reward_scaler: float = 0.01,
         **kwargs,
     ):
-        """Create a new velocity-constrained environment.
-
-        Args:
-            agent: Name of the agent ('ant', 'halfcheetah', 'hopper', 'humanoid',
-                   'swimmer', 'walker2d').
-            level: Difficulty level (1, 2, or 3). Higher levels have stricter
-                   velocity constraints. Defaults to 1 if not specified.
-            velocity_threshold: Maximum allowed velocity. If specified, overrides
-                               the level-based threshold.
-            velocity_cost_weight: Weight for velocity constraint violation cost.
-            cost_mode: Cost computation mode ('binary' or 'hinge').
-            reward_scaler: Coefficient for the reward.
-            **kwargs: Additional arguments passed to the base environment.
-
-        Returns:
-            A velocity-constrained environment instance.
-        """
         return create_safe_velocity_env(
             agent=agent,
             level=level,
