@@ -2,14 +2,15 @@
 
 CRAX is a high-performance benchmark for **Constrained Reinforcement Learning (Safe RL)** built on top of [Brax](https://github.com/google/brax) and [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html). It provides GPU/TPU-accelerated environments with safety constraints and a suite of state-of-the-art safe RL algorithms.
 
-<!-- GIF placeholders - add your environment GIFs here -->
-<img src="assets/envs/safe_point_goal_level_1.png" width="200" height="200"/><img src="assets/envs/safe_point_goal_level_2.png" width="200" height="200"/><img src="assets/envs/safe_point_goal_level_3.png" width="200" height="200"/>
+<p align="center">
+  <img src="assets/envs/envs.gif" alt="CRAX Environments" width="100%" style="max-width: 400px;" />
+</p>
 
 ## Features
 
 - **Massively parallel simulation**: Train agents across thousands of environments simultaneously on GPU/TPU
 - **Configurable difficulty levels**: Environments with varying numbers and types of hazards
-- **Multiple constraint types**: Cylindrical hazards, cubical hazards, boundary constraints, and more
+- **Multiple constraint types**: Cylindrical hazards, cubical hazards, boundary constraints, velocity limits, and more
 - **State-of-the-art algorithms**: Implementations of leading constrained RL methods
 
 ## Safe RL Algorithms
@@ -28,27 +29,54 @@ All algorithms share a common training infrastructure with hooks for custom loss
 
 ## Environments
 
-CRAX provides safety-constrained versions of standard locomotion tasks:
+CRAX environments follow a **task-agent** naming convention: `safe_<task>_<agent>`.
 
-- **SafePointGoal** - Point mass navigation with hazard avoidance
-- **SafeAnt** - Ant locomotion with safety constraints
-- **SafeWalker** - Walker2D with boundary and hazard constraints
-- **SafeReacher** - Reacher with obstacle avoidance
+| Task | Agents Supported                                      | Description                                              |
+|------|-------------------------------------------------------|----------------------------------------------------------|
+| **Goal** | Point, Ant, Spider, Humanoid, Swimmer                 | Navigate to goal positions while avoiding hazards        |
+| **Circle** | Point, Ant, Spider, Humanoid, Swimmer                 | Orbit a circular path within boundaries                  |
+| **Button** | Point, Ant, Spider, Humanoid, Swimmer                 | Press target buttons while avoiding gremlins and hazards |
+| **Push** | Point, Ant, Spider, Humanoid, Swimmer                 | Push a block to a goal while avoiding hazards            |
+| **Velocity** | Ant, Humanoid, HalfCheetah, Hopper, Swimmer, Walker2D | Locomotion under maximum velocity constraints            |
+| **Lift** | Ant, Humanoid, Spider                                 | Locomotion with restricted legs touching the floor        |
+| **Height** | Humanoid, HalfCheetah, Hopper, Walker2D               | Locomotion under a height ceiling                        |
+| **Pathway** | HalfCheetah, Hopper, Walker2D                         | Traverse a corridor with hazard gaps                     |
+| **Reacher** | Reacher                                               | Robotic arm reaching targets while avoiding obstacles    |
 
-Each environment supports:
-- Configurable difficulty levels (number/density of hazards)
-- Multiple hazard types (cylinders, cubes, mixed)
-- Episodic cost tracking for constraint satisfaction
-- Vision-based observations (optional)
+## Difficulty Levels
+
+Every environment offers three difficulty levels that progressively increase constraint difficulty.
+
+| Environment | Level 1 | Level 2 | Level 3 |
+|:-----------:|:-------:|:-------:|:-------:|
+| **Goal** | <img src="assets/envs/safe_point_goal_level_1.png" width="100%" /> | <img src="assets/envs/safe_point_goal_level_2.png" width="100%" /> | <img src="assets/envs/safe_point_goal_level_3.png" width="100%" /> |
+| **Circle** | <img src="assets/envs/safe_point_circle_level_1.png" width="100%" /> | <img src="assets/envs/safe_point_circle_level_2.png" width="100%" /> | <img src="assets/envs/safe_point_circle_level_3.png" width="100%" /> |
+| **Push** | <img src="assets/envs/safe_block_push_level_1.png" width="100%" /> | <img src="assets/envs/safe_block_push_level_2.png" width="100%" /> | <img src="assets/envs/safe_block_push_level_3.png" width="100%" /> |
+| **Reacher** | <img src="assets/envs/safe_reacher_level_1.png" width="100%" /> | <img src="assets/envs/safe_reacher_level_2.png" width="100%" /> | <img src="assets/envs/safe_reacher_level_3.png" width="100%" /> |
+| **Pathway** | <img src="assets/envs/safe_walker_level_1.png" width="100%" /> | <img src="assets/envs/safe_walker_level_2.png" width="100%" /> | <img src="assets/envs/safe_walker_level_3.png" width="100%" /> |
+| **Height** | <img src="assets/envs/safe_height_level_1.png" width="100%" /> | <img src="assets/envs/safe_height_level_2.png" width="100%" /> | <img src="assets/envs/safe_height_level_3.png" width="100%" /> |
+| **Lift** | <img src="assets/envs/safe_spider_level_1.png" width="100%" /> | <img src="assets/envs/safe_spider_level_2.png" width="100%" /> | <img src="assets/envs/safe_spider_level_3.png" width="100%" /> |
 
 ## Installation
 
 ```bash
 git clone https://github.com/your-repo/CRAX.git
 cd CRAX
-python3 -m venv env
-source env/bin/activate
-pip install --upgrade pip
+```
+
+Create and activate a virtual environment using your preferred tool:
+
+```bash
+# Option A: venv
+python3 -m venv .venv && source .venv/bin/activate
+
+# Option B: conda
+conda create -n crax python=3.11 && conda activate crax
+```
+
+Then install the package:
+
+```bash
 pip install -e .
 ```
 
@@ -63,7 +91,7 @@ from brax import envs
 from brax.training.agents.ppo_lag import train as ppo_lag_train
 
 # Create environment
-env = envs.get_environment('safe_point_goal', difficulty=1)
+env = envs.get_environment('safe_goal_point', level=1)
 
 # Train with PPO-Lagrange
 make_policy, params, metrics, _ = ppo_lag_train.train(
@@ -76,10 +104,17 @@ make_policy, params, metrics, _ = ppo_lag_train.train(
 )
 ```
 
-### Using the config system
+### Using the CLI
 
 ```bash
-python train_from_config.py --algorithm ppo_lag --env safe_point_goal --difficulty 1
+# Single environment training
+python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1
+
+# Curriculum training (progressive difficulty)
+python train_curriculum.py --env_name safe_goal_point --alg ppo_lag
+
+# Safety transfer (pre-train with PPO, then fine-tune with safe algorithms)
+python train_transfer.py --env_name safe_velocity_ant --alg ppo_lag
 ```
 
 ## Project Structure
@@ -88,9 +123,18 @@ python train_from_config.py --algorithm ppo_lag --env safe_point_goal --difficul
 CRAX/
 ├── brax/
 │   ├── envs/                    # Environment definitions
-│   │   ├── safe_point_goal.py   # Point mass with hazards
-│   │   ├── safe_ant.py          # Ant with constraints
-│   │   ├── safe_walker.py       # Walker2D with constraints
+│   │   ├── safe_goal.py         # Goal navigation suite
+│   │   ├── safe_circle.py       # Circular orbit suite
+│   │   ├── safe_button.py       # Button pressing suite
+│   │   ├── safe_push.py         # Block pushing suite
+│   │   ├── safe_velocity.py     # Velocity constraint suite (6 agents)
+│   │   ├── safe_lift.py         # Leg-lifting suite
+│   │   ├── safe_height.py       # Height constraint suite
+│   │   ├── safe_pathway.py      # Hazard corridor suite
+│   │   ├── safe_reacher.py      # Reacher with obstacles
+│   │   ├── safe_spider.py       # Spider leg-lifting
+│   │   ├── builder.py           # Modular XML scene builder
+│   │   ├── difficulty.py        # Difficulty level configurations
 │   │   ├── hazards.py           # Hazard generation utilities
 │   │   └── goals.py             # Goal sampling utilities
 │   └── training/
@@ -102,7 +146,10 @@ CRAX/
 │           ├── p3o/             # P3O
 │           └── ppo_saute/       # Saute wrapper
 ├── configs/                     # Training configurations
-└── scripts/                     # Utility scripts
+├── train_env.py                 # Single environment training
+├── train_curriculum.py          # Progressive difficulty training
+├── train_transfer.py            # Safety transfer learning
+└── scripts/                     # Utility & visualization scripts
 ```
 
 ## Architecture
@@ -121,26 +168,23 @@ ppo/train.py          # Base trainer with hooks (loss_fn, post_step_fn, init_aux
 
 This design minimizes code duplication and makes it easy to add new algorithms.
 
-## Acknowledgements
+[//]: # (## Acknowledgements)
 
-CRAX is built on top of [Brax](https://github.com/google/brax), a differentiable physics engine by Google. We thank the Brax team for their excellent foundation.
+[//]: # ()
+[//]: # (CRAX is built on top of [Brax]&#40;https://github.com/google/brax&#41;, a differentiable physics engine by Google. We thank the Brax team for their excellent foundation.)
 
-If you use CRAX in your research, please cite:
+[//]: # ()
+[//]: # (If you use CRAX in your research, please cite:)
 
-```bibtex
-@software{crax2025,
-  title = {CRAX: Constrained Reinforcement Learning Accelerated with JAX},
-  year = {2025},
-}
-```
+[//]: # ()
+[//]: # (```bibtex)
 
-And the original Brax paper:
+[//]: # (@software{crax2025,)
 
-```bibtex
-@software{brax2021github,
-  author = {C. Daniel Freeman and Erik Frey and Anton Raichuk and Sertan Girgin and Igor Mordatch and Olivier Bachem},
-  title = {Brax - A Differentiable Physics Engine for Large Scale Rigid Body Simulation},
-  url = {http://github.com/google/brax},
-  year = {2021},
-}
-```
+[//]: # (  title = {CRAX: Constrained Reinforcement Learning Accelerated with JAX},)
+
+[//]: # (  year = {2025},)
+
+[//]: # (})
+
+[//]: # (```)
