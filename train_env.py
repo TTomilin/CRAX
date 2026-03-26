@@ -13,8 +13,11 @@ import numpy as np
 import wandb
 from brax import envs
 from configs.training_config import build_base_parser
-from run_utils import collect_rollout_metrics, record_episode_video, setup_gpu_environment, get_algorithm_train_fn, \
-    filter_kwargs_for_fn, custom_progress_fn
+from run_utils import (
+    collect_rollout_metrics, record_episode_video, setup_gpu_environment,
+    get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn,
+    make_vision_network_factory,
+)
 
 
 def main():
@@ -39,12 +42,36 @@ def main():
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         run_name = f"{env_name}_Level_{difficulty}_{alg_name}_seed{seed}_{timestamp}"
 
+        # Build vision kwargs if vision mode is enabled
+        vision_kwargs = None
+        if config.vision:
+            vision_kwargs = dict(
+                cameras=config.vision_cameras,
+                height=config.vision_height,
+                width=config.vision_width,
+                obs_mode=config.vision_obs_mode,
+                frame_stack=config.vision_frame_stack,
+                grayscale=config.vision_grayscale,
+                num_render_workers=config.vision_render_workers,
+            )
+            if config.num_envs > 256:
+                print(
+                    f"WARNING: --num_envs={config.num_envs} is large for vision training. "
+                    f"Consider reducing to 64-256 for practical rendering speed."
+                )
+
         # Create environments with difficulty level
         env_kwargs = config.env_kwargs or {}
         if env_name == 'safe_velocity':
             env_kwargs['agent'] = config.agent
-        env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
-        eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
+        env = envs.get_environment(
+            env_name, level=difficulty, vision=config.vision,
+            vision_kwargs=vision_kwargs, **env_kwargs,
+        )
+        eval_env = envs.get_environment(
+            env_name, level=difficulty, vision=config.vision,
+            vision_kwargs=vision_kwargs, **env_kwargs,
+        )
 
         # Determine the episode length
         episode_length = env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
@@ -86,6 +113,16 @@ def main():
         # Get the appropriate training function
         train_fn_base = get_algorithm_train_fn(alg_name)
         train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
+
+        # Inject vision network factory if vision mode is enabled
+        if config.vision:
+            state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
+            train_kwargs['network_factory'] = make_vision_network_factory(
+                alg_name,
+                policy_obs_key=state_obs_key,
+                value_obs_key=state_obs_key,
+            )
+            train_kwargs['augment_pixels'] = True
 
         # Create the training function
         train_fn = functools.partial(train_fn_base, **train_kwargs)

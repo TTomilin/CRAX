@@ -18,6 +18,8 @@
     <!--  ================= SWIMMER ================= /-->
     <body name="torso" pos="0 0 0">
       <camera name="track" mode="trackcom" pos="0 -3 3" xyaxes="1 0 0 0 1 1"/>
+      <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
+      <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
       <geom density="1000" fromto="1.5 0 0 0.5 0 0" size="0.1" type="capsule"/>
       <joint axis="1 0 0" name="slider1" pos="0 0 0" type="slide"/>
       <joint axis="0 1 0" name="slider2" pos="0 0 0" type="slide"/>

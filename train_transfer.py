@@ -17,7 +17,10 @@ from pathlib import Path
 
 from brax.training import transfer
 from configs.training_config import build_base_parser
-from run_utils import setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn
+from run_utils import (
+    setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn,
+    make_vision_network_factory,
+)
 import wandb
 
 
@@ -59,6 +62,28 @@ def main():
             ckpt_root = root_dir / args.model_dir / base_run_name
             os.makedirs(ckpt_root, exist_ok=True)
             cfg["save_checkpoint_path"] = ckpt_root
+
+        # Add vision support
+        if args.vision:
+            vision_kwargs = dict(
+                cameras=args.vision_cameras,
+                height=args.vision_height,
+                width=args.vision_width,
+                obs_mode=args.vision_obs_mode,
+                frame_stack=args.vision_frame_stack,
+                grayscale=args.vision_grayscale,
+                num_render_workers=args.vision_render_workers,
+            )
+            cfg['vision'] = True
+            cfg['vision_kwargs'] = vision_kwargs
+            state_obs_key = 'state' if args.vision_obs_mode == 'pixels+state' else ''
+            # Network factory for unsafe (PPO) and safe algorithms
+            cfg['network_factory'] = make_vision_network_factory(
+                'ppo',  # unsafe phase uses base PPO
+                policy_obs_key=state_obs_key,
+                value_obs_key=state_obs_key,
+            )
+            cfg['augment_pixels'] = True
 
         # Build wandb config for per-algorithm runs
         wandb_config = None

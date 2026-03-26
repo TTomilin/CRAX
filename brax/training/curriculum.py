@@ -103,8 +103,9 @@ def train_curriculum(
             stage_kwargs.update(stage.kwargs_override)
 
         # Create environment from name with difficulty level
-        # Extract env creation kwargs (e.g., backend) that should not be merged into config
-        env_creation_kwargs = {k: v for k, v in stage_kwargs.items() if k in ['backend']}
+        # Extract env creation kwargs (e.g., backend, vision) that should not be merged into config
+        env_creation_kwargs = {k: v for k, v in stage_kwargs.items()
+                               if k in ['backend', 'vision', 'vision_kwargs']}
 
         env_name = stage.env_name
         level = stage.level

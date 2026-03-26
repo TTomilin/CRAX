@@ -41,6 +41,8 @@
         <!-- <geom condim="3" material="MatPlane" name="floor" pos="0 0 0" size="10 10 0.125" type="plane"/>-->
         <body name="torso" pos="0 0 0.15">
             <camera name="track" mode="trackcom" pos="0 -3 .5" xyaxes="1 0 0 0 0 1"/>
+            <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
+            <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
             <joint armature="0" damping="0" limited="false" name="root" pos="0 0 0" stiffness="0" type="free"/>
             <geom contype="1" fromto="0 -.07 0 0 .07 0" name="torso1" size="0.07" type="capsule"/>
             <geom contype="1" name="head" pos="-.15 0 0" size=".09" type="sphere" user="258"/>

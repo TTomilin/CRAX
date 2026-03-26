@@ -220,8 +220,12 @@ def benchmark_safety_transfer(
     # Create environment using difficulty level if provided
     env_kwargs = train_kwargs.get('env_kwargs', None) or {}
     difficulty = train_kwargs.get('difficulty', None)
-    env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
-    eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
+    vision = train_kwargs.get('vision', False)
+    vision_kwargs = train_kwargs.get('vision_kwargs', None)
+    env = envs.get_environment(env_name, level=difficulty, vision=vision,
+                               vision_kwargs=vision_kwargs, **env_kwargs)
+    eval_env = envs.get_environment(env_name, level=difficulty, vision=vision,
+                                    vision_kwargs=vision_kwargs, **env_kwargs)
 
     # Determine the episode length
     episode_length = train_kwargs.get('episode_length') or getattr(env, 'episode_length', None)

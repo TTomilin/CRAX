@@ -160,6 +160,24 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--wandb_group", type=str, default=None, help="W&B group")
     parser.add_argument("--wandb_tags", type=str, nargs='+', help="JSON list or path of tags")
 
+    # --- Vision (Pixel Observation) ---
+    parser.add_argument("--vision", action="store_true", help="Use pixel observations for training")
+    parser.add_argument(
+        "--vision_cameras", type=str, nargs="+", default=["vision"],
+        help="Camera names from MuJoCo XML to render (default: ['vision'])",
+    )
+    parser.add_argument("--vision_height", type=int, default=84, help="Vision render height in pixels")
+    parser.add_argument("--vision_width", type=int, default=84, help="Vision render width in pixels")
+    parser.add_argument(
+        "--vision_obs_mode", type=str, choices=["pixels", "pixels+state"], default="pixels+state",
+        help="Vision observation mode: 'pixels' (pixels only) or 'pixels+state' (pixels + state vector)",
+    )
+    parser.add_argument("--vision_frame_stack", type=int, default=1, help="Number of frames to stack (default: 1)")
+    parser.add_argument("--vision_grayscale", action="store_true", help="Convert rendered images to grayscale")
+    parser.add_argument(
+        "--vision_render_workers", type=int, default=4, help="Number of CPU threads for parallel rendering"
+    )
+
     # --- Video Recording ---
     parser.add_argument("--cameras", type=str, nargs="+", default=["fixedfar", "vision"], help="Camera names/ids")
     parser.add_argument("--video_width", type=int, default=320, help="Output video width")

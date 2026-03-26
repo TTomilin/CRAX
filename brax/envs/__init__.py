@@ -15,7 +15,7 @@
 # pylint:disable=g-multiple-import
 """Environments for training and evaluating policies."""
 
-from typing import Optional, Type
+from typing import Any, Dict, Optional, Type
 
 import jax
 from jax import numpy as jp
@@ -148,22 +148,35 @@ class UnifiedEnvAdapter(Wrapper):
         return self._ensure_unified_fields(next_state)
 
 
-def get_environment(env_name: str, level: Optional[int] = None, **kwargs) -> Env:
+def get_environment(
+    env_name: str,
+    level: Optional[int] = None,
+    vision: bool = False,
+    vision_kwargs: Optional[Dict[str, Any]] = None,
+    **kwargs,
+) -> Env:
     """Returns an environment from the environment registry.
 
     This is the primary function for creating environments. It handles:
     - Looking up the environment class from the registry
     - Applying difficulty overrides if a level is specified
     - Wrapping with UnifiedEnvAdapter for consistent cost/info fields
+    - Optionally wrapping with PixelObservationWrapper for vision-based training
 
     Args:
       env_name: environment name string
       level: optional difficulty level (1, 2, 3). If provided, applies difficulty
              overrides for supported environments.
+      vision: if True, wraps the environment with PixelObservationWrapper to
+             provide pixel observations from MuJoCo cameras.
+      vision_kwargs: keyword arguments passed to PixelObservationWrapper.
+             Supported keys: cameras, height, width, obs_mode, frame_stack,
+             render_every_n, grayscale, num_render_workers.
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
-      env: an environment wrapped with UnifiedEnvAdapter
+      env: an environment wrapped with UnifiedEnvAdapter (and optionally
+           PixelObservationWrapper for vision mode)
     """
     if env_name not in _envs:
         raise ValueError(f"Unknown environment: {env_name}. Available: {list(_envs.keys())}")
@@ -175,7 +188,13 @@ def get_environment(env_name: str, level: Optional[int] = None, **kwargs) -> Env
     env_cls = _envs[env_name]
     base_env = env_cls(**kwargs)
     # Wrap with unified adapter so downstream code can rely on cost/info fields
-    return UnifiedEnvAdapter(base_env, **kwargs)
+    env = UnifiedEnvAdapter(base_env, **kwargs)
+
+    if vision:
+        from brax.envs.wrappers.pixel_observation import PixelObservationWrapper
+        env = PixelObservationWrapper(env, **(vision_kwargs or {}))
+
+    return env
 
 
 def register_environment(env_name: str, env_class: Type[Env]):
@@ -195,6 +214,8 @@ def create(
         auto_reset: bool = True,
         batch_size: Optional[int] = None,
         level: Optional[int] = None,
+        vision: bool = False,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
         **kwargs,
 ) -> Env:
     """Creates an environment with training wrappers.
@@ -213,13 +234,16 @@ def create(
       batch_size: the number of environments to batch together
       level: optional difficulty level (1, 2, 3). If provided, applies difficulty
              overrides for supported environments.
+      vision: if True, wraps with PixelObservationWrapper for pixel observations.
+      vision_kwargs: keyword arguments for PixelObservationWrapper.
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
       env: an environment with training wrappers applied
     """
     # Get the base environment using get_environment
-    env = get_environment(env_name, level=level, **kwargs)
+    env = get_environment(env_name, level=level, vision=vision,
+                          vision_kwargs=vision_kwargs, **kwargs)
 
     # Resolve episode length: prefer explicit, else environment default if available
     if episode_length is None:

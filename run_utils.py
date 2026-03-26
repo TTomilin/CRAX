@@ -119,6 +119,39 @@ def filter_kwargs_for_fn(fn, cfg):
     return {k: v for k, v in cfg.items() if k in valid_keys}
 
 
+def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
+    """Create a vision-aware network factory for the given algorithm.
+
+    Safe RL algorithms (ppo_lag, ppo_pid, focops, p3o) need a cost_value_network
+    in addition to policy and value networks. This factory ensures the correct
+    network is created based on the algorithm.
+
+    Args:
+        alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'focops').
+        **vision_net_kwargs: Extra kwargs passed to make_ppo_networks_vision
+            (e.g., normalise_channels, policy_obs_key, value_obs_key).
+
+    Returns:
+        A network_factory callable compatible with the PPO training loop.
+    """
+    from brax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+
+    safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o'}
+    needs_cost_value = alg_name in safe_algs
+
+    def network_factory(obs_size, action_size, **kwargs):
+        merged = {**vision_net_kwargs, **kwargs}
+        if needs_cost_value and 'cost_value_hidden_layer_sizes' not in merged:
+            merged['cost_value_hidden_layer_sizes'] = (256,) * 5
+        return make_ppo_networks_vision(
+            observation_size=obs_size,
+            action_size=action_size,
+            **merged,
+        )
+
+    return network_factory
+
+
 def collect_rollout_metrics(env_name: str, make_inference_fn, params,
                             num_steps: int = 5000, seed: int = None,
                             save_trajectory: bool = True,

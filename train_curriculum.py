@@ -15,8 +15,10 @@ import wandb
 
 from brax.training import curriculum
 from configs.training_config import build_base_parser
-from run_utils import setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn, \
-    record_episode_video
+from run_utils import (
+    setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn,
+    custom_progress_fn, record_episode_video, make_vision_network_factory,
+)
 
 
 def main():
@@ -79,6 +81,27 @@ def main():
         # Get the appropriate training function
         train_fn_base = get_algorithm_train_fn(alg_name)
         train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
+
+        # Add vision support
+        if config.vision:
+            vision_kwargs = dict(
+                cameras=config.vision_cameras,
+                height=config.vision_height,
+                width=config.vision_width,
+                obs_mode=config.vision_obs_mode,
+                frame_stack=config.vision_frame_stack,
+                grayscale=config.vision_grayscale,
+                num_render_workers=config.vision_render_workers,
+            )
+            train_kwargs['vision'] = True
+            train_kwargs['vision_kwargs'] = vision_kwargs
+            state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
+            train_kwargs['network_factory'] = make_vision_network_factory(
+                alg_name,
+                policy_obs_key=state_obs_key,
+                value_obs_key=state_obs_key,
+            )
+            train_kwargs['augment_pixels'] = True
 
         # Train with curriculum
         policy_fn, final_params, results, eval_env = curriculum.train_curriculum(
