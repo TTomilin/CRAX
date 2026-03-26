@@ -175,7 +175,11 @@ class VisionMLP(linen.Module):
 
   @linen.compact
   def __call__(self, data: dict):
-    pixels_hidden = {k: v for k, v in data.items() if k.startswith('pixels/')}
+    pixels_hidden = {
+        k: v.astype(jnp.float32) / 255.0
+        for k, v in data.items()
+        if k.startswith('pixels/')
+    }
     if self.normalise_channels:
       # Calculates shared statistics over an entire 2D image.
       image_layernorm = functools.partial(

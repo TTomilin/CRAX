@@ -222,11 +222,10 @@ class PixelObservationWrapper(Wrapper):
             vmap_method='sequential',
         )
 
-        # Build pixel observation dict
+        # Build pixel observation dict — keep as uint8; networks normalize on-the-fly
         pixels = {}
         for i, cam_name in enumerate(self._cameras):
-            # Convert uint8 -> float32 normalized to [0, 1]
-            pixels[f'pixels/{cam_name}'] = pixel_arrays[i].astype(jnp.float32) / 255.0
+            pixels[f'pixels/{cam_name}'] = pixel_arrays[i]
 
         return pixels
 
