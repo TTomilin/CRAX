@@ -61,7 +61,7 @@ PYTHONPATH=$HOME/CRAX python3 ~/projects/CRAX/train_env.py \
         --skip_video \
         --video_fps 50 \
         --num_evals 0 \
-        --num_timesteps 1e6 \
+        --num_timesteps 1e4 \
         --wandb_tags ICML LEVEL_$level \
         --vision \
         --num_envs 64 \
