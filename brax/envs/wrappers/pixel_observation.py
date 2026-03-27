@@ -166,6 +166,14 @@ class PixelObservationWrapper(Wrapper):
         Receives flattened numpy arrays, returns pixel dict values as a flat
         tuple matching the result_shape_dtypes structure.
         """
+        import sys as _sys
+        if not hasattr(self, '_render_call_count'):
+            self._render_call_count = 0
+        self._render_call_count += 1
+        if self._render_call_count <= 3 or self._render_call_count % 100 == 0:
+            print(f"[DEBUG pixel_obs] _render_callback call #{self._render_call_count}, args shapes: {[a.shape for a in flat_args]}")
+            _sys.stdout.flush()
+
         q, qd = flat_args[0], flat_args[1]
         mocap_pos = flat_args[2] if len(flat_args) > 2 else None
         mocap_quat = flat_args[3] if len(flat_args) > 3 else None
@@ -207,6 +215,14 @@ class PixelObservationWrapper(Wrapper):
         is_batched = q.ndim > 1
         batch_size = q.shape[0] if is_batched else 0
 
+        import sys as _sys
+        if not hasattr(self, '_render_pixels_count'):
+            self._render_pixels_count = 0
+        self._render_pixels_count += 1
+        if self._render_pixels_count <= 3:
+            print(f"[DEBUG pixel_obs] _render_pixels call #{self._render_pixels_count}: q.shape={q.shape}, is_batched={is_batched}, batch_size={batch_size}")
+            _sys.stdout.flush()
+
         # Build callback args
         callback_args = [q, qd]
         if hasattr(pipeline_state, 'mocap_pos') and self._mj_model.nmocap > 0:
@@ -214,6 +230,10 @@ class PixelObservationWrapper(Wrapper):
             callback_args.append(pipeline_state.mocap_quat)
 
         result_shapes = self._get_pixel_result_shapes(is_batched, batch_size)
+
+        if self._render_pixels_count <= 3:
+            print(f"[DEBUG pixel_obs] result_shapes: {result_shapes}")
+            _sys.stdout.flush()
 
         pixel_arrays = jax.pure_callback(
             self._render_callback,
@@ -288,11 +308,22 @@ class PixelObservationWrapper(Wrapper):
         return updated
 
     def reset(self, rng: jax.Array) -> State:
+        import sys as _sys
+        if not hasattr(self, '_reset_count'):
+            self._reset_count = 0
+        self._reset_count += 1
+        if self._reset_count <= 3:
+            print(f"[DEBUG pixel_obs] reset() call #{self._reset_count}")
+            _sys.stdout.flush()
+
         state = self.env.reset(rng)
 
         if self._obs_mode == 'state':
             return state
 
+        if self._reset_count <= 3:
+            print(f"[DEBUG pixel_obs] inner reset done, rendering pixels...")
+            _sys.stdout.flush()
         pixels = self._render_pixels(state.pipeline_state)
         obs = self._build_obs(state.obs, pixels)
 

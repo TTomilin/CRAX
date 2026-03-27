@@ -64,14 +64,18 @@ def main():
         env_kwargs = config.env_kwargs or {}
         if env_name == 'safe_velocity':
             env_kwargs['agent'] = config.agent
+        print(f"[DEBUG] Creating training environment (vision={config.vision})...")
         env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
             vision_kwargs=vision_kwargs, **env_kwargs,
         )
+        print(f"[DEBUG] Training env created. obs_size={env.observation_size}, action_size={env.action_size}")
+        print(f"[DEBUG] Creating eval environment...")
         eval_env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
             vision_kwargs=vision_kwargs, **env_kwargs,
         )
+        print(f"[DEBUG] Eval env created.")
 
         # Determine the episode length
         episode_length = env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
@@ -117,18 +121,22 @@ def main():
         # Inject vision network factory if vision mode is enabled
         if config.vision:
             state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
+            print(f"[DEBUG] Creating vision network factory (alg={alg_name}, obs_key='{state_obs_key}')...")
             train_kwargs['network_factory'] = make_vision_network_factory(
                 alg_name,
                 policy_obs_key=state_obs_key,
                 value_obs_key=state_obs_key,
             )
             train_kwargs['augment_pixels'] = True
+            print(f"[DEBUG] Vision network factory created.")
 
         # Create the training function
+        print(f"[DEBUG] train_kwargs keys: {list(train_kwargs.keys())}")
         train_fn = functools.partial(train_fn_base, **train_kwargs)
 
         # Train the agent
-        print(f"Starting {alg_name} training for {env_name}...")
+        print(f"[DEBUG] Calling train_fn for {alg_name} / {env_name}...")
+        import sys; sys.stdout.flush()
         make_inference_fn, params, final_metrics, eval_env = train_fn(
             environment=env,
             eval_env=eval_env,
