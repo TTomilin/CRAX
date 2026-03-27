@@ -64,7 +64,7 @@ PYTHONPATH=$HOME/CRAX python3 ~/projects/CRAX/train_env.py \
         --wandb_tags ICML LEVEL_$level \
         --vision \
         --num_envs 64 \
-        --vision_render_workers 16 \
+        --vision_render_workers 8 \
         --vision_height 64 \
         --vision_width 64
 conda deactivate
