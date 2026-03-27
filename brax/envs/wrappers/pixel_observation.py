@@ -99,6 +99,9 @@ class PixelObservationWrapper(Wrapper):
         # reused across calls — matching Brax's image.py pattern but extended
         # for multi-threaded rendering.
         self._thread_local = threading.local()
+        # Lock to serialize EGL context creation — concurrent creation can
+        # SIGABRT on headless GPU nodes with MUJOCO_GL=egl.
+        self._renderer_init_lock = threading.Lock()
 
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
@@ -115,13 +118,15 @@ class PixelObservationWrapper(Wrapper):
         Following Brax's image.py pattern: create the Renderer once and reuse
         it across renders. MjData is also reused (state is overwritten each
         call). Each thread in the pool gets its own instances for thread safety.
+        Renderer creation is serialized to avoid EGL SIGABRT on headless nodes.
         """
         tl = self._thread_local
         if not hasattr(tl, 'renderer'):
-            tl.renderer = mujoco.Renderer(
-                self._mj_model, height=self._height, width=self._width
-            )
-            tl.data = mujoco.MjData(self._mj_model)
+            with self._renderer_init_lock:
+                tl.renderer = mujoco.Renderer(
+                    self._mj_model, height=self._height, width=self._width
+                )
+                tl.data = mujoco.MjData(self._mj_model)
         return tl.renderer, tl.data
 
     def _render_single(
