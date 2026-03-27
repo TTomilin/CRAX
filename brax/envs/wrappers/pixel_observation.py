@@ -5,6 +5,7 @@ Uses jax.pure_callback to bridge GPU-based MJX physics with CPU-based
 MuJoCo rendering.
 """
 
+import threading
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import jax
@@ -87,13 +88,11 @@ class PixelObservationWrapper(Wrapper):
                 )
             self._camera_ids[cam_name] = cam_id
 
-        # Single persistent Renderer + MjData, matching Brax's image.py
-        # pattern. EGL contexts are thread-bound and cannot be shared across
-        # threads, so we render sequentially in the callback thread.
-        self._renderer = mujoco.Renderer(
-            self._mj_model, height=self._height, width=self._width
-        )
-        self._mj_data = mujoco.MjData(self._mj_model)
+        # Thread-local Renderer + MjData, created lazily on first use.
+        # EGL contexts are thread-bound: they must be created AND used in the
+        # same thread. Since jax.pure_callback runs from JAX's internal thread
+        # (not the main thread), we cannot pre-create renderers in __init__.
+        self._thread_local = threading.local()
 
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
@@ -104,6 +103,21 @@ class PixelObservationWrapper(Wrapper):
         else:
             self._state_obs_size = inner_obs_size
 
+    def _get_renderer(self):
+        """Get or lazily create a thread-local Renderer + MjData.
+
+        EGL contexts are thread-bound: they must be created and used in the
+        same thread. jax.pure_callback runs from JAX's internal threads, so
+        we create the renderer on first call in that thread.
+        """
+        tl = self._thread_local
+        if not hasattr(tl, 'renderer'):
+            tl.renderer = mujoco.Renderer(
+                self._mj_model, height=self._height, width=self._width
+            )
+            tl.data = mujoco.MjData(self._mj_model)
+        return tl.renderer, tl.data
+
     def _render_single(
         self,
         q: np.ndarray,
@@ -112,7 +126,7 @@ class PixelObservationWrapper(Wrapper):
         mocap_quat: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """Render a single environment state on CPU."""
-        d = self._mj_data
+        renderer, d = self._get_renderer()
         d.qpos[:] = q
         d.qvel[:] = qd
         if mocap_pos is not None and self._mj_model.nmocap > 0:
@@ -122,8 +136,8 @@ class PixelObservationWrapper(Wrapper):
 
         pixels = {}
         for cam_name, cam_id in self._camera_ids.items():
-            self._renderer.update_scene(d, camera=cam_id)
-            img = self._renderer.render().copy()  # (H, W, 3) uint8
+            renderer.update_scene(d, camera=cam_id)
+            img = renderer.render().copy()  # (H, W, 3) uint8
             if self._grayscale:
                 # ITU-R BT.601 luma
                 img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
