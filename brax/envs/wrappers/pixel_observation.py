@@ -88,6 +88,11 @@ class PixelObservationWrapper(Wrapper):
                 )
             self._camera_ids[cam_name] = cam_id
 
+        # Persistent thread pool for parallel rendering
+        self._render_pool = ThreadPoolExecutor(
+            max_workers=self._num_render_workers
+        )
+
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
         if isinstance(inner_obs_size, int):
@@ -147,10 +152,7 @@ class PixelObservationWrapper(Wrapper):
             mq = mocap_quat_batch[i] if has_mocap else None
             return self._render_single(q_batch[i], qd_batch[i], mp, mq)
 
-        with ThreadPoolExecutor(
-            max_workers=min(self._num_render_workers, batch_size)
-        ) as pool:
-            results = list(pool.map(render_one, range(batch_size)))
+        results = list(self._render_pool.map(render_one, range(batch_size)))
 
         # Stack into batched arrays: {cam_name: (batch, H, W, C)}
         batched = {}
@@ -165,6 +167,9 @@ class PixelObservationWrapper(Wrapper):
 
         Receives flattened numpy arrays, returns pixel dict values as a flat
         tuple matching the result_shape_dtypes structure.
+
+        When called under vmap with vmap_method='broadcast_all', args arrive
+        with a leading batch dimension and results must also be batched.
         """
         import sys as _sys
         if not hasattr(self, '_render_call_count'):
@@ -189,9 +194,6 @@ class PixelObservationWrapper(Wrapper):
             pixels = self._render_batch(q_np, qd_np, mp_np, mq_np)
         else:
             pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
-            # Add batch dim for consistency
-            pixels = {k: v[np.newaxis] for k, v in pixels.items()}
-            pixels = {k: v[0] for k, v in pixels.items()}
 
         # Return as tuple in camera order (must match result_shape_dtypes)
         return tuple(pixels[cam] for cam in self._cameras)
@@ -239,7 +241,7 @@ class PixelObservationWrapper(Wrapper):
             self._render_callback,
             result_shapes,
             *callback_args,
-            vmap_method='sequential',
+            vmap_method='broadcast_all',
         )
 
         # Build pixel observation dict — keep as uint8; networks normalize on-the-fly
