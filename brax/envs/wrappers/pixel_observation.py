@@ -5,6 +5,7 @@ Uses jax.pure_callback to bridge GPU-based MJX physics with CPU-based
 MuJoCo rendering.
 """
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
@@ -93,6 +94,12 @@ class PixelObservationWrapper(Wrapper):
             max_workers=self._num_render_workers
         )
 
+        # Thread-local storage for persistent Renderer and MjData.
+        # Each thread in the pool gets its own instances, created once and
+        # reused across calls — matching Brax's image.py pattern but extended
+        # for multi-threaded rendering.
+        self._thread_local = threading.local()
+
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
         if isinstance(inner_obs_size, int):
@@ -101,6 +108,21 @@ class PixelObservationWrapper(Wrapper):
             self._state_obs_size = inner_obs_size.get('state', inner_obs_size)
         else:
             self._state_obs_size = inner_obs_size
+
+    def _get_thread_renderer(self):
+        """Get or create thread-local Renderer and MjData.
+
+        Following Brax's image.py pattern: create the Renderer once and reuse
+        it across renders. MjData is also reused (state is overwritten each
+        call). Each thread in the pool gets its own instances for thread safety.
+        """
+        tl = self._thread_local
+        if not hasattr(tl, 'renderer'):
+            tl.renderer = mujoco.Renderer(
+                self._mj_model, height=self._height, width=self._width
+            )
+            tl.data = mujoco.MjData(self._mj_model)
+        return tl.renderer, tl.data
 
     def _render_single(
         self,
@@ -111,12 +133,9 @@ class PixelObservationWrapper(Wrapper):
     ) -> Dict[str, np.ndarray]:
         """Render a single environment state on CPU.
 
-        Each call creates its own MjData and Renderer to ensure thread safety.
+        Uses thread-local persistent Renderer and MjData for performance.
         """
-        renderer = mujoco.Renderer(
-            self._mj_model, height=self._height, width=self._width
-        )
-        d = mujoco.MjData(self._mj_model)
+        renderer, d = self._get_thread_renderer()
         d.qpos[:] = q
         d.qvel[:] = qd
         if mocap_pos is not None and self._mj_model.nmocap > 0:
@@ -133,7 +152,6 @@ class PixelObservationWrapper(Wrapper):
                 img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
                 img = img[..., np.newaxis].astype(np.uint8)
             pixels[cam_name] = img
-        renderer.close()
         return pixels
 
     def _render_batch(
