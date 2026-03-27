@@ -58,7 +58,6 @@ PYTHONPATH=$HOME/CRAX python3 ~/projects/CRAX/train_env.py \
         --pid_integral_clip 1 \
         --pid_deriv_ema_beta 0.95 \
         --skip_rollout \
-        --skip_video \
         --video_fps 50 \
         --num_evals 0 \
         --num_timesteps 1e4 \
