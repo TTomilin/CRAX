@@ -5,8 +5,6 @@ Uses jax.pure_callback to bridge GPU-based MJX physics with CPU-based
 MuJoCo rendering.
 """
 
-import queue
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import jax
@@ -89,21 +87,13 @@ class PixelObservationWrapper(Wrapper):
                 )
             self._camera_ids[cam_name] = cam_id
 
-        # Persistent thread pool for parallel rendering
-        self._render_pool = ThreadPoolExecutor(
-            max_workers=self._num_render_workers
+        # Single persistent Renderer + MjData, matching Brax's image.py
+        # pattern. EGL contexts are thread-bound and cannot be shared across
+        # threads, so we render sequentially in the callback thread.
+        self._renderer = mujoco.Renderer(
+            self._mj_model, height=self._height, width=self._width
         )
-
-        # Pre-create all Renderer + MjData in the main thread to avoid EGL
-        # SIGABRT on headless GPU nodes. Workers check out a renderer from
-        # the queue, use it, then return it.
-        self._renderer_queue = queue.Queue()
-        for _ in range(self._num_render_workers):
-            r = mujoco.Renderer(
-                self._mj_model, height=self._height, width=self._width
-            )
-            d = mujoco.MjData(self._mj_model)
-            self._renderer_queue.put((r, d))
+        self._mj_data = mujoco.MjData(self._mj_model)
 
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
@@ -121,33 +111,25 @@ class PixelObservationWrapper(Wrapper):
         mocap_pos: Optional[np.ndarray] = None,
         mocap_quat: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
-        """Render a single environment state on CPU.
+        """Render a single environment state on CPU."""
+        d = self._mj_data
+        d.qpos[:] = q
+        d.qvel[:] = qd
+        if mocap_pos is not None and self._mj_model.nmocap > 0:
+            d.mocap_pos[:] = mocap_pos
+            d.mocap_quat[:] = mocap_quat
+        mujoco.mj_forward(self._mj_model, d)
 
-        Checks out a pre-created Renderer/MjData from the pool, renders,
-        then returns it. All EGL contexts are created in the main thread
-        to avoid SIGABRT on headless GPU nodes.
-        """
-        renderer, d = self._renderer_queue.get()
-        try:
-            d.qpos[:] = q
-            d.qvel[:] = qd
-            if mocap_pos is not None and self._mj_model.nmocap > 0:
-                d.mocap_pos[:] = mocap_pos
-                d.mocap_quat[:] = mocap_quat
-            mujoco.mj_forward(self._mj_model, d)
-
-            pixels = {}
-            for cam_name, cam_id in self._camera_ids.items():
-                renderer.update_scene(d, camera=cam_id)
-                img = renderer.render().copy()  # (H, W, 3) uint8
-                if self._grayscale:
-                    # ITU-R BT.601 luma
-                    img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
-                    img = img[..., np.newaxis].astype(np.uint8)
-                pixels[cam_name] = img
-            return pixels
-        finally:
-            self._renderer_queue.put((renderer, d))
+        pixels = {}
+        for cam_name, cam_id in self._camera_ids.items():
+            self._renderer.update_scene(d, camera=cam_id)
+            img = self._renderer.render().copy()  # (H, W, 3) uint8
+            if self._grayscale:
+                # ITU-R BT.601 luma
+                img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
+                img = img[..., np.newaxis].astype(np.uint8)
+            pixels[cam_name] = img
+        return pixels
 
     def _render_batch(
         self,
@@ -156,16 +138,15 @@ class PixelObservationWrapper(Wrapper):
         mocap_pos_batch: Optional[np.ndarray] = None,
         mocap_quat_batch: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
-        """Render a batch of environments in parallel using a thread pool."""
+        """Render a batch of environments sequentially."""
         batch_size = q_batch.shape[0]
         has_mocap = mocap_pos_batch is not None
 
-        def render_one(i):
+        results = []
+        for i in range(batch_size):
             mp = mocap_pos_batch[i] if has_mocap else None
             mq = mocap_quat_batch[i] if has_mocap else None
-            return self._render_single(q_batch[i], qd_batch[i], mp, mq)
-
-        results = list(self._render_pool.map(render_one, range(batch_size)))
+            results.append(self._render_single(q_batch[i], qd_batch[i], mp, mq))
 
         # Stack into batched arrays: {cam_name: (batch, H, W, C)}
         batched = {}
