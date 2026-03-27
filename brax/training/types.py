@@ -113,8 +113,14 @@ class UInt64:
 
   def __post_init__(self):
     """Cast post init."""
-    object.__setattr__(self, "hi", jnp.uint32(self.hi))
-    object.__setattr__(self, "lo", jnp.uint32(self.lo))
+    try:
+      object.__setattr__(self, "hi", jnp.uint32(self.hi))
+      object.__setattr__(self, "lo", jnp.uint32(self.lo))
+    except TypeError:
+      # During pytree registration or reconstruction, flax/JAX may pass
+      # placeholder values that can't be cast. The actual arrays are already
+      # the correct type from JIT output, so skipping is safe.
+      pass
 
   def __add__(self, other):
     other = _sanitize_uint64_input(other)
