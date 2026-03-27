@@ -5,7 +5,7 @@ Uses jax.pure_callback to bridge GPU-based MJX physics with CPU-based
 MuJoCo rendering.
 """
 
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import jax
@@ -26,6 +26,10 @@ class PixelObservationWrapper(Wrapper):
 
     The wrapper should be applied AFTER UnifiedEnvAdapter and BEFORE the
     training wrappers (VmapWrapper, EpisodeWrapper, AutoResetWrapper).
+
+    Rendering uses a ThreadPoolExecutor with per-call Renderer/MjData creation.
+    EGL contexts are thread-bound and cannot be shared, so each thread creates
+    and destroys its own context per render. The pool is reused across calls.
 
     Args:
         env: The environment to wrap.
@@ -88,11 +92,10 @@ class PixelObservationWrapper(Wrapper):
                 )
             self._camera_ids[cam_name] = cam_id
 
-        # Thread-local Renderer + MjData, created lazily on first use.
-        # EGL contexts are thread-bound: they must be created AND used in the
-        # same thread. Since jax.pure_callback runs from JAX's internal thread
-        # (not the main thread), we cannot pre-create renderers in __init__.
-        self._thread_local = threading.local()
+        # Persistent thread pool for parallel rendering.
+        self._render_pool = ThreadPoolExecutor(
+            max_workers=self._num_render_workers
+        )
 
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
@@ -103,21 +106,6 @@ class PixelObservationWrapper(Wrapper):
         else:
             self._state_obs_size = inner_obs_size
 
-    def _get_renderer(self):
-        """Get or lazily create a thread-local Renderer + MjData.
-
-        EGL contexts are thread-bound: they must be created and used in the
-        same thread. jax.pure_callback runs from JAX's internal threads, so
-        we create the renderer on first call in that thread.
-        """
-        tl = self._thread_local
-        if not hasattr(tl, 'renderer'):
-            tl.renderer = mujoco.Renderer(
-                self._mj_model, height=self._height, width=self._width
-            )
-            tl.data = mujoco.MjData(self._mj_model)
-        return tl.renderer, tl.data
-
     def _render_single(
         self,
         q: np.ndarray,
@@ -125,8 +113,15 @@ class PixelObservationWrapper(Wrapper):
         mocap_pos: Optional[np.ndarray] = None,
         mocap_quat: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
-        """Render a single environment state on CPU."""
-        renderer, d = self._get_renderer()
+        """Render a single environment state on CPU.
+
+        Creates a fresh Renderer and MjData per call for EGL thread safety —
+        each thread owns its own EGL context for the duration of the render.
+        """
+        renderer = mujoco.Renderer(
+            self._mj_model, height=self._height, width=self._width
+        )
+        d = mujoco.MjData(self._mj_model)
         d.qpos[:] = q
         d.qvel[:] = qd
         if mocap_pos is not None and self._mj_model.nmocap > 0:
@@ -143,29 +138,85 @@ class PixelObservationWrapper(Wrapper):
                 img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
                 img = img[..., np.newaxis].astype(np.uint8)
             pixels[cam_name] = img
+        renderer.close()
         return pixels
 
-    def _render_callback(self, *flat_args):
-        """Callback for jax.pure_callback — renders a single env on CPU.
+    def _render_batch(
+        self,
+        q_batch: np.ndarray,
+        qd_batch: np.ndarray,
+        mocap_pos_batch: Optional[np.ndarray] = None,
+        mocap_quat_batch: Optional[np.ndarray] = None,
+    ) -> Dict[str, np.ndarray]:
+        """Render a batch of environments in parallel using a thread pool."""
+        batch_size = q_batch.shape[0]
+        has_mocap = mocap_pos_batch is not None
 
-        With vmap_method='sequential', this is called once per env with
-        unbatched args. The renderer is lazily created in the calling thread
-        (JAX's callback thread) since EGL contexts are thread-bound.
+        def render_one(i):
+            mp = mocap_pos_batch[i] if has_mocap else None
+            mq = mocap_quat_batch[i] if has_mocap else None
+            return self._render_single(q_batch[i], qd_batch[i], mp, mq)
+
+        results = list(self._render_pool.map(render_one, range(batch_size)))
+
+        # Stack into batched arrays: {cam_name: (batch, H, W, C)}
+        batched = {}
+        for cam_name in self._cameras:
+            batched[cam_name] = np.stack(
+                [r[cam_name] for r in results], axis=0
+            )
+        return batched
+
+    def _render_callback(self, *flat_args):
+        """Callback for jax.pure_callback — renders on CPU.
+
+        With vmap_method='broadcast_all', args arrive with leading batch
+        dimensions. We flatten, render in parallel, then reshape back.
         """
         q_np = np.asarray(flat_args[0])
         qd_np = np.asarray(flat_args[1])
         mp_np = np.asarray(flat_args[2]) if len(flat_args) > 2 else None
         mq_np = np.asarray(flat_args[3]) if len(flat_args) > 3 else None
 
-        pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
+        # qpos has shape (*batch_dims, nq). Flatten all leading batch dims.
+        nq = self._mj_model.nq
+        nv = self._mj_model.nv
+        batch_shape = q_np.shape[:-1]
+        is_batched = len(batch_shape) > 0 and np.prod(batch_shape) > 1
+
+        if is_batched:
+            flat_size = int(np.prod(batch_shape))
+            q_flat = q_np.reshape(flat_size, nq)
+            qd_flat = qd_np.reshape(flat_size, nv)
+            mp_flat = mp_np.reshape(flat_size, *mp_np.shape[len(batch_shape):]) if mp_np is not None else None
+            mq_flat = mq_np.reshape(flat_size, *mq_np.shape[len(batch_shape):]) if mq_np is not None else None
+
+            pixels = self._render_batch(q_flat, qd_flat, mp_flat, mq_flat)
+
+            # Reshape back: (flat_size, H, W, C) -> (*batch_shape, H, W, C)
+            pixels = {
+                k: v.reshape(*batch_shape, *v.shape[1:])
+                for k, v in pixels.items()
+            }
+        else:
+            if len(batch_shape) == 0:
+                pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
+            else:
+                # Single element batch — squeeze, render, unsqueeze
+                pixels = self._render_single(
+                    q_np.reshape(nq), qd_np.reshape(nv),
+                    mp_np.reshape(*mp_np.shape[len(batch_shape):]) if mp_np is not None else None,
+                    mq_np.reshape(*mq_np.shape[len(batch_shape):]) if mq_np is not None else None,
+                )
+                pixels = {k: v.reshape(*batch_shape, *v.shape) for k, v in pixels.items()}
+
         return tuple(pixels[cam] for cam in self._cameras)
 
     def _render_pixels(self, pipeline_state) -> Dict[str, jnp.ndarray]:
         """Render pixels from the current pipeline state using pure_callback.
 
-        Uses vmap_method='sequential' so JAX calls the callback once per env
-        from a consistent thread. This is essential for EGL compatibility since
-        EGL contexts are thread-bound.
+        Uses vmap_method='broadcast_all' so the callback receives the full
+        batch and can render in parallel using the thread pool.
         """
         q = pipeline_state.q
         qd = pipeline_state.qd
@@ -187,10 +238,10 @@ class PixelObservationWrapper(Wrapper):
             self._render_callback,
             result_shapes,
             *callback_args,
-            vmap_method='sequential',
+            vmap_method='broadcast_all',
         )
 
-        # Build pixel observation dict — keep as uint8; networks normalize on-the-fly
+        # Build pixel observation dict
         pixels = {}
         for i, cam_name in enumerate(self._cameras):
             pixels[f'pixels/{cam_name}'] = pixel_arrays[i]
@@ -225,7 +276,6 @@ class PixelObservationWrapper(Wrapper):
         stacked = {}
         for key, img in pixels.items():
             if key.startswith('pixels/'):
-                # Stack the same frame frame_stack times along channel dim
                 stacked[key] = jnp.concatenate(
                     [img] * self._frame_stack, axis=-1
                 )
@@ -245,7 +295,6 @@ class PixelObservationWrapper(Wrapper):
         updated = {}
         for key in prev_buffer:
             if key.startswith('pixels/'):
-                # Shift left by channels, append new frame
                 old = prev_buffer[key]
                 new = new_pixels[key]
                 updated[key] = jnp.concatenate(
@@ -286,7 +335,6 @@ class PixelObservationWrapper(Wrapper):
         new_pixels = self._render_pixels(state.pipeline_state)
 
         if self._render_every_n > 1:
-            # Use previous pixels if not rendering this step
             prev_buffer = state.info.get('_pixel_buffer', new_pixels)
             new_pixels = jax.tree.map(
                 lambda new, old: jnp.where(should_render, new, old),
@@ -330,7 +378,6 @@ class PixelObservationWrapper(Wrapper):
                 if 'state' in inner_size:
                     obs_size['state'] = inner_size['state']
                 else:
-                    # Flat obs — wrap as tuple
                     obs_size['state'] = inner_size
             else:
                 obs_size['state'] = (inner_size,)

@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 
 import wandb
@@ -173,9 +174,35 @@ def main():
             video_length = config.video_length if config.video_length else config.episode_length
             if video_length is None:
                 video_length = getattr(eval_env, 'episode_length', None) or getattr(eval_env, 'default_episode_length', None)
+            # Use a non-vision env for video recording. Video frames are
+            # rendered from pipeline_state via brax.io.image (main thread),
+            # avoiding EGL threading issues from pure_callback.
+            # The inference fn is wrapped to feed the state-only obs through
+            # the vision policy with zeroed-out pixel channels.
+            video_env = envs.get_environment(
+                env_name, level=difficulty, **env_kwargs,
+            )
+            video_inference_fn = make_inference_fn
+            if config.vision:
+                _raw_make_policy = make_inference_fn
+                _pixel_keys = [f'pixels/{c}' for c in config.vision_cameras]
+                _pixel_shape = (config.vision_height, config.vision_width,
+                                1 if config.vision_grayscale else 3)
+
+                def _vision_inference_fn(params, **kwargs):
+                    inner_policy = _raw_make_policy(params, **kwargs)
+                    def _wrapped_policy(obs, key):
+                        # Build dict obs with zeroed pixels + real state
+                        dict_obs = {k: jnp.zeros(_pixel_shape, dtype=jnp.uint8)
+                                    for k in _pixel_keys}
+                        dict_obs['state'] = obs
+                        return inner_policy(dict_obs, key)
+                    return _wrapped_policy
+                video_inference_fn = _vision_inference_fn
+
             record_episode_video(
-                env=eval_env,
-                make_inference_fn=make_inference_fn,
+                env=video_env,
+                make_inference_fn=video_inference_fn,
                 params=params,
                 steps=video_length,
                 cameras=config.cameras,
