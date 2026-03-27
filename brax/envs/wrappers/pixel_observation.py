@@ -145,119 +145,30 @@ class PixelObservationWrapper(Wrapper):
             pixels[cam_name] = img
         return pixels
 
-    def _render_batch(
-        self,
-        q_batch: np.ndarray,
-        qd_batch: np.ndarray,
-        mocap_pos_batch: Optional[np.ndarray] = None,
-        mocap_quat_batch: Optional[np.ndarray] = None,
-    ) -> Dict[str, np.ndarray]:
-        """Render a batch of environments sequentially."""
-        batch_size = q_batch.shape[0]
-        has_mocap = mocap_pos_batch is not None
-
-        results = []
-        for i in range(batch_size):
-            mp = mocap_pos_batch[i] if has_mocap else None
-            mq = mocap_quat_batch[i] if has_mocap else None
-            results.append(self._render_single(q_batch[i], qd_batch[i], mp, mq))
-
-        # Stack into batched arrays: {cam_name: (batch, H, W, C)}
-        batched = {}
-        for cam_name in self._cameras:
-            batched[cam_name] = np.stack(
-                [r[cam_name] for r in results], axis=0
-            )
-        return batched
-
     def _render_callback(self, *flat_args):
-        """Callback for jax.pure_callback — renders on CPU.
+        """Callback for jax.pure_callback — renders a single env on CPU.
 
-        Receives flattened numpy arrays, returns pixel dict values as a flat
-        tuple matching the result_shape_dtypes structure.
-
-        When called under vmap with vmap_method='broadcast_all', args may
-        arrive with multiple leading batch dimensions (e.g. device, env).
-        We flatten them, render as a single batch, then reshape back.
+        With vmap_method='sequential', this is called once per env with
+        unbatched args. The renderer is lazily created in the calling thread
+        (JAX's callback thread) since EGL contexts are thread-bound.
         """
-        import sys as _sys
-        if not hasattr(self, '_render_call_count'):
-            self._render_call_count = 0
-        self._render_call_count += 1
-        if self._render_call_count <= 3 or self._render_call_count % 100 == 0:
-            print(f"[DEBUG pixel_obs] _render_callback call #{self._render_call_count}, args shapes: {[a.shape for a in flat_args]}")
-            _sys.stdout.flush()
+        q_np = np.asarray(flat_args[0])
+        qd_np = np.asarray(flat_args[1])
+        mp_np = np.asarray(flat_args[2]) if len(flat_args) > 2 else None
+        mq_np = np.asarray(flat_args[3]) if len(flat_args) > 3 else None
 
-        q, qd = flat_args[0], flat_args[1]
-        mocap_pos = flat_args[2] if len(flat_args) > 2 else None
-        mocap_quat = flat_args[3] if len(flat_args) > 3 else None
-
-        q_np = np.asarray(q)
-        qd_np = np.asarray(qd)
-        mp_np = np.asarray(mocap_pos) if mocap_pos is not None else None
-        mq_np = np.asarray(mocap_quat) if mocap_quat is not None else None
-
-        # qpos has shape (*batch_dims, nq). Flatten all leading batch dims.
-        nq = self._mj_model.nq
-        nv = self._mj_model.nv
-        batch_shape = q_np.shape[:-1]  # e.g. (1, 2048)
-        is_batched = len(batch_shape) > 0 and np.prod(batch_shape) > 1
-
-        if is_batched:
-            flat_size = int(np.prod(batch_shape))
-            q_flat = q_np.reshape(flat_size, nq)
-            qd_flat = qd_np.reshape(flat_size, nv)
-            mp_flat = mp_np.reshape(flat_size, *mp_np.shape[len(batch_shape):]) if mp_np is not None else None
-            mq_flat = mq_np.reshape(flat_size, *mq_np.shape[len(batch_shape):]) if mq_np is not None else None
-
-            pixels = self._render_batch(q_flat, qd_flat, mp_flat, mq_flat)
-
-            # Reshape back: (flat_size, H, W, C) -> (*batch_shape, H, W, C)
-            pixels = {
-                k: v.reshape(*batch_shape, *v.shape[1:])
-                for k, v in pixels.items()
-            }
-        else:
-            if len(batch_shape) == 0:
-                pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
-            else:
-                # Single element batch — squeeze, render, unsqueeze
-                pixels = self._render_single(
-                    q_np.reshape(nq), qd_np.reshape(nv),
-                    mp_np.reshape(*mp_np.shape[len(batch_shape):]) if mp_np is not None else None,
-                    mq_np.reshape(*mq_np.shape[len(batch_shape):]) if mq_np is not None else None,
-                )
-                pixels = {k: v.reshape(*batch_shape, *v.shape) for k, v in pixels.items()}
-
-        # Return as tuple in camera order (must match result_shape_dtypes)
+        pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
         return tuple(pixels[cam] for cam in self._cameras)
 
-    def _get_pixel_result_shapes(self, is_batched: bool, batch_size: int = 0):
-        """Get the result_shape_dtypes for jax.pure_callback."""
-        pixel_shape = (self._height, self._width, self._channels)
-        if is_batched:
-            pixel_shape = (batch_size,) + pixel_shape
-        return tuple(
-            jax.ShapeDtypeStruct(pixel_shape, jnp.uint8)
-            for _ in self._cameras
-        )
-
     def _render_pixels(self, pipeline_state) -> Dict[str, jnp.ndarray]:
-        """Render pixels from the current pipeline state using pure_callback."""
+        """Render pixels from the current pipeline state using pure_callback.
+
+        Uses vmap_method='sequential' so JAX calls the callback once per env
+        from a consistent thread. This is essential for EGL compatibility since
+        EGL contexts are thread-bound.
+        """
         q = pipeline_state.q
         qd = pipeline_state.qd
-
-        # Determine if batched
-        is_batched = q.ndim > 1
-        batch_size = q.shape[0] if is_batched else 0
-
-        import sys as _sys
-        if not hasattr(self, '_render_pixels_count'):
-            self._render_pixels_count = 0
-        self._render_pixels_count += 1
-        if self._render_pixels_count <= 3:
-            print(f"[DEBUG pixel_obs] _render_pixels call #{self._render_pixels_count}: q.shape={q.shape}, is_batched={is_batched}, batch_size={batch_size}")
-            _sys.stdout.flush()
 
         # Build callback args
         callback_args = [q, qd]
@@ -265,17 +176,18 @@ class PixelObservationWrapper(Wrapper):
             callback_args.append(pipeline_state.mocap_pos)
             callback_args.append(pipeline_state.mocap_quat)
 
-        result_shapes = self._get_pixel_result_shapes(is_batched, batch_size)
-
-        if self._render_pixels_count <= 3:
-            print(f"[DEBUG pixel_obs] result_shapes: {result_shapes}")
-            _sys.stdout.flush()
+        # Result shapes are always unbatched — vmap handles the batch dim
+        pixel_shape = (self._height, self._width, self._channels)
+        result_shapes = tuple(
+            jax.ShapeDtypeStruct(pixel_shape, jnp.uint8)
+            for _ in self._cameras
+        )
 
         pixel_arrays = jax.pure_callback(
             self._render_callback,
             result_shapes,
             *callback_args,
-            vmap_method='broadcast_all',
+            vmap_method='sequential',
         )
 
         # Build pixel observation dict — keep as uint8; networks normalize on-the-fly
@@ -344,22 +256,11 @@ class PixelObservationWrapper(Wrapper):
         return updated
 
     def reset(self, rng: jax.Array) -> State:
-        import sys as _sys
-        if not hasattr(self, '_reset_count'):
-            self._reset_count = 0
-        self._reset_count += 1
-        if self._reset_count <= 3:
-            print(f"[DEBUG pixel_obs] reset() call #{self._reset_count}")
-            _sys.stdout.flush()
-
         state = self.env.reset(rng)
 
         if self._obs_mode == 'state':
             return state
 
-        if self._reset_count <= 3:
-            print(f"[DEBUG pixel_obs] inner reset done, rendering pixels...")
-            _sys.stdout.flush()
         pixels = self._render_pixels(state.pipeline_state)
         obs = self._build_obs(state.obs, pixels)
 
