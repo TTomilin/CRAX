@@ -5,7 +5,7 @@ Uses jax.pure_callback to bridge GPU-based MJX physics with CPU-based
 MuJoCo rendering.
 """
 
-import threading
+import queue
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
@@ -94,14 +94,16 @@ class PixelObservationWrapper(Wrapper):
             max_workers=self._num_render_workers
         )
 
-        # Thread-local storage for persistent Renderer and MjData.
-        # Each thread in the pool gets its own instances, created once and
-        # reused across calls — matching Brax's image.py pattern but extended
-        # for multi-threaded rendering.
-        self._thread_local = threading.local()
-        # Lock to serialize EGL context creation — concurrent creation can
-        # SIGABRT on headless GPU nodes with MUJOCO_GL=egl.
-        self._renderer_init_lock = threading.Lock()
+        # Pre-create all Renderer + MjData in the main thread to avoid EGL
+        # SIGABRT on headless GPU nodes. Workers check out a renderer from
+        # the queue, use it, then return it.
+        self._renderer_queue = queue.Queue()
+        for _ in range(self._num_render_workers):
+            r = mujoco.Renderer(
+                self._mj_model, height=self._height, width=self._width
+            )
+            d = mujoco.MjData(self._mj_model)
+            self._renderer_queue.put((r, d))
 
         # Determine state observation size from inner env
         inner_obs_size = self.env.observation_size
@@ -112,23 +114,6 @@ class PixelObservationWrapper(Wrapper):
         else:
             self._state_obs_size = inner_obs_size
 
-    def _get_thread_renderer(self):
-        """Get or create thread-local Renderer and MjData.
-
-        Following Brax's image.py pattern: create the Renderer once and reuse
-        it across renders. MjData is also reused (state is overwritten each
-        call). Each thread in the pool gets its own instances for thread safety.
-        Renderer creation is serialized to avoid EGL SIGABRT on headless nodes.
-        """
-        tl = self._thread_local
-        if not hasattr(tl, 'renderer'):
-            with self._renderer_init_lock:
-                tl.renderer = mujoco.Renderer(
-                    self._mj_model, height=self._height, width=self._width
-                )
-                tl.data = mujoco.MjData(self._mj_model)
-        return tl.renderer, tl.data
-
     def _render_single(
         self,
         q: np.ndarray,
@@ -138,26 +123,31 @@ class PixelObservationWrapper(Wrapper):
     ) -> Dict[str, np.ndarray]:
         """Render a single environment state on CPU.
 
-        Uses thread-local persistent Renderer and MjData for performance.
+        Checks out a pre-created Renderer/MjData from the pool, renders,
+        then returns it. All EGL contexts are created in the main thread
+        to avoid SIGABRT on headless GPU nodes.
         """
-        renderer, d = self._get_thread_renderer()
-        d.qpos[:] = q
-        d.qvel[:] = qd
-        if mocap_pos is not None and self._mj_model.nmocap > 0:
-            d.mocap_pos[:] = mocap_pos
-            d.mocap_quat[:] = mocap_quat
-        mujoco.mj_forward(self._mj_model, d)
+        renderer, d = self._renderer_queue.get()
+        try:
+            d.qpos[:] = q
+            d.qvel[:] = qd
+            if mocap_pos is not None and self._mj_model.nmocap > 0:
+                d.mocap_pos[:] = mocap_pos
+                d.mocap_quat[:] = mocap_quat
+            mujoco.mj_forward(self._mj_model, d)
 
-        pixels = {}
-        for cam_name, cam_id in self._camera_ids.items():
-            renderer.update_scene(d, camera=cam_id)
-            img = renderer.render().copy()  # (H, W, 3) uint8
-            if self._grayscale:
-                # ITU-R BT.601 luma
-                img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
-                img = img[..., np.newaxis].astype(np.uint8)
-            pixels[cam_name] = img
-        return pixels
+            pixels = {}
+            for cam_name, cam_id in self._camera_ids.items():
+                renderer.update_scene(d, camera=cam_id)
+                img = renderer.render().copy()  # (H, W, 3) uint8
+                if self._grayscale:
+                    # ITU-R BT.601 luma
+                    img = np.dot(img[..., :3], [0.299, 0.587, 0.114])
+                    img = img[..., np.newaxis].astype(np.uint8)
+                pixels[cam_name] = img
+            return pixels
+        finally:
+            self._renderer_queue.put((renderer, d))
 
     def _render_batch(
         self,
