@@ -168,8 +168,9 @@ class PixelObservationWrapper(Wrapper):
         Receives flattened numpy arrays, returns pixel dict values as a flat
         tuple matching the result_shape_dtypes structure.
 
-        When called under vmap with vmap_method='broadcast_all', args arrive
-        with a leading batch dimension and results must also be batched.
+        When called under vmap with vmap_method='broadcast_all', args may
+        arrive with multiple leading batch dimensions (e.g. device, env).
+        We flatten them, render as a single batch, then reshape back.
         """
         import sys as _sys
         if not hasattr(self, '_render_call_count'):
@@ -188,12 +189,37 @@ class PixelObservationWrapper(Wrapper):
         mp_np = np.asarray(mocap_pos) if mocap_pos is not None else None
         mq_np = np.asarray(mocap_quat) if mocap_quat is not None else None
 
-        is_batched = q_np.ndim > 1
+        # qpos has shape (*batch_dims, nq). Flatten all leading batch dims.
+        nq = self._mj_model.nq
+        nv = self._mj_model.nv
+        batch_shape = q_np.shape[:-1]  # e.g. (1, 2048)
+        is_batched = len(batch_shape) > 0 and np.prod(batch_shape) > 1
 
         if is_batched:
-            pixels = self._render_batch(q_np, qd_np, mp_np, mq_np)
+            flat_size = int(np.prod(batch_shape))
+            q_flat = q_np.reshape(flat_size, nq)
+            qd_flat = qd_np.reshape(flat_size, nv)
+            mp_flat = mp_np.reshape(flat_size, *mp_np.shape[len(batch_shape):]) if mp_np is not None else None
+            mq_flat = mq_np.reshape(flat_size, *mq_np.shape[len(batch_shape):]) if mq_np is not None else None
+
+            pixels = self._render_batch(q_flat, qd_flat, mp_flat, mq_flat)
+
+            # Reshape back: (flat_size, H, W, C) -> (*batch_shape, H, W, C)
+            pixels = {
+                k: v.reshape(*batch_shape, *v.shape[1:])
+                for k, v in pixels.items()
+            }
         else:
-            pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
+            if len(batch_shape) == 0:
+                pixels = self._render_single(q_np, qd_np, mp_np, mq_np)
+            else:
+                # Single element batch — squeeze, render, unsqueeze
+                pixels = self._render_single(
+                    q_np.reshape(nq), qd_np.reshape(nv),
+                    mp_np.reshape(*mp_np.shape[len(batch_shape):]) if mp_np is not None else None,
+                    mq_np.reshape(*mq_np.shape[len(batch_shape):]) if mq_np is not None else None,
+                )
+                pixels = {k: v.reshape(*batch_shape, *v.shape) for k, v in pixels.items()}
 
         # Return as tuple in camera order (must match result_shape_dtypes)
         return tuple(pixels[cam] for cam in self._cameras)
