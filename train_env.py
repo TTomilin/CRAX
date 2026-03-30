@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 
 import wandb
@@ -84,14 +85,18 @@ def main():
         env_kwargs = config.env_kwargs or {}
         if env_name == 'safe_velocity':
             env_kwargs['agent'] = config.agent
+        print(f"[DEBUG] Creating training environment (vision={config.vision})...")
         env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
             vision_kwargs=vision_kwargs, vision_backend=vision_backend, **env_kwargs,
         )
+        print(f"[DEBUG] Training env created. obs_size={env.observation_size}, action_size={env.action_size}")
+        print(f"[DEBUG] Creating eval environment...")
         eval_env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
             vision_kwargs=vision_kwargs, vision_backend=vision_backend, **env_kwargs,
         )
+        print(f"[DEBUG] Eval env created.")
 
         # Determine the episode length
         episode_length = env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
@@ -137,18 +142,22 @@ def main():
         # Inject vision network factory if vision mode is enabled
         if config.vision:
             state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
+            print(f"[DEBUG] Creating vision network factory (alg={alg_name}, obs_key='{state_obs_key}')...")
             train_kwargs['network_factory'] = make_vision_network_factory(
                 alg_name,
                 policy_obs_key=state_obs_key,
                 value_obs_key=state_obs_key,
             )
             train_kwargs['augment_pixels'] = True
+            print(f"[DEBUG] Vision network factory created.")
 
         # Create the training function
+        print(f"[DEBUG] train_kwargs keys: {list(train_kwargs.keys())}")
         train_fn = functools.partial(train_fn_base, **train_kwargs)
 
         # Train the agent
-        print(f"Starting {alg_name} training for {env_name}...")
+        print(f"[DEBUG] Calling train_fn for {alg_name} / {env_name}...")
+        import sys; sys.stdout.flush()
         make_inference_fn, params, final_metrics, eval_env = train_fn(
             environment=env,
             eval_env=eval_env,
@@ -185,9 +194,35 @@ def main():
             video_length = config.video_length if config.video_length else config.episode_length
             if video_length is None:
                 video_length = getattr(eval_env, 'episode_length', None) or getattr(eval_env, 'default_episode_length', None)
+            # Use a non-vision env for video recording. Video frames are
+            # rendered from pipeline_state via brax.io.image (main thread),
+            # avoiding EGL threading issues from pure_callback.
+            # The inference fn is wrapped to feed the state-only obs through
+            # the vision policy with zeroed-out pixel channels.
+            video_env = envs.get_environment(
+                env_name, level=difficulty, **env_kwargs,
+            )
+            video_inference_fn = make_inference_fn
+            if config.vision:
+                _raw_make_policy = make_inference_fn
+                _pixel_keys = [f'pixels/{c}' for c in config.vision_cameras]
+                _pixel_shape = (config.vision_height, config.vision_width,
+                                1 if config.vision_grayscale else 3)
+
+                def _vision_inference_fn(params, **kwargs):
+                    inner_policy = _raw_make_policy(params, **kwargs)
+                    def _wrapped_policy(obs, key):
+                        # Build dict obs with zeroed pixels + real state
+                        dict_obs = {k: jnp.zeros(_pixel_shape, dtype=jnp.uint8)
+                                    for k in _pixel_keys}
+                        dict_obs['state'] = obs
+                        return inner_policy(dict_obs, key)
+                    return _wrapped_policy
+                video_inference_fn = _vision_inference_fn
+
             record_episode_video(
-                env=eval_env,
-                make_inference_fn=make_inference_fn,
+                env=video_env,
+                make_inference_fn=video_inference_fn,
                 params=params,
                 steps=video_length,
                 cameras=config.cameras,

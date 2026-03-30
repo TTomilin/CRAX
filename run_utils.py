@@ -443,7 +443,11 @@ def record_episode_video(
             # Be robust to envs without a 'cost' signal
             cost = next_state.info.get("cost", jnp.zeros_like(next_state.reward))  # scalar
             # Also mark termination if env signals done OR NaNs appear in obs/reward
-            nan_done = jnp.isnan(reward) | jnp.any(jnp.isnan(next_state.obs))
+            obs_for_nan = next_state.obs
+            if isinstance(obs_for_nan, dict):
+                # Vision mode: only check state vector, not pixel arrays
+                obs_for_nan = obs_for_nan.get('state', jnp.zeros(()))
+            nan_done = jnp.isnan(reward) | jnp.any(jnp.isnan(obs_for_nan))
             done_base = jnp.asarray(next_state.done, dtype=bool)
             done_flag = jnp.logical_or(done_base, nan_done)
             done_goal = next_state.info.get("done_goal", jnp.zeros_like(done_base, dtype=bool))
