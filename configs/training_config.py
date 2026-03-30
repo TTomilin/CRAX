@@ -163,19 +163,61 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     # --- Vision (Pixel Observation) ---
     parser.add_argument("--vision", action="store_true", help="Use pixel observations for training")
     parser.add_argument(
-        "--vision_cameras", type=str, nargs="+", default=["vision"],
-        help="Camera names from MuJoCo XML to render (default: ['vision'])",
+        "--vision_backend", type=str, choices=["gpu", "cpu"], default="gpu",
+        help=(
+            "Rendering backend for pixel observations. "
+            "'gpu' (default): pure JAX rasterizer via pixelbrax, runs entirely on GPU. "
+            "'cpu': MuJoCo renderer via jax.pure_callback, runs on CPU."
+        ),
     )
-    parser.add_argument("--vision_height", type=int, default=84, help="Vision render height in pixels")
-    parser.add_argument("--vision_width", type=int, default=84, help="Vision render width in pixels")
+    parser.add_argument("--vision_height", type=int, default=64, help="Vision render height in pixels")
+    parser.add_argument("--vision_width", type=int, default=64, help="Vision render width in pixels")
     parser.add_argument(
         "--vision_obs_mode", type=str, choices=["pixels", "pixels+state"], default="pixels+state",
         help="Vision observation mode: 'pixels' (pixels only) or 'pixels+state' (pixels + state vector)",
     )
     parser.add_argument("--vision_frame_stack", type=int, default=1, help="Number of frames to stack (default: 1)")
-    parser.add_argument("--vision_grayscale", action="store_true", help="Convert rendered images to grayscale")
+
+    # GPU backend camera settings (GpuPixelObservationWrapper)
     parser.add_argument(
-        "--vision_render_workers", type=int, default=4, help="Number of CPU threads for parallel rendering"
+        "--vision_camera_body_index", type=int, default=1,
+        help="GPU backend: MuJoCo body index to attach camera to (default: 1, the agent body)",
+    )
+    parser.add_argument(
+        "--vision_camera_offset", type=float, nargs=3, default=[0.0, -2.5, 1.0],
+        metavar=("X", "Y", "Z"),
+        help=(
+            "GPU backend: camera position offset from the agent body. "
+            "In world frame (egocentric_rotate=False) or body frame (egocentric_rotate=True). "
+            "Default: (0, -2.5, 1) — behind and above in body frame."
+        ),
+    )
+    parser.add_argument(
+        "--vision_camera_target_offset", type=float, nargs=3, default=[0.0, 0.0, 0.5],
+        metavar=("X", "Y", "Z"),
+        help="GPU backend: camera look-at point offset from agent body (default: (0, 0, 0.5)).",
+    )
+    parser.add_argument(
+        "--vision_hfov", type=float, default=60.0,
+        help="GPU backend: horizontal field of view in degrees (default: 60).",
+    )
+    parser.add_argument(
+        "--vision_egocentric_rotate", action="store_true",
+        help=(
+            "GPU backend: rotate camera offset by the agent's body quaternion so the "
+            "camera rotates with the agent (true egocentric view). "
+            "Default: off (camera offset is in world frame)."
+        ),
+    )
+
+    # CPU backend settings (PixelObservationWrapper, kept for compatibility)
+    parser.add_argument(
+        "--vision_cameras", type=str, nargs="+", default=["vision"],
+        help="CPU backend: camera names from MuJoCo XML to render (default: ['vision'])",
+    )
+    parser.add_argument("--vision_grayscale", action="store_true", help="CPU backend: convert rendered images to grayscale")
+    parser.add_argument(
+        "--vision_render_workers", type=int, default=4, help="CPU backend: number of CPU threads for parallel rendering"
     )
 
     # --- Video Recording ---

@@ -133,19 +133,29 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     # panel_w is now "per metric subplot"; panel_h is "per env row"
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
+    single_level_mode = len(levels) == 1
+
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12, wspace=0.35, hspace=0.55)
+    hspace = 0.45 if single_level_mode else 0.55
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12, wspace=0.35, hspace=hspace)
 
     legend_handles: Dict[str, plt.Line2D] = {}
 
-    # x positions: levels as groups, algos as bars within each group
-    L = len(levels)
-    A = len(algos)
-    x = np.arange(L)
-
-    group_width = 0.82
-    bar_w = group_width / max(A, 1)
-    offsets = (np.arange(A) - (A - 1) / 2.0) * bar_w
+    if single_level_mode:
+        # x positions: algos as individual bars
+        A = len(algos)
+        x = np.arange(A)
+        group_width = 0.82
+        bar_w = group_width
+        offsets = np.zeros(A)  # unused in single-level mode
+    else:
+        # x positions: levels as groups, algos as bars within each group
+        L = len(levels)
+        A = len(algos)
+        x = np.arange(L)
+        group_width = 0.82
+        bar_w = group_width / max(A, 1)
+        offsets = (np.arange(A) - (A - 1) / 2.0) * bar_w
 
     def get_ax(env_i: int, metric_i: int):
         """Return axis for a given env and metric index (metric side-by-side)."""
@@ -204,12 +214,10 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         # All values are outliers - use a reasonable max
                         y_clip = threshold * args.truncate_factor
 
-            # Collect data for all algorithms
-            algo_data = []
-            for a_i, algo in enumerate(algos):
-                ys = []
-                es = []
-                for level in levels:
+            if single_level_mode:
+                # One bar per algo on x-axis
+                level = levels[0]
+                for a_i, algo in enumerate(algos):
                     sub = stats[
                         (stats["env"] == env)
                         & (stats["metric"] == metric)
@@ -217,67 +225,115 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         & (stats["level"] == level)
                     ]
                     if len(sub) == 0:
-                        ys.append(np.nan)
-                        es.append(0.0)
+                        y, e = np.nan, 0.0
                     else:
-                        ys.append(float(sub["mean"].iloc[0]))
-                        es.append(float(sub["ci"].iloc[0]))
-                algo_data.append((algo, ys, es))
+                        y = float(sub["mean"].iloc[0])
+                        e = float(sub["ci"].iloc[0])
 
-            # Plot bars
-            for a_i, (algo, ys, es) in enumerate(algo_data):
-                # Clip values and errors for display
-                ys_display = []
-                es_display = []
-                is_truncated = []
+                    trunc = y_clip is not None and not np.isnan(y) and y > y_clip
+                    y_display = y_clip if trunc else y
+                    e_display = 0.0 if trunc else e
 
-                for y, e in zip(ys, es):
-                    if y_clip is not None and not np.isnan(y) and y > y_clip:
-                        ys_display.append(y_clip)
-                        es_display.append(0)  # Don't show error bar for truncated
-                        is_truncated.append(True)
-                    else:
-                        ys_display.append(y)
-                        es_display.append(e)
-                        is_truncated.append(False)
+                    bars = ax.bar(
+                        [a_i], [y_display], width=bar_w,
+                        yerr=[e_display], capsize=2, label=algo,
+                        color=BASELINES_COLORS.get(algo)
+                    )
 
-                bars = ax.bar(
-                    x + offsets[a_i], ys_display, width=bar_w,
-                    yerr=es_display, capsize=2, label=algo,
-                    color=BASELINES_COLORS.get(algo)
-                )
+                    if algo not in legend_handles:
+                        legend_handles[algo] = bars[0]
 
-                if algo not in legend_handles:
-                    legend_handles[algo] = bars[0]
-
-                # Handle truncated bars
-                for bar_idx, (bar, trunc, orig_y) in enumerate(zip(bars, is_truncated, ys)):
-                    if trunc and not np.isnan(orig_y):
-                        # Draw break pattern
-                        _draw_break_pattern(ax, bar, y_clip, bar_w)
-
-                        # Add value label above the bar
-                        x_pos = bar.get_x() + bar.get_width() / 2
-                        if orig_y >= 1000:
-                            label_text = f"{orig_y / 1000:.1f}k"
-                        else:
-                            label_text = f"{orig_y:.0f}"
-
+                    if trunc and not np.isnan(y):
+                        _draw_break_pattern(ax, bars[0], y_clip, bar_w)
+                        label_text = f"{y / 1000:.1f}k" if y >= 1000 else f"{y:.0f}"
                         ax.annotate(
                             label_text,
-                            xy=(x_pos, y_clip),
+                            xy=(a_i, y_clip),
                             xytext=(0, 4),
                             textcoords='offset points',
                             ha='center', va='bottom',
-                            fontsize=8,
-                            fontweight='bold',
+                            fontsize=8, fontweight='bold',
                             color=BASELINES_COLORS.get(algo, 'black'),
                             rotation=90 if len(algos) > 5 else 0,
                         )
 
-            ax.set_xticks(x)
-            ax.set_xticklabels([str(lv) for lv in levels])
-            ax.set_xlabel("Level")
+                ax.set_xticks([])
+                ax.set_xlabel("")
+            else:
+                # Collect data for all algorithms
+                algo_data = []
+                for a_i, algo in enumerate(algos):
+                    ys = []
+                    es = []
+                    for level in levels:
+                        sub = stats[
+                            (stats["env"] == env)
+                            & (stats["metric"] == metric)
+                            & (stats["algo"] == algo)
+                            & (stats["level"] == level)
+                        ]
+                        if len(sub) == 0:
+                            ys.append(np.nan)
+                            es.append(0.0)
+                        else:
+                            ys.append(float(sub["mean"].iloc[0]))
+                            es.append(float(sub["ci"].iloc[0]))
+                    algo_data.append((algo, ys, es))
+
+                # Plot bars
+                for a_i, (algo, ys, es) in enumerate(algo_data):
+                    # Clip values and errors for display
+                    ys_display = []
+                    es_display = []
+                    is_truncated = []
+
+                    for y, e in zip(ys, es):
+                        if y_clip is not None and not np.isnan(y) and y > y_clip:
+                            ys_display.append(y_clip)
+                            es_display.append(0)  # Don't show error bar for truncated
+                            is_truncated.append(True)
+                        else:
+                            ys_display.append(y)
+                            es_display.append(e)
+                            is_truncated.append(False)
+
+                    bars = ax.bar(
+                        x + offsets[a_i], ys_display, width=bar_w,
+                        yerr=es_display, capsize=2, label=algo,
+                        color=BASELINES_COLORS.get(algo)
+                    )
+
+                    if algo not in legend_handles:
+                        legend_handles[algo] = bars[0]
+
+                    # Handle truncated bars
+                    for bar_idx, (bar, trunc, orig_y) in enumerate(zip(bars, is_truncated, ys)):
+                        if trunc and not np.isnan(orig_y):
+                            # Draw break pattern
+                            _draw_break_pattern(ax, bar, y_clip, bar_w)
+
+                            # Add value label above the bar
+                            x_pos = bar.get_x() + bar.get_width() / 2
+                            if orig_y >= 1000:
+                                label_text = f"{orig_y / 1000:.1f}k"
+                            else:
+                                label_text = f"{orig_y:.0f}"
+
+                            ax.annotate(
+                                label_text,
+                                xy=(x_pos, y_clip),
+                                xytext=(0, 4),
+                                textcoords='offset points',
+                                ha='center', va='bottom',
+                                fontsize=8,
+                                fontweight='bold',
+                                color=BASELINES_COLORS.get(algo, 'black'),
+                                rotation=90 if len(algos) > 5 else 0,
+                            )
+
+                ax.set_xticks(x)
+                ax.set_xticklabels([str(lv) for lv in levels])
+                ax.set_xlabel("Level")
             ax.set_ylabel(ylab)
 
             ax.set_ylim(bottom=0)
@@ -324,7 +380,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         fig.legend(
             handles, labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, 0.0),
+            bbox_to_anchor=(0.5, 0.04 if single_level_mode else 0.0),
             ncol=min(len(labels), 10),
             fancybox=True,
             shadow=True,
@@ -893,6 +949,10 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
+    p.add_argument("--single_level", type=int, default=None,
+                   help="Plot results for a single level only (algos on x-axis). "
+                        "Overrides --levels. Default: None (disabled). "
+                        "Use e.g. --single_level 1 for level 1.")
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
 
     p.add_argument("--final_mode", type=str, default="mean_last_k", choices=["last", "mean_last_k"],
@@ -931,6 +991,9 @@ def build_args() -> argparse.ArgumentParser:
 
 
 def main(args: argparse.Namespace) -> None:
+    if args.single_level is not None:
+        args.levels = [args.single_level]
+
     base = Path(__file__).parent.parent.resolve() / args.input
     df = load_final_values(
         base=base,

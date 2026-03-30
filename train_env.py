@@ -44,20 +44,40 @@ def main():
 
         # Build vision kwargs if vision mode is enabled
         vision_kwargs = None
+        vision_backend = getattr(config, 'vision_backend', 'gpu')
         if config.vision:
-            vision_kwargs = dict(
-                cameras=config.vision_cameras,
-                height=config.vision_height,
-                width=config.vision_width,
-                obs_mode=config.vision_obs_mode,
-                frame_stack=config.vision_frame_stack,
-                grayscale=config.vision_grayscale,
-                num_render_workers=config.vision_render_workers,
-            )
-            if config.num_envs > 256:
+            if vision_backend == 'gpu':
+                vision_kwargs = dict(
+                    height=config.vision_height,
+                    width=config.vision_width,
+                    obs_mode=config.vision_obs_mode,
+                    frame_stack=config.vision_frame_stack,
+                    camera_body_index=config.vision_camera_body_index,
+                    camera_offset=tuple(config.vision_camera_offset),
+                    camera_target_offset=tuple(config.vision_camera_target_offset),
+                    hfov=config.vision_hfov,
+                    egocentric_rotate=config.vision_egocentric_rotate,
+                )
                 print(
-                    f"WARNING: --num_envs={config.num_envs} is large for vision training. "
-                    f"Consider reducing to 64-256 for practical rendering speed."
+                    f"Vision mode: GPU rendering (pixelbrax), "
+                    f"{config.vision_width}x{config.vision_height}, "
+                    f"camera body {config.vision_camera_body_index}, "
+                    f"egocentric_rotate={config.vision_egocentric_rotate}"
+                )
+            else:
+                vision_kwargs = dict(
+                    cameras=config.vision_cameras,
+                    height=config.vision_height,
+                    width=config.vision_width,
+                    obs_mode=config.vision_obs_mode,
+                    frame_stack=config.vision_frame_stack,
+                    grayscale=config.vision_grayscale,
+                    num_render_workers=config.vision_render_workers,
+                )
+                print(
+                    f"Vision mode: CPU rendering (MuJoCo), "
+                    f"cameras={config.vision_cameras}, "
+                    f"{config.vision_width}x{config.vision_height}"
                 )
 
         # Create environments with difficulty level
@@ -66,11 +86,11 @@ def main():
             env_kwargs['agent'] = config.agent
         env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
-            vision_kwargs=vision_kwargs, **env_kwargs,
+            vision_kwargs=vision_kwargs, vision_backend=vision_backend, **env_kwargs,
         )
         eval_env = envs.get_environment(
             env_name, level=difficulty, vision=config.vision,
-            vision_kwargs=vision_kwargs, **env_kwargs,
+            vision_kwargs=vision_kwargs, vision_backend=vision_backend, **env_kwargs,
         )
 
         # Determine the episode length

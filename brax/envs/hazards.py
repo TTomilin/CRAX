@@ -122,9 +122,13 @@ class CubeHazard(BaseHazard):
         super().__init__(hazard_id, position, size, height, collidable, fixed, density, alpha_transparent)
 
     def proximity_cost(self, agent_xy: jp.ndarray, hazard_xy: jp.ndarray) -> jp.ndarray:
-        dxdy = jp.abs(agent_xy - hazard_xy)
-        inside = jp.logical_and(dxdy[0] <= self.size, dxdy[1] <= self.size)
-        return inside.astype(jp.float32)
+        # Use radial distance (same formula as CylinderHazard) so the agent receives
+        # a smooth cost gradient rather than a hard inside/outside binary.  This is
+        # important because CubeHazards in this codebase are cylinders converted to
+        # boxes for MJX compatibility — their semantic radius is self.size.
+        diff = agent_xy - hazard_xy
+        dist = jp.sqrt(jp.sum(diff * diff) + 1e-8)
+        return jp.maximum(0.0, 1.0 - dist / self.size)
 
     def get_xml_body(self) -> str:
         """Generate XML body for cube hazard."""

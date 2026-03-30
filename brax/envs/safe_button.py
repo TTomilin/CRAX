@@ -688,24 +688,26 @@ class SafeButton(PipelineEnv, ABC):
         """Calculate safety cost from hazards."""
         agent_xy = data.xpos[self._agent_body][:2]
 
-        ids1 = getattr(data.contact, "geom1", None)
-        ids2 = getattr(data.contact, "geom2", None)
-        dist = getattr(data.contact, "dist", None)
-        ncon = getattr(data, "ncon", None)
-
+        # MJX does not correctly update geom_xpos for mocap box bodies — the
+        # contact distances for cube/box hazards are permanently stale (they reflect
+        # the XML-default origin positions, not the current mocap_pos).  Sphere geom
+        # contacts work fine but hazards are boxes.  We therefore bypass the
+        # collision-based path entirely and use proximity cost, which computes
+        # distances directly from hazard_positions (correctly maintained from
+        # mocap_pos in reset/step).
         total = jp.array(0.0)
         for i, h in enumerate(self._hazard_manager.hazards):
             hz_xy = hazard_positions[i, :2]
             total = total + h.calculate_cost(
                 agent_xy=agent_xy,
                 hazard_xy=hz_xy,
-                proximity_cost_scaler=self._proximity_cost_scaler,
+                proximity_cost_scaler=self._collision_cost,
                 collision_cost=self._collision_cost,
-                contact_geom1=ids1,
-                contact_geom2=ids2,
-                contact_dist=dist,
-                ncon=ncon,
-                agent_geom_ids=self._agent_geom_ids
+                contact_geom1=None,   # force proximity path
+                contact_geom2=None,
+                contact_dist=None,
+                ncon=None,
+                agent_geom_ids=None,
             )
         return total
 
