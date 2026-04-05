@@ -22,6 +22,7 @@ from brax.training.agents.ppo.train import train as ppo_train
 from brax.training.agents.ppo_lag import train as ppo_lag
 from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.training.agents.ppo_saute import train as ppo_saute
+from brax.training.agents.sac_lag import train as sac_lag
 
 # Global metrics buffer instance
 metrics_buffer = []
@@ -103,6 +104,7 @@ def get_algorithm_train_fn(alg_name: str):
         'ppo_saute': ppo_saute,
         'p3o': p3o,
         'focops': focops,
+        'sac_lag': sac_lag,
     }
 
     train_fn = alg_map.get(alg_name)
