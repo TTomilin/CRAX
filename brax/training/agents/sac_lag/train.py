@@ -642,7 +642,12 @@ def train(
         )
         current_step = int(_unpmap(training_state.env_steps))
 
+        # Always log training metrics (losses, lambda, etc.) after every epoch,
+        # matching PPO's pattern of calling progress_fn unconditionally.
         if process_id == 0:
+            progress_fn(current_step, training_metrics)
+
+        if process_id == 0 and num_evals > 0:
             metrics = evaluator.run_evaluation(
                 _unpmap(
                     (training_state.normalizer_params, training_state.policy_params)
