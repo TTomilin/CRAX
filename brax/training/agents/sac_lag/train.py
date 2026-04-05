@@ -25,7 +25,7 @@ References:
 
 import functools
 import time
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 from absl import logging
 from brax import base
@@ -71,6 +71,7 @@ class TrainingState:
     alpha_params: Params
     lambda_lagr: jnp.ndarray   # Lagrange multiplier (scalar, >= 0)
     normalizer_params: running_statistics.RunningStatisticsState
+    aux_state: Any              # Extra state for custom lambda update fns (e.g. PID)
 
 
 def _unpmap(v):
@@ -87,6 +88,7 @@ def _init_training_state(
     q_optimizer: optax.GradientTransformation,
     qc_optimizer: optax.GradientTransformation,
     initial_lambda: float,
+    aux_state: Any = (),
 ) -> TrainingState:
     """Initialises the training state and replicates it over devices."""
     key_policy, key_q, key_qc = jax.random.split(key, 3)
@@ -122,6 +124,7 @@ def _init_training_state(
         alpha_params=log_alpha,
         lambda_lagr=lambda_lagr,
         normalizer_params=normalizer_params,
+        aux_state=aux_state,
     )
     return jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
@@ -164,6 +167,9 @@ def train(
     lagrangian_lr: float = 0.01,
     initial_lambda: float = 0.0,
     lambda_max: float = 2.0,
+    # Hooks for custom lambda update (used by SAC-PID etc.)
+    lambda_update_fn: Optional[Callable] = None,
+    init_aux_state_fn: Optional[Callable] = None,
 ):
     """SAC-Lagrangian training.
 
@@ -228,6 +234,22 @@ def train(
     # SAC-Lag updates lambda every gradient step (~250K times for 5e8 steps)
     # whereas PPO-Lag updates once per rollout, causing lambda to explode.
     effective_lagrangian_lr = lagrangian_lr / max(episode_length or 1, 1)
+
+    # Build the lambda update function if not provided by caller.
+    # Signature: (lambda_lagr, aux_state, mean_cost) -> (new_lambda, new_aux_state, metrics_dict)
+    if lambda_update_fn is None:
+        _eff_lr = effective_lagrangian_lr
+        _lmax = float(lambda_max)
+        _bound = per_step_safety_bound
+        def lambda_update_fn(lambda_lagr, aux_state, mean_cost):
+            cost_violation = mean_cost - _bound
+            new_lambda = jnp.minimum(
+                jax.nn.relu(lambda_lagr + _eff_lr * cost_violation),
+                jnp.asarray(_lmax, jnp.float32),
+            )
+            return new_lambda, aux_state, {'lambda_lagr': new_lambda, 'cost_violation': cost_violation}
+
+    init_aux = init_aux_state_fn() if init_aux_state_fn is not None else ()
 
     env_steps_per_actor_step = action_repeat * num_envs
     num_prefill_actor_steps = -(-min_replay_size // num_envs)
@@ -394,16 +416,10 @@ def train(
             training_state.target_qc_params, qc_params,
         )
 
-        # --- Lagrange multiplier update (projected gradient ascent on dual) ---
-        # Use the mean per-step cost from the current batch as the constraint signal.
-        # effective_lagrangian_lr = lagrangian_lr / episode_length normalises the
-        # per-gradient-step update so that over one episode's worth of gradient
-        # steps the total lambda shift matches PPO-Lag's per-rollout update.
+        # --- Lagrange multiplier update ---
         mean_cost = jnp.mean(transitions.extras['state_extras']['cost'])
-        cost_violation = mean_cost - per_step_safety_bound
-        new_lambda_lagr = jnp.minimum(
-            jax.nn.relu(training_state.lambda_lagr + effective_lagrangian_lr * cost_violation),
-            jnp.asarray(lambda_max, jnp.float32),
+        new_lambda_lagr, new_aux_state, lambda_metrics = lambda_update_fn(
+            training_state.lambda_lagr, training_state.aux_state, mean_cost
         )
 
         metrics = {
@@ -412,9 +428,8 @@ def train(
             'actor_loss': actor_loss_val,
             'alpha_loss': alpha_loss_val,
             'alpha': jnp.exp(alpha_params),
-            'lambda_lagr': new_lambda_lagr,
             'mean_cost': mean_cost,
-            'cost_violation': cost_violation,
+            **lambda_metrics,
         }
 
         new_training_state = TrainingState(
@@ -432,6 +447,7 @@ def train(
             alpha_params=alpha_params,
             lambda_lagr=new_lambda_lagr,
             normalizer_params=training_state.normalizer_params,
+            aux_state=new_aux_state,
         )
         return (new_training_state, key), metrics
 
@@ -584,6 +600,7 @@ def train(
         q_optimizer=q_optimizer,
         qc_optimizer=qc_optimizer,
         initial_lambda=initial_lambda,
+        aux_state=init_aux,
     )
     del global_key
 
