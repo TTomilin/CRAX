@@ -32,6 +32,7 @@ from brax import base
 from brax import envs
 from brax.training import acting
 from brax.training import gradients
+from brax.training import logger as metric_logger
 from brax.training import pmap
 from brax.training import replay_buffers
 from brax.training import types
@@ -153,6 +154,7 @@ def train(
         sac_lag_networks.SACLagNetworks
     ] = sac_lag_networks.make_sac_lag_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
+    training_metrics_steps: int = 1_000_000,
     eval_env: Optional[envs.Env] = None,
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
@@ -302,6 +304,12 @@ def train(
         max_replay_size=max_replay_size // device_count,
         dummy_data_sample=dummy_transition,
         sample_batch_size=batch_size * grad_updates_per_step // device_count,
+    )
+
+    metrics_aggregator = metric_logger.MetricsLogger(
+        buffer_size=10,
+        steps_between_logging=int(training_metrics_steps),
+        progress_fn=progress_fn,
     )
 
     alpha_loss, critic_loss, cost_critic_loss, actor_loss = sac_lag_losses.make_losses(
@@ -460,9 +468,18 @@ def train(
             buffer_state,
             experience_key,
         )
+        new_env_steps = training_state.env_steps + env_steps_per_actor_step
+        # Log episodic metrics (sum_reward, length, cost, etc.) for any
+        # episodes that completed this step, matching PPO's MetricsLogger pattern.
+        jax.debug.callback(
+            metrics_aggregator.update_env_metrics,
+            env_state.info['episode_metrics'],
+            env_state.info['episode_done'],
+            new_env_steps,
+        )
         training_state = training_state.replace(
             normalizer_params=normalizer_params,
-            env_steps=training_state.env_steps + env_steps_per_actor_step,
+            env_steps=new_env_steps,
         )
         buffer_state, transitions = replay_buffer.sample(buffer_state)
         transitions = jax.tree_util.tree_map(
