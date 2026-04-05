@@ -159,6 +159,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--initial_lambda", type=float, default=0.0, help="SAC-Lag: initial Lagrange multiplier value")
     parser.add_argument("--tau", type=float, default=0.005, help="SAC-Lag: soft target network update coefficient")
     parser.add_argument("--min_replay_size", type=int, default=0, help="SAC-Lag: minimum replay buffer size before training starts")
+    parser.add_argument("--max_replay_size", type=float, default=None, help="SAC-Lag: maximum replay buffer size before training starts")
     parser.add_argument("--grad_updates_per_step", type=int, default=1, help="SAC-Lag: gradient updates per environment step")
 
     # --- WandB ---
