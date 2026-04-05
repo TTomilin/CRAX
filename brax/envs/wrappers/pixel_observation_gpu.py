@@ -1,26 +1,36 @@
 """GPU-based egocentric pixel observation wrapper using pixelbrax renderer.
 
-Renders pixel observations fully on GPU using JAX rasterization, with no CPU
-callbacks. Uses pixelbrax's renderer to produce egocentric camera images
-directly from MJX physics state (xpos/xquat body transforms).
+Renders pixel observations fully on GPU using JAX rasterization — no CPU
+callbacks.
 
-The rendering pipeline:
-  1. At init: extract geometry from mj_model, build pixelbrax Model objects.
-  2. At step/reset: in a JIT-compiled function, read xpos/xquat from mjx.Data,
-     compute geom world transforms, update ModelObject transforms, call renderer.
-  3. Return (H, W, 3) uint8 pixel arrays under key 'pixels/ego'.
+Geom world poses are read directly from mjx.Data.geom_xpos / geom_xmat, which
+MJX's forward pass (smooth.kinematics) computes for every geom — including geoms
+whose parent bodies are mocap-controlled.  Camera pose comes from
+mjx.Data.cam_xpos / cam_xmat, computed by smooth.camlight, also called by the
+forward pass.  Both quantities are therefore always up-to-date without any manual
+body-transform arithmetic on our side.
+
+Usage:
+
+    env = GpuPixelObservationWrapper(env, camera="vision")
+    # → state.obs = {"pixels/vision": (H, W, 3) uint8}
+
+If the environment XML has no camera named <camera_name> the wrapper raises
+at construction time so you can add the camera element to the XML.
+
+Observation key: 'pixels/<camera_name>'  (e.g. 'pixels/vision')
 """
 
-import sys
 import os
+import sys
 from collections import namedtuple
-from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
+import mujoco
 import numpy as np
 
-from brax import math as brax_math
 from brax.envs.base import Env, State, Wrapper
 
 # MuJoCo geom type constants
@@ -31,37 +41,30 @@ _MJ_GEOM_CYLINDER = 5
 _MJ_GEOM_BOX = 6
 _MJ_GEOM_MESH = 7
 
-# Named tuple holding static per-geom data used to rebuild instances each step
-_GeomInfo = namedtuple('_GeomInfo', ['body_id', 'local_pos', 'local_quat', 'base_instance'])
+# Lightweight struct: geom index in the MJX data arrays + pre-built mesh.
+_GeomInfo = namedtuple('_GeomInfo', ['geom_idx', 'base_instance'])
 
 
 def _build_renderer_objects(mj_model, geom_group_filter):
-    """Build a list of _GeomInfo from a MuJoCo model.
+    """Build pixelbrax ModelObject list from MuJoCo model geometry.
 
-    Converts MuJoCo geometry (capsules, boxes, spheres, meshes, planes) into
-    pixelbrax ModelObject instances with identity transforms.  The body_id and
-    local pos/quat are stored separately so they can be updated each step from
-    mjx.Data.xpos / mjx.Data.xquat without Python overhead.
+    Each entry records the geom's index in mjx.Data.geom_xpos / geom_xmat so
+    that world transforms can be read directly at render time — no manual
+    body-transform arithmetic.
 
     Args:
-        mj_model: mujoco.MjModel instance.
-        geom_group_filter: if given, only include geoms whose group is in this
-            set.  Pass None to include all groups.
+        mj_model: mujoco.MjModel
+        geom_group_filter: if not None, only render geoms in these groups.
 
     Returns:
-        List of _GeomInfo named tuples.
+        list of _GeomInfo named tuples.
     """
-    # pixelbrax imports are deferred to avoid hard dependency at module load
     _repo_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
     if _repo_root not in sys.path:
         sys.path.insert(0, _repo_root)
 
-    from brax.renderer import (
-        create_capsule,
-        create_cube,
-        UpAxis,
-    )
-    from brax.renderer import Model as RendererMesh, ModelObject as Instance
+    from brax.renderer import create_capsule, create_cube, UpAxis
+    from brax.renderer.model import Model as RendererMesh, ModelObject as Instance
 
     geom_infos = []
     for i in range(mj_model.ngeom):
@@ -101,13 +104,11 @@ def _build_renderer_objects(mj_model, geom_group_filter):
                     specular_map=spec_map,
                 )
             elif geom_type == _MJ_GEOM_PLANE:
-                # Render as large thin box at the plane's position
-                floor_tex = jnp.array(
-                    np.array([0.78, 0.78, 0.78], dtype=np.float32).reshape(1, 1, 3)
-                )
+                # Render the ground plane as a large thin box using the geom's
+                # actual colour rather than a hardcoded grey.
                 model = create_cube(
                     half_extents=jnp.array([50.0, 50.0, 0.001], dtype=jnp.float32),
-                    diffuse_map=floor_tex,
+                    diffuse_map=tex,
                     texture_scaling=jnp.array(128.0),
                     specular_map=spec_map,
                 )
@@ -146,14 +147,8 @@ def _build_renderer_objects(mj_model, geom_group_filter):
         except Exception:
             continue
 
-        body_id = int(mj_model.geom_bodyid[i])
-        local_pos = jnp.array(mj_model.geom_pos[i], dtype=jnp.float32)
-        local_quat = jnp.array(mj_model.geom_quat[i], dtype=jnp.float32)  # (w,x,y,z)
-
         geom_infos.append(_GeomInfo(
-            body_id=body_id,
-            local_pos=local_pos,
-            local_quat=local_quat,
+            geom_idx=i,
             base_instance=Instance(model=model),
         ))
 
@@ -161,53 +156,34 @@ def _build_renderer_objects(mj_model, geom_group_filter):
 
 
 class GpuPixelObservationWrapper(Wrapper):
-    """Wraps a CRAX/MJX environment to add GPU-rendered egocentric pixel obs.
+    """Wraps a CRAX/MJX environment to add GPU-rendered pixel observations.
 
     Rendering is done entirely in JAX on the GPU using pixelbrax's rasterizer.
-    No CPU callbacks are used; the renderer is called inside JIT-compiled code.
+    All world transforms are read from mjx.Data fields that the MJX forward pass
+    already computes:
+      - geom_xpos / geom_xmat  (smooth.kinematics, always computed)
+      - cam_xpos  / cam_xmat   (smooth.camlight, always computed)
 
-    Camera modes:
-      egocentric_rotate=False (default): camera offset is in world frame, camera
-          always stays in the same orientation relative to the world.
-      egocentric_rotate=True: camera offset is rotated by the agent's body
-          quaternion, so the camera rotates with the agent.  This gives a true
-          egocentric / first-person-like view.
-
-    Observation key: 'pixels/ego' (H, W, 3) uint8.
+    Observation key: 'pixels/<camera_name>'  (e.g. 'pixels/vision').
 
     Args:
         env: The environment to wrap.
+        camera: Name of the MuJoCo camera to render from (must exist in XML).
         height: Render height in pixels.
         width: Render width in pixels.
         obs_mode: 'pixels', 'pixels+state', or 'state'.
         frame_stack: Number of frames to stack channel-wise.
-        camera_body_index: Index of the MuJoCo body the camera is attached to.
-            Body 0 is always the world body; the agent body is typically 1.
-        camera_offset: Camera position offset from the body.  In world frame
-            when egocentric_rotate=False; in body frame when True.
-        camera_target_offset: Where the camera looks, as an offset from the
-            camera body's position.  Same frame convention as camera_offset.
-        camera_up: World-space up vector for the camera.
-        hfov: Horizontal field of view in degrees.
-        egocentric_rotate: If True, rotate camera offset by agent quaternion.
         geom_group_filter: If given, only render geoms in these MuJoCo groups.
     """
-
-    _CAMERA_KEY = 'pixels/ego'
 
     def __init__(
         self,
         env: Env,
+        camera: str = 'vision',
         height: int = 64,
         width: int = 64,
-        obs_mode: str = 'pixels+state',
+        obs_mode: str = 'pixels',
         frame_stack: int = 1,
-        camera_body_index: int = 1,
-        camera_offset: Tuple[float, float, float] = (0.0, -2.5, 1.0),
-        camera_target_offset: Tuple[float, float, float] = (0.0, 0.0, 0.5),
-        camera_up: Tuple[float, float, float] = (0.0, 0.0, 1.0),
-        hfov: float = 60.0,
-        egocentric_rotate: bool = True,
         geom_group_filter: Optional[Sequence[int]] = None,
     ):
         super().__init__(env)
@@ -217,31 +193,45 @@ class GpuPixelObservationWrapper(Wrapper):
                 f"obs_mode must be 'pixels', 'pixels+state', or 'state', got '{obs_mode}'"
             )
 
+        self._obs_key = f'pixels/{camera}'
         self._height = height
         self._width = width
         self._obs_mode = obs_mode
         self._frame_stack = max(1, frame_stack)
-        self._channels = 3  # always RGB
+        self._channels = 3
 
         mj_model = self.sys.mj_model
+
+        # Resolve camera index
+        cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        if cam_id == -1:
+            available = [mj_model.camera(i).name for i in range(mj_model.ncam)]
+            raise ValueError(
+                f"Camera '{camera}' not found in model. Available: {available}"
+            )
+
+        # Vertical FOV from XML; derive horizontal FOV for non-square renders.
+        vfov = float(mj_model.cam_fovy[cam_id])
+        hfov = float(
+            2.0 * np.degrees(
+                np.arctan(np.tan(np.radians(vfov) / 2.0) * width / height)
+            )
+        )
+
         geom_infos = _build_renderer_objects(mj_model, geom_group_filter)
         if not geom_infos:
             raise RuntimeError(
-                "GPU renderer: no renderable geometry found in the model. "
+                "GPU renderer: no renderable geometry found. "
                 "Check geom_group_filter or ensure the model has visual geoms."
             )
 
-        # Build the JIT-compiled single-frame render function.
         self._jit_render = _make_render_fn(
             geom_infos=geom_infos,
+            cam_id=cam_id,
             height=height,
             width=width,
-            camera_body_index=camera_body_index,
-            camera_offset=jnp.array(camera_offset, dtype=jnp.float32),
-            camera_target_offset=jnp.array(camera_target_offset, dtype=jnp.float32),
-            camera_up=jnp.array(camera_up, dtype=jnp.float32),
-            hfov=float(hfov),
-            egocentric_rotate=egocentric_rotate,
+            hfov=hfov,
+            vfov=vfov,
         )
 
     # ------------------------------------------------------------------
@@ -249,43 +239,33 @@ class GpuPixelObservationWrapper(Wrapper):
     # ------------------------------------------------------------------
 
     def _render_pixels(self, pipeline_state) -> jnp.ndarray:
-        """Render (H, W, 3) uint8 image from the MJX pipeline state."""
-        return self._jit_render(pipeline_state.xpos, pipeline_state.xquat)
+        """Render (H, W, 3) uint8 image from MJX pipeline state."""
+        return self._jit_render(
+            pipeline_state.geom_xpos,
+            pipeline_state.geom_xmat,
+            pipeline_state.cam_xpos,
+            pipeline_state.cam_xmat,
+        )
 
-    def _build_obs(
-        self,
-        state_obs: Union[jnp.ndarray, Mapping],
-        pixels: jnp.ndarray,
-    ) -> Union[jnp.ndarray, Mapping[str, jnp.ndarray]]:
-        """Combine state obs and pixel image into the observation dict."""
+    def _build_obs(self, state_obs, pixels):
         if self._obs_mode == 'state':
             return state_obs
-
         if self._obs_mode == 'pixels':
-            return {self._CAMERA_KEY: pixels}
-
+            return {self._obs_key: pixels}
         # pixels+state
-        obs: Dict[str, jnp.ndarray] = {self._CAMERA_KEY: pixels}
+        obs: Dict[str, jnp.ndarray] = {self._obs_key: pixels}
         if isinstance(state_obs, Mapping):
             obs['state'] = state_obs.get('state', state_obs)
         else:
             obs['state'] = state_obs
         return obs
 
-    def _init_frame_buffer(
-        self, pixels: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Initialize frame buffer by tiling the first frame."""
+    def _init_frame_buffer(self, pixels):
         if self._frame_stack <= 1:
             return pixels
         return jnp.concatenate([pixels] * self._frame_stack, axis=-1)
 
-    def _update_frame_buffer(
-        self,
-        new_pixels: jnp.ndarray,
-        prev_stacked: jnp.ndarray,
-    ) -> jnp.ndarray:
-        """Shift frame buffer left and append the new frame."""
+    def _update_frame_buffer(self, new_pixels, prev_stacked):
         if self._frame_stack <= 1:
             return new_pixels
         return jnp.concatenate(
@@ -298,7 +278,6 @@ class GpuPixelObservationWrapper(Wrapper):
 
     def reset(self, rng: jax.Array) -> State:
         state = self.env.reset(rng)
-
         if self._obs_mode == 'state':
             return state
 
@@ -311,13 +290,10 @@ class GpuPixelObservationWrapper(Wrapper):
         else:
             pixels_out = pixels
 
-        obs = self._build_obs(state.obs, pixels_out)
-        state.info['_render_step'] = jnp.array(0, dtype=jnp.int32)
-        return state.replace(obs=obs)
+        return state.replace(obs=self._build_obs(state.obs, pixels_out))
 
     def step(self, state: State, action: jax.Array) -> State:
         state = self.env.step(state, action)
-
         if self._obs_mode == 'state':
             return state
 
@@ -331,24 +307,21 @@ class GpuPixelObservationWrapper(Wrapper):
         else:
             pixels_out = pixels
 
-        obs = self._build_obs(state.obs, pixels_out)
-        state.info['_render_step'] = state.info.get('_render_step', jnp.array(0)) + 1
-        return state.replace(obs=obs)
+        return state.replace(obs=self._build_obs(state.obs, pixels_out))
 
     # ------------------------------------------------------------------
-    # Observation size property
+    # Observation size
     # ------------------------------------------------------------------
 
     @property
-    def observation_size(self) -> Union[int, Mapping[str, Tuple[int, ...]]]:
+    def observation_size(self):
         if self._obs_mode == 'state':
             return self.env.observation_size
 
         stacked_channels = self._channels * self._frame_stack
         obs_size: Dict[str, Tuple[int, ...]] = {
-            self._CAMERA_KEY: (self._height, self._width, stacked_channels),
+            self._obs_key: (self._height, self._width, stacked_channels),
         }
-
         if self._obs_mode == 'pixels+state':
             inner_size = self.env.observation_size
             if isinstance(inner_size, int):
@@ -357,48 +330,46 @@ class GpuPixelObservationWrapper(Wrapper):
                 obs_size['state'] = inner_size.get('state', inner_size)
             else:
                 obs_size['state'] = (inner_size,)
-
         return obs_size
 
 
 def _make_render_fn(
     geom_infos,
+    cam_id: int,
     height: int,
     width: int,
-    camera_body_index: int,
-    camera_offset: jnp.ndarray,
-    camera_target_offset: jnp.ndarray,
-    camera_up: jnp.ndarray,
     hfov: float,
-    egocentric_rotate: bool,
-) -> callable:
-    """Build a JIT-compiled function that renders one frame from body transforms.
+    vfov: float,
+):
+    """Build a jax.jit-compiled single-frame render function.
 
-    The returned function has signature:
-        render_fn(xpos: (nbody, 3), xquat: (nbody, 4)) -> (H, W, 3) uint8
+    Signature:
+        render_fn(geom_xpos, geom_xmat, cam_xpos, cam_xmat) -> (H, W, 3) uint8
 
-    It is safe to call from inside jax.vmap (e.g. via VmapWrapper).
+    All inputs come directly from mjx.Data, which MJX's forward pass populates:
+      - geom_xpos: (ngeom, 3)   world position of every geom centroid
+      - geom_xmat: (ngeom, 3,3) world rotation matrix of every geom
+                   columns = geom axes expressed in world frame
+      - cam_xpos:  (ncam, 3)    world position of every camera
+      - cam_xmat:  (ncam, 3,3)  world rotation matrix of every camera
+                   col 1 = camera Y (up in image)
+                   col 2 = camera Z (backward; camera looks in -Z)
+
+    The pixelbrax renderer returns a canvas of shape (width, height, 3).
+    We transpose to (height, width, 3) and flip the row axis to convert
+    from OpenGL bottom-up convention to standard top-down image convention.
 
     Args:
         geom_infos: list of _GeomInfo built at wrapper init.
+        cam_id: integer index of the camera in the model.
         height, width: image dimensions (static).
-        camera_body_index: body to attach camera to.
-        camera_offset: offset from body to camera position.
-        camera_target_offset: offset from body to camera look-at point.
-        camera_up: world-space up vector.
         hfov: horizontal field of view in degrees.
-        egocentric_rotate: whether to rotate the offset by agent quaternion.
+        vfov: vertical field of view in degrees.
 
     Returns:
-        A jax.jit-compiled callable.
+        jax.jit-compiled callable.
     """
-    from brax.renderer import (
-        CameraParameters,
-        LightParameters,
-        Renderer,
-    )
-
-    vfov = hfov * height / width
+    from brax.renderer import CameraParameters, LightParameters, Renderer
 
     default_light = LightParameters(
         direction=jnp.array([0.57735, -0.57735, 0.57735], dtype=jnp.float32),
@@ -408,44 +379,36 @@ def _make_render_fn(
         specular=jnp.array([0.6, 0.6, 0.6], dtype=jnp.float32),
     )
 
-    def render_fn(xpos, xquat):
-        # --- Update ModelObject transforms from physics state ---
+    def render_fn(geom_xpos, geom_xmat, cam_xpos, cam_xmat):
+        # --- Update geom world transforms from MJX pre-computed data ---
         instances = []
         for gi in geom_infos:
-            bid = gi.body_id
-            b_pos = xpos[bid]     # (3,)
-            b_quat = xquat[bid]   # (4,) w,x,y,z
-
-            w_pos = b_pos + brax_math.rotate(gi.local_pos, b_quat)
-            w_quat = brax_math.quat_mul(b_quat, gi.local_quat)
-
+            idx = gi.geom_idx
             inst = gi.base_instance
-            inst = inst.replace_with_position(w_pos)
-            inst = inst.replace_with_orientation(w_quat)
+            inst = inst.replace_with_position(geom_xpos[idx])
+            inst = inst.replace_with_orientation(rotation_matrix=geom_xmat[idx])
             instances.append(inst)
 
-        # --- Egocentric camera ---
-        agent_pos = xpos[camera_body_index]   # (3,)
-        agent_quat = xquat[camera_body_index]  # (4,)
-
-        if egocentric_rotate:
-            cam_pos = agent_pos + brax_math.rotate(camera_offset, agent_quat)
-            cam_target = agent_pos + brax_math.rotate(camera_target_offset, agent_quat)
-        else:
-            cam_pos = agent_pos + camera_offset
-            cam_target = agent_pos + camera_target_offset
+        # --- Camera pose from mjx.Data.cam_xpos / cam_xmat ---
+        # cam_xmat columns: col 1 = camera Y (up), col 2 = camera Z (backward)
+        cam_pos = cam_xpos[cam_id]
+        mat = cam_xmat[cam_id]            # (3, 3)
+        cam_forward = -mat[:, 2]          # camera looks in -Z
+        cam_up = mat[:, 1]                # camera Y is up in image
 
         camera = CameraParameters(
             viewWidth=width,
             viewHeight=height,
             position=cam_pos,
-            target=cam_target,
-            up=camera_up,
+            target=cam_pos + cam_forward,
+            up=cam_up,
             hfov=hfov,
             vfov=vfov,
         )
 
         # --- Render ---
+        # pixelbrax canvas: (width, height, 3), OpenGL bottom-up convention.
+        # Transpose → (height, width, 3), then flip rows for top-down images.
         img = Renderer.get_camera_image(
             objects=instances,
             light=default_light,
@@ -453,7 +416,7 @@ def _make_render_fn(
             width=width,
             height=height,
         )
-        img = jnp.clip(img, 0.0, 1.0)
+        img = jnp.clip(jnp.flip(img.transpose(1, 0, 2), axis=0), 0.0, 1.0)
         return (img * 255).astype(jnp.uint8)
 
     return jax.jit(render_fn)

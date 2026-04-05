@@ -153,56 +153,38 @@ def get_environment(
     level: Optional[int] = None,
     vision: bool = False,
     vision_kwargs: Optional[Dict[str, Any]] = None,
-    vision_backend: str = 'gpu',
     **kwargs,
 ) -> Env:
     """Returns an environment from the environment registry.
 
-    This is the primary function for creating environments. It handles:
-    - Looking up the environment class from the registry
-    - Applying difficulty overrides if a level is specified
-    - Wrapping with UnifiedEnvAdapter for consistent cost/info fields
-    - Optionally wrapping with a pixel observation wrapper for vision training
-
     Args:
-      env_name: environment name string
-      level: optional difficulty level (1, 2, 3). If provided, applies difficulty
-             overrides for supported environments.
-      vision: if True, wraps the environment with a pixel observation wrapper.
-      vision_kwargs: keyword arguments passed to the pixel observation wrapper.
-      vision_backend: 'gpu' (default) uses GpuPixelObservationWrapper for pure
-             JAX GPU rendering via pixelbrax; 'cpu' uses PixelObservationWrapper
-             which renders on CPU via jax.pure_callback.
-             GPU backend kwargs: height, width, obs_mode, frame_stack,
-               camera_body_index, camera_offset, camera_target_offset,
-               camera_up, hfov, egocentric_rotate, geom_group_filter.
-             CPU backend kwargs: cameras, height, width, obs_mode, frame_stack,
-               render_every_n, grayscale, num_render_workers.
-      **kwargs: keyword arguments that get passed to the Env class constructor
+      env_name: environment name string.
+      level: optional difficulty level (1, 2, 3).
+      vision: if True, wraps with GpuPixelObservationWrapper for GPU-rendered
+             egocentric pixel observations via pixelbrax.
+      vision_kwargs: kwargs forwarded to GpuPixelObservationWrapper.
+             Supported keys: height, width, obs_mode, frame_stack,
+             camera_body_index, camera_offset, camera_target_offset,
+             camera_up, hfov, egocentric_rotate, geom_group_filter.
+      **kwargs: kwargs passed to the Env class constructor.
 
     Returns:
-      env: an environment wrapped with UnifiedEnvAdapter (and optionally
-           a pixel observation wrapper for vision mode)
+      env: environment wrapped with UnifiedEnvAdapter (+ GpuPixelObservationWrapper
+           when vision=True).
     """
     if env_name not in _envs:
         raise ValueError(f"Unknown environment: {env_name}. Available: {list(_envs.keys())}")
 
-    # Apply difficulty overrides if level is specified
     if level is not None:
         kwargs = apply_difficulty(env_name, kwargs, level)
 
     env_cls = _envs[env_name]
     base_env = env_cls(**kwargs)
-    # Wrap with unified adapter so downstream code can rely on cost/info fields
     env = UnifiedEnvAdapter(base_env, **kwargs)
 
     if vision:
-        if vision_backend == 'gpu':
-            from brax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
-            env = GpuPixelObservationWrapper(env, **(vision_kwargs or {}))
-        else:
-            from brax.envs.wrappers.pixel_observation import PixelObservationWrapper
-            env = PixelObservationWrapper(env, **(vision_kwargs or {}))
+        from brax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+        env = GpuPixelObservationWrapper(env, **(vision_kwargs or {}))
 
     return env
 
