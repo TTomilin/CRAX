@@ -11,7 +11,12 @@ Policy objective (per gradient step):
   L_pi = E[alpha * log_prob - Q(s,a) + lambda * Qc(s,a)]
 
 Lagrange multiplier update (per gradient step):
-  lambda <- max(0, lambda + lr_lambda * (mean_cost - per_step_safety_bound))
+  lambda <- clip(max(0, lambda + (lr_lambda/episode_length) * (mean_cost - per_step_safety_bound)), 0, lambda_max)
+
+  Dividing by episode_length normalises the per-step update so lagrangian_lr is
+  on the same scale as PPO-Lag's lagrangian_coef_rate (both are effectively
+  per-episode rates). Without this, lambda would grow ~episode_length times
+  faster than PPO-Lag with the same lr value, killing all reward learning.
 
 References:
   - SAC:      https://arxiv.org/pdf/1812.05905.pdf
@@ -156,6 +161,7 @@ def train(
     safety_bound: float = 25.0,
     lagrangian_lr: float = 0.01,
     initial_lambda: float = 0.0,
+    lambda_max: float = 2.0,
 ):
     """SAC-Lagrangian training.
 
@@ -187,8 +193,11 @@ def train(
       eval_env: optional separate environment for evaluation.
       randomization_fn: optional domain-randomisation callback.
       safety_bound: episodic cumulative cost limit (constraint threshold d).
-      lagrangian_lr: learning rate for the Lagrange multiplier update.
+      lagrangian_lr: learning rate for the Lagrange multiplier. Normalized
+        internally by episode_length so the effective per-episode update rate is
+        comparable to PPO-Lag's lagrangian_coef_rate.
       initial_lambda: initial value of the Lagrange multiplier.
+      lambda_max: upper bound on the Lagrange multiplier (prevents runaway).
 
     Returns:
       Tuple of (make_policy, params, metrics).
@@ -211,6 +220,12 @@ def train(
 
     # Convert episodic safety bound to per-step bound
     per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
+
+    # Normalize lambda lr by episode_length so lagrangian_lr is on the same
+    # per-episode scale as PPO-Lag's lagrangian_coef_rate. Without this,
+    # SAC-Lag updates lambda every gradient step (~250K times for 5e8 steps)
+    # whereas PPO-Lag updates once per rollout, causing lambda to explode.
+    effective_lagrangian_lr = lagrangian_lr / max(episode_length or 1, 1)
 
     env_steps_per_actor_step = action_repeat * num_envs
     num_prefill_actor_steps = -(-min_replay_size // num_envs)
@@ -373,10 +388,14 @@ def train(
 
         # --- Lagrange multiplier update (projected gradient ascent on dual) ---
         # Use the mean per-step cost from the current batch as the constraint signal.
+        # effective_lagrangian_lr = lagrangian_lr / episode_length normalises the
+        # per-gradient-step update so that over one episode's worth of gradient
+        # steps the total lambda shift matches PPO-Lag's per-rollout update.
         mean_cost = jnp.mean(transitions.extras['state_extras']['cost'])
         cost_violation = mean_cost - per_step_safety_bound
-        new_lambda_lagr = jax.nn.relu(
-            training_state.lambda_lagr + lagrangian_lr * cost_violation
+        new_lambda_lagr = jnp.minimum(
+            jax.nn.relu(training_state.lambda_lagr + effective_lagrangian_lr * cost_violation),
+            jnp.asarray(lambda_max, jnp.float32),
         )
 
         metrics = {

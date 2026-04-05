@@ -155,8 +155,10 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--kappa_max", type=float, default=50.0, help="P3O: maximum kappa value")
 
     # --- SAC-Lag (off-policy) ---
-    parser.add_argument("--lagrangian_lr", type=float, default=0.01, help="SAC-Lag: learning rate for Lagrange multiplier")
+    parser.add_argument("--lagrangian_lr", type=float, default=0.01,
+                        help="SAC-Lag: Lagrange multiplier LR (per-episode scale, comparable to PPO-Lag lagrangian_coef_rate; normalized internally by episode_length)")
     parser.add_argument("--initial_lambda", type=float, default=0.0, help="SAC-Lag: initial Lagrange multiplier value")
+    parser.add_argument("--lambda_max", type=float, default=2.0, help="SAC-Lag: upper bound on Lagrange multiplier (prevents runaway)")
     parser.add_argument("--tau", type=float, default=0.005, help="SAC-Lag: soft target network update coefficient")
     parser.add_argument("--min_replay_size", type=int, default=0, help="SAC-Lag: minimum replay buffer size before training starts")
     parser.add_argument("--max_replay_size", type=float, default=None, help="SAC-Lag: maximum replay buffer size before training starts")
