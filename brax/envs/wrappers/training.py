@@ -118,8 +118,9 @@ class EpisodeWrapper(Wrapper):
     state.info['episode_metrics']['length'] += self.action_repeat
     state.info['episode_metrics']['length'] *= (1 - prev_done)
     for metric_name in state.metrics.keys():
-        state.info['episode_metrics'][metric_name] += state.metrics[metric_name]
-        state.info['episode_metrics'][metric_name] *= (1 - prev_done)
+        if metric_name in state.info['episode_metrics']:
+            state.info['episode_metrics'][metric_name] += state.metrics[metric_name]
+            state.info['episode_metrics'][metric_name] *= (1 - prev_done)
     state.info['episode_done'] = done
     return state.replace(done=done)
 
