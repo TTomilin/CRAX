@@ -26,14 +26,14 @@ TRANSLATIONS = {
     "p3o": "P3O",
     "focops": "FOCOPS",
     # Environments
-    "safe_point_goal": "Safe Goal",
+    "safe_goal_point": "Safe Goal",
     "safe_reacher": "Safe Reacher",
-    "safe_walker": "Safe Pathway",
-    "safe_velocity": "Safe Velocity",
-    "safe_spider": "Safe Spider",
-    "safe_block_push": "Safe Push",
-    "safe_point_circle": "Safe Circle",
-    "safe_height": "Safe Height",
+    "safe_pathway_walker2d": "Safe Pathway",
+    "safe_velocity_humanoid": "Safe Velocity",
+    "safe_lift_spider": "Safe Spider",
+    "safe_push_point": "Safe Push",
+    "safe_circle_point": "Safe Circle",
+    "safe_height_humanoid": "Safe Height",
 }
 
 # Define a consistent color palette for baselines across all plots
@@ -58,10 +58,10 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
 # Defines the primary reward metric for specific environments.
 # If an environment is not listed here, it defaults to 'episodic/sum_reward'.
 REWARD_METRIC_MAP = {
-    'safe_walker': 'episodic/reward_forward',
-    'safe_velocity': 'episodic/forward_reward',
-    'safe_spider': 'episodic/reward_forward',
-    'safe_height': 'episodic/forward_reward',
+    'safe_pathway_walker2d': 'episodic/reward_forward',
+    'safe_velocity_humanoid': 'episodic/forward_reward',
+    'safe_lift_spider': 'episodic/reward_forward',
+    'safe_height_humanoid': 'episodic/forward_reward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
