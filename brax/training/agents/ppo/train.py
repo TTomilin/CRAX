@@ -658,6 +658,7 @@ def train(
         training_state, env_state = _strip_weak_type((training_state, env_state))
         result = training_epoch(training_state, env_state, key)
         training_state, env_state, metrics = _strip_weak_type(result)
+        jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time

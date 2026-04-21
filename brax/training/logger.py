@@ -16,6 +16,7 @@
 
 import collections
 import logging
+import time
 
 import numpy as np
 from jax import numpy as jnp
@@ -33,6 +34,8 @@ class MetricsLogger:
         self._log_count = 0
         self._progress_fn = progress_fn
         self._episodic_metrics_updated = set()
+        self._sps_last_time = None
+        self._sps_last_steps = 0
 
     def update_env_metrics(self, metrics, dones, env_steps):
         self._num_steps = int((np.uint64(env_steps.hi) << 32) + np.uint64(env_steps.lo))
@@ -70,6 +73,7 @@ class MetricsLogger:
         # Log if enough steps have passed
         if self._num_steps - self._last_log_steps < self._steps_between_logging:
             return
+        now = time.time()
         self._last_log_steps = self._num_steps
         self._log_count += 1
         log_string = (
@@ -82,6 +86,18 @@ class MetricsLogger:
                     avg = np.mean(self._metrics_buffer[metric_name])
                     mean_metrics[metric_name] = avg
                     log_string += (f"{f'Training {metric_name}:':>{pad}} {avg:.4f}\n")
+
+        # Compute SPS from wall-clock time between consecutive log calls.
+        # Skip the first interval (no prior timestamp) to avoid including JIT compile time.
+        if self._sps_last_time is not None:
+            elapsed = now - self._sps_last_time
+            steps_delta = self._num_steps - self._sps_last_steps
+            if elapsed > 0:
+                sps = steps_delta / elapsed
+                mean_metrics['training/sps'] = sps
+                log_string += (f"{'Training training/sps:':>{pad}} {sps:.0f}\n")
+        self._sps_last_time = now
+        self._sps_last_steps = self._num_steps
 
         # Clear the updated episodic metrics set after logging
         self._episodic_metrics_updated.clear()
