@@ -33,7 +33,7 @@ from brax.envs.env_utils import (
     add_walls_to_specs,
     choose_valid_position_shape_aware,
 )
-from brax.envs.hazards import _type_defaults_from_registry
+from brax.envs.hazards import _type_defaults_from_registry, compute_hazard_costs
 from brax.io import mjcf
 
 
@@ -690,30 +690,18 @@ class SafeGoal(PipelineEnv, ABC):
 
     def _calculate_safety_cost(self, data: mjx.Data, hazard_positions: jp.ndarray) -> jp.ndarray:
         """Sum of per-hazard costs. Binary collision for collidables, proximity for others."""
-        agent_xy = data.xpos[self._agent_body][:2]
-
-        # Contact buffers (valid inside step; at reset we'll pass None)
-        ids1 = getattr(data.contact, "geom1", None)
-        ids2 = getattr(data.contact, "geom2", None)
-        dist = getattr(data.contact, "dist", None)
-        ncon = getattr(data, "ncon", None)
-
-        total = jp.array(0.0)
-        # Unrolled small loop; JAX traces a static graph here
-        for i, h in enumerate(self._hazard_manager.hazards):
-            hz_xy = hazard_positions[i, :2]
-            total = total + h.calculate_cost(
-                agent_xy=agent_xy,
-                hazard_xy=hz_xy,
-                proximity_cost_scaler=self._proximity_cost_scaler,
-                collision_cost=self._collision_cost,
-                contact_geom1=ids1,
-                contact_geom2=ids2,
-                contact_dist=dist,
-                ncon=ncon,
-                agent_geom_ids=self._agent_geom_ids
-            )
-        return total
+        return compute_hazard_costs(
+            hazards=self._hazard_manager.hazards,
+            hazard_positions=hazard_positions,
+            agent_xy=data.xpos[self._agent_body][:2],
+            agent_geom_ids=self._agent_geom_ids,
+            proximity_cost_scaler=self._proximity_cost_scaler,
+            collision_cost=self._collision_cost,
+            contact_geom1=getattr(data.contact, "geom1", None),
+            contact_geom2=getattr(data.contact, "geom2", None),
+            contact_dist=getattr(data.contact, "dist", None),
+            ncon=getattr(data, "ncon", None),
+        )
 
     def _get_obs(self, data: mjx.Data) -> jp.ndarray:
         """Creates an observation with separate lidars for goals and hazards.

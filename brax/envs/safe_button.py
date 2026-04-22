@@ -30,7 +30,7 @@ from brax.envs.env_utils import (
     add_walls_to_specs,
     compute_gremlin_positions,
 )
-from brax.envs.hazards import _type_defaults_from_registry
+from brax.envs.hazards import _type_defaults_from_registry, compute_hazard_costs
 from brax.envs.builder import XMLBuilder
 from brax.io import mjcf
 
@@ -685,31 +685,24 @@ class SafeButton(PipelineEnv, ABC):
         return State(data, obs, reward, done.astype(jp.float32), metrics, new_info)
 
     def _calculate_safety_cost(self, data: mjx.Data, hazard_positions: jp.ndarray) -> jp.ndarray:
-        """Calculate safety cost from hazards."""
-        agent_xy = data.xpos[self._agent_body][:2]
+        """Calculate safety cost from hazards (proximity-only).
 
-        # MJX does not correctly update geom_xpos for mocap box bodies — the
-        # contact distances for cube/box hazards are permanently stale (they reflect
-        # the XML-default origin positions, not the current mocap_pos).  Sphere geom
-        # contacts work fine but hazards are boxes.  We therefore bypass the
-        # collision-based path entirely and use proximity cost, which computes
-        # distances directly from hazard_positions (correctly maintained from
-        # mocap_pos in reset/step).
-        total = jp.array(0.0)
-        for i, h in enumerate(self._hazard_manager.hazards):
-            hz_xy = hazard_positions[i, :2]
-            total = total + h.calculate_cost(
-                agent_xy=agent_xy,
-                hazard_xy=hz_xy,
-                proximity_cost_scaler=self._collision_cost,
-                collision_cost=self._collision_cost,
-                contact_geom1=None,   # force proximity path
-                contact_geom2=None,
-                contact_dist=None,
-                ncon=None,
-                agent_geom_ids=None,
-            )
-        return total
+        MJX does not correctly update geom_xpos for mocap box bodies, so
+        contact distances are stale. We use proximity cost instead, computed
+        directly from hazard_positions maintained in mocap_pos.
+        """
+        return compute_hazard_costs(
+            hazards=self._hazard_manager.hazards,
+            hazard_positions=hazard_positions,
+            agent_xy=data.xpos[self._agent_body][:2],
+            agent_geom_ids=self._agent_geom_ids,
+            proximity_cost_scaler=self._collision_cost,
+            collision_cost=self._collision_cost,
+            contact_geom1=None,  # force proximity path: MJX geom_xpos is stale for mocap boxes
+            contact_geom2=None,
+            contact_dist=None,
+            ncon=None,
+        )
 
     def _get_obs(self, data: mjx.Data, info: Dict) -> jp.ndarray:
         """Create observation with button and hazard lidars."""

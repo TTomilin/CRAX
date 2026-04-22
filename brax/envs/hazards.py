@@ -419,6 +419,54 @@ HAZARD_REGISTRY: Dict[str, Type[BaseHazard]] = {
 }
 
 
+def compute_hazard_costs(
+    hazards: List["BaseHazard"],
+    hazard_positions: "jp.ndarray",
+    agent_xy: "jp.ndarray",
+    agent_geom_ids: "jp.ndarray",
+    proximity_cost_scaler: float,
+    collision_cost: float,
+    contact_geom1=None,
+    contact_geom2=None,
+    contact_dist=None,
+    ncon=None,
+) -> "jp.ndarray":
+    """Compute total safety cost for all hazards efficiently.
+
+    Precomputes the contact-buffer masks that are identical for every hazard
+    (valid slots, touching, agent-geom membership) just once, then does only
+    the cheap per-hazard geom-ID comparison inside the loop.  The naïve
+    approach recomputes these O(N_agent_geoms × max_contacts) tensors for
+    each hazard separately, which is the primary collision-detection bottleneck.
+    """
+    total = jp.array(0.0)
+    if not hazards:
+        return total
+
+    if contact_geom1 is not None and ncon is not None:
+        max_slots = contact_geom1.shape[0]
+        # Precompute once: which contact slots are active and involve the agent
+        valid_touch = (jp.arange(max_slots) < ncon) & (contact_dist <= 0.0)  # (C,)
+        is_agent1 = (contact_geom1[None, :] == agent_geom_ids[:, None]).any(axis=0)  # (C,)
+        is_agent2 = (contact_geom2[None, :] == agent_geom_ids[:, None]).any(axis=0)  # (C,)
+        contacts_available = True
+    else:
+        contacts_available = False
+
+    for i, h in enumerate(hazards):
+        hz_xy = hazard_positions[i, :2]
+        if h.collidable and contacts_available:
+            # Only the geom-ID comparisons differ per hazard — everything else is shared
+            is_haz1 = contact_geom1 == h.geom_id
+            is_haz2 = contact_geom2 == h.geom_id
+            pair = (is_agent1 & is_haz2) | (is_haz1 & is_agent2)
+            total = total + jp.where(jp.any(valid_touch & pair), collision_cost, 0.0)
+        else:
+            total = total + proximity_cost_scaler * h.proximity_cost(agent_xy, hz_xy)
+
+    return total
+
+
 def _type_defaults_from_registry():
     d = {}
     for t, cls in HAZARD_REGISTRY.items():
