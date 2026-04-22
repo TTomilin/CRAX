@@ -71,6 +71,8 @@ class MetricsLogger:
     def maybe_log_metrics(self, pad=35):
         """Log metrics to console."""
         # Log if enough steps have passed
+        if self._steps_between_logging is None:
+            return
         if self._num_steps - self._last_log_steps < self._steps_between_logging:
             return
         now = time.time()
