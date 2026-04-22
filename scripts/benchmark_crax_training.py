@@ -48,13 +48,13 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        '--envs', nargs='+', default=['safe_goal_point'],
+        '--envs', nargs='+', default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"],
         metavar='ENV',
         help='One or more SafeBrax environment names to benchmark',
     )
     parser.add_argument(
         '--num_envs', nargs='+', type=int,
-        default=[64, 128, 256, 512, 1024, 2048],
+        default=[64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
         metavar='N',
         help='Parallel environment counts to sweep over',
     )
