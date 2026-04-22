@@ -73,18 +73,22 @@ DEFAULT_ENVS: List[str] = [
     "SafetyPointCircle1-v0",
     "SafetyPointPush1-v0",
     "SafetyHumanoidVelocity-v1",
-    "SafetyWalker2dVelocity-v1",
 ]
 
-# steps_per_epoch is computed per-run as STEPS_PER_ENV * num_envs, so each
-# environment always gets at least one full episode per epoch (Safety Gymnasium
-# default episode length = 1000 steps). A fixed global constant would make
+# steps_per_epoch is computed per-run as STEPS_PER_ENV * num_envs, ensuring
+# each env gets at least one full episode per epoch (Safety Gymnasium default
+# episode length = 1000 steps). A fixed global constant would make
 # steps_per_env < episode_length at high num_envs, causing trajectory cut-offs
-# and NaN costs in the Lagrangian update.
-STEPS_PER_ENV = 1_000  # steps collected per environment per epoch
-NUM_EPOCHS = 15        # epochs per run; first sample is discarded (warmup)
+# and NaN costs in the Lagrangian update. To keep wall time comparable across
+# num_envs, total_steps is fixed. num_epochs is computed as max(TOTAL_STEPS // steps_per_epoch,
+# MIN_EPOCHS). Wall time will decrease as num_envs grows up to the break-even
+# point (TOTAL_STEPS / (MIN_EPOCHS * STEPS_PER_ENV)), then stays flat because
+# the MIN_EPOCHS floor keeps a minimum amount of training data.
+STEPS_PER_ENV = 1_000   # steps per environment per epoch (≥ episode length)
+TOTAL_STEPS   = 60_000  # fixed budget; wall time decreases with more envs up to break-even
+MIN_EPOCHS    = 5       # need at least 1 warmup + 4 stable SPS samples
 
-DEFAULT_NUM_ENVS: List[int] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 1024, 2048]
+DEFAULT_NUM_ENVS: List[int] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +98,8 @@ def benchmark_run(env_name: str, num_envs: int, scratch_dir: Path) -> Dict:
     import omnisafe  # deferred so the TF patch above is already applied
 
     steps_per_epoch = STEPS_PER_ENV * num_envs
-    total_steps = steps_per_epoch * NUM_EPOCHS
+    num_epochs = max(TOTAL_STEPS // steps_per_epoch, MIN_EPOCHS)
+    total_steps = steps_per_epoch * num_epochs
 
     log_dir = scratch_dir / f"{env_name}_envs{num_envs}"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -215,7 +220,7 @@ def plot_results(results: List[Dict], env_names: List[str], num_envs_list: List[
         ax.legend(fontsize=8)
 
     plt.suptitle(
-        f"OmniSafe PPOLag Training Throughput  |  steps_per_env={STEPS_PER_ENV:,}  epochs={NUM_EPOCHS}",
+        f"OmniSafe PPOLag Training Throughput  |  steps_per_env={STEPS_PER_ENV:,}  total_steps={TOTAL_STEPS:,}",
         fontsize=13,
     )
     plt.tight_layout()
@@ -297,7 +302,8 @@ def main() -> None:
     print(f"environments     : {env_names}")
     print(f"num_envs sweep   : {num_envs_list}")
     print(f"steps_per_env    : {STEPS_PER_ENV:,}  (steps_per_epoch = steps_per_env × num_envs)")
-    print(f"num_epochs       : {NUM_EPOCHS}")
+    print(f"total_steps      : {TOTAL_STEPS:,}  (fixed; num_epochs computed per run)")
+    print(f"min_epochs       : {MIN_EPOCHS}  (break-even at num_envs ≤ {TOTAL_STEPS // (MIN_EPOCHS * STEPS_PER_ENV)})")
 
     output_dir = Path(f"omnisafe_training_benchmark_{time.strftime('%Y%m%d_%H%M%S')}")
     output_dir.mkdir(parents=True, exist_ok=True)
