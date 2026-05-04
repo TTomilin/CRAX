@@ -162,6 +162,7 @@ def train(
 
   if max_replay_size is None:
     max_replay_size = num_timesteps
+  max_replay_size = int(max_replay_size)
 
   # The number of environment steps executed for every `actor_step()` call.
   env_steps_per_actor_step = action_repeat * num_envs
