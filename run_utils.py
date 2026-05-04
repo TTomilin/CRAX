@@ -7,12 +7,12 @@ from typing import Optional, Dict, Any, List
 import jax
 import mujoco
 import numpy as np
-import wandb
 from PIL import ImageFont, Image, ImageDraw
 from imageio import v3 as iio
 from jax import numpy as jnp
 from matplotlib import pyplot as plt
 
+import wandb
 from brax import envs
 from brax.io import json as brax_json
 from brax.training.agents.focops import train as focops
@@ -22,6 +22,7 @@ from brax.training.agents.ppo.train import train as ppo_train
 from brax.training.agents.ppo_lag import train as ppo_lag
 from brax.training.agents.ppo_pid import train as ppo_pid
 from brax.training.agents.ppo_saute import train as ppo_saute
+from brax.training.agents.sac.train import train as sac_train
 from brax.training.agents.sac_lag import train as sac_lag
 from brax.training.agents.sac_pid import train as sac_pid
 
@@ -105,6 +106,7 @@ def get_algorithm_train_fn(alg_name: str):
         'ppo_saute': ppo_saute,
         'p3o': p3o,
         'focops': focops,
+        'sac': sac_train,
         'sac_lag': sac_lag,
         'sac_pid': sac_pid,
     }
@@ -476,7 +478,8 @@ def record_episode_video(
 
     for ep in range(max(1, int(num_episodes))):
         key, ep_key = jax.random.split(key)
-        frames_batched, rewards_batched, costs_batched, dones_batched, done_goal_batched, done_nan_batched, done_unhealthy_batched = rollout_one(ep_key)
+        frames_batched, rewards_batched, costs_batched, dones_batched, done_goal_batched, done_nan_batched, done_unhealthy_batched = rollout_one(
+            ep_key)
 
         frames_batched = jax.device_get(frames_batched)
         rewards_batched_np = np.asarray(jax.device_get(rewards_batched))
@@ -496,9 +499,11 @@ def record_episode_video(
         T = int(done_index)
         if done_index > 0:
             idx = done_index - 1
+
             # Handle possible batch dimension by taking the first element
             def _first(x):
                 return x[idx][0] if x.ndim > 1 else x[idx]
+
             print(
                 f"Done flags at step {idx}: "
                 f"goal={_first(done_goal_np)}, "

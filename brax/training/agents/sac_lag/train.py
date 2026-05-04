@@ -141,7 +141,7 @@ def train(
     num_envs: int = 1,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
-    discounting: float = 0.9,
+    discounting: float = 0.99,
     seed: int = 0,
     batch_size: int = 256,
     num_evals: int = 1,
