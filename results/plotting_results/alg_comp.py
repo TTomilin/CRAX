@@ -16,13 +16,6 @@ from results.common import (
     BASELINES_COLORS, TRANSLATIONS,
 )
 
-# Per-env x-axis limits (env steps)
-ENV_X_MAX: Dict[str, int] = {
-    "safe_point_goal": 5_000_000_00,
-    "safe_reacher": 5_000_000_00,
-    "safe_walker": 5_000_000_00,
-}
-
 
 def load_runs(base: Path, env: str, level: int, algo: str, seeds: List[int], metrics: List[str]) -> Dict[
     Tuple[str, str, str], List[pd.DataFrame]]:
@@ -84,7 +77,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     legend_handles: Dict[str, plt.Line2D] = {}
 
     for env_i, env in enumerate(envs):
-        env_title = env.replace("_", " ").title()
+        env_title = TRANSLATIONS.get(env, env)
 
         for metric_i, metric in enumerate(metrics):
             ax = get_ax(env_i, metric_i)
@@ -146,11 +139,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                 if "Threshold" not in legend_handles:
                     legend_handles["Threshold"] = thr_line
 
-            # Per-env x max takes priority, then CLI x_max, then data-driven max
-            x_max = ENV_X_MAX.get(env, None)
-            if x_max is None:
-                x_max = args.x_max if args.x_max is not None else x_max_for_axis
-            ax.set_xlim(0.0, x_max)
+            ax.set_xlim(0.0, args.x_max)
 
             if env == "safe_reacher":
                 ax.set_ylim(-15, None)
@@ -203,7 +192,7 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_velocity", "safe_spider", "safe_block_push", "safe_point_circle", "safe_height"])
+                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"])
     p.add_argument("--algos", type=str, nargs="+",
                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
