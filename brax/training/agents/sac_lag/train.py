@@ -144,7 +144,7 @@ def train(
     discounting: float = 0.99,
     seed: int = 0,
     batch_size: int = 256,
-    num_evals: int = 1,
+    num_evals: int = 0,
     normalize_observations: bool = False,
     max_devices_per_host: Optional[int] = None,
     reward_scaling: float = 1.0,
