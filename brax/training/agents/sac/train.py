@@ -132,6 +132,7 @@ def train(
     max_replay_size: Optional[int] = None,
     grad_updates_per_step: int = 1,
     deterministic_eval: bool = False,
+    training_metrics_steps: Optional[int] = None,
     network_factory: types.NetworkFactory[
         sac_networks.SACNetworks
     ] = sac_networks.make_sac_networks,
@@ -171,13 +172,22 @@ def train(
   num_prefill_env_steps = num_prefill_actor_steps * env_steps_per_actor_step
   assert num_timesteps - num_prefill_env_steps >= 0
   num_evals_after_init = max(num_evals - 1, 1)
-  # The number of run_one_sac_epoch calls per run_sac_training.
-  # equals to
-  # ceil(num_timesteps - num_prefill_env_steps /
-  #      (num_evals_after_init * env_steps_per_actor_step))
+  # num_outer_iterations drives the training loop; training metrics are logged
+  # every iteration. Eval runs only when num_evals > 0.
+  if training_metrics_steps is not None and training_metrics_steps > 0:
+    num_outer_iterations = max(
+        (num_timesteps - num_prefill_env_steps) // training_metrics_steps, 1
+    )
+  else:
+    num_outer_iterations = num_evals_after_init
+  # How many outer iterations between consecutive eval runs (0 = no evals).
+  if num_evals > 0:
+    eval_every_n = max(num_outer_iterations // num_evals_after_init, 1)
+  else:
+    eval_every_n = 0
   num_training_steps_per_epoch = -(
       -(num_timesteps - num_prefill_env_steps)
-      // (num_evals_after_init * env_steps_per_actor_step)
+      // (num_outer_iterations * env_steps_per_actor_step)
   )
 
   assert num_envs % device_count == 0
@@ -558,7 +568,7 @@ def train(
   training_walltime = time.time() - t
 
   current_step = 0
-  for _ in range(num_evals_after_init):
+  for it in range(num_outer_iterations):
     logging.info('step %s', current_step)
 
     # Optimization
@@ -571,9 +581,11 @@ def train(
     )
     current_step = int(_unpmap(training_state.env_steps))
 
-    # Eval and logging
     if process_id == 0:
-      if checkpoint_logdir:
+      # Always log training metrics.
+      progress_fn(current_step, training_metrics)
+
+      if checkpoint_logdir and eval_every_n > 0 and (it + 1) % eval_every_n == 0:
         params = _unpmap(
             (training_state.normalizer_params, training_state.policy_params)
         )
@@ -585,15 +597,16 @@ def train(
         )
         checkpoint.save(checkpoint_logdir, current_step, params, ckpt_config)
 
-      # Run evals.
-      metrics = evaluator.run_evaluation(
-          _unpmap(
-              (training_state.normalizer_params, training_state.policy_params)
-          ),
-          training_metrics,
-      )
-      logging.info(metrics)
-      progress_fn(current_step, metrics)
+      # Run evals at the configured cadence.
+      if eval_every_n > 0 and (it + 1) % eval_every_n == 0:
+        metrics = evaluator.run_evaluation(
+            _unpmap(
+                (training_state.normalizer_params, training_state.policy_params)
+            ),
+            training_metrics,
+        )
+        logging.info(metrics)
+        progress_fn(current_step, metrics)
 
   total_steps = current_step
   if not total_steps >= num_timesteps:
@@ -611,4 +624,5 @@ def train(
   pmap.assert_is_replicated(training_state)
   logging.info('total steps: %s', total_steps)
   pmap.synchronize_hosts()
-  return (make_policy, params, metrics, eval_env)
+  final_metrics = metrics if eval_every_n > 0 else training_metrics
+  return (make_policy, params, final_metrics, eval_env)
