@@ -176,7 +176,7 @@ def train(
   # every iteration. Eval runs only when num_evals > 0.
   if training_metrics_steps is not None and training_metrics_steps > 0:
     num_outer_iterations = max(
-        (num_timesteps - num_prefill_env_steps) // training_metrics_steps, 1
+        int(num_timesteps - num_prefill_env_steps) // int(training_metrics_steps), 1
     )
   else:
     num_outer_iterations = num_evals_after_init
