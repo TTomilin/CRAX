@@ -37,7 +37,7 @@ METHOD_HATCHES = {
 }
 
 SAFETY_THRESHOLDS: Dict[str, float] = {
-    "safe_point_goal": 25.0,
+    "safe_goal_point": 25.0,
     "safe_reacher": 25.0,
     "safe_walker": 25.0,
 }
@@ -565,7 +565,7 @@ def build_args() -> argparse.ArgumentParser:
                    help="Base data directory")
     p.add_argument(
         "--envs", type=str, nargs="+",
-        default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_height"],
+        default=["safe_goal_point", "safe_reacher", "safe_walker", "safe_height"],
         help="Environments to compare"
     )
     p.add_argument(

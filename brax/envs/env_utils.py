@@ -243,7 +243,7 @@ def _create_temporary_file_and_return_path(
     xml_content = builder.build_xml(base_xml_path, goal_manager, hazard_manager)
 
     # Create temporary file
-    temp_fd, temp_path = tempfile.mkstemp(suffix=".xml", prefix="safe_point_goal_")
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".xml", prefix="safe_goal_point_")
     try:
         with os.fdopen(temp_fd, "w") as f:
             f.write(xml_content)

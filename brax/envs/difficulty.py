@@ -9,7 +9,7 @@ mappings in a single place without touching training code or env classes.
 
 Naming Convention Support:
 - New style: safe_[task]_[agent] (e.g., safe_goal_point, safe_circle_point)
-- Old style: safe_[agent]_[task] or safe_[task] (e.g., safe_point_goal, safe_walker)
+- Old style: safe_[agent]_[task] or safe_[task] (e.g., safe_goal_point, safe_walker)
 
 Both naming conventions are supported for backward compatibility.
 """
@@ -208,18 +208,6 @@ _ENV_TO_TASK: dict[str, str] = {
     "safe_lift_ant": "lift_ant",
     "safe_lift_spider": "lift_spider",
     "safe_reach_reacher": "reach",
-
-    # Old naming convention (backward compatibility)
-    "safe_point_goal": "goal",
-    "safe_point_circle": "circle",
-    "safe_point_button": "button",
-    "block_push_goal": "push",
-    "safe_walker": "pathway",
-    "safe_height": "height",
-    "safe_ant": "lift_ant",
-    "safe_spider": "lift_spider",
-    "safe_reacher": "reach",
-    "safe_velocity": "velocity",
 }
 
 

@@ -2,12 +2,12 @@
 """Visualize a trained policy by running rollouts and saving video + snapshots.
 
 Usage:
-    python scripts/visualize_policy.py --checkpoint path/to/checkpoint --env safe_point_goal
+    python scripts/visualize_policy.py --checkpoint path/to/checkpoint --env safe_goal_point
 
     # With custom options
     python scripts/visualize_policy.py \
         --checkpoint results/ppo_lag/checkpoint_10000000 \
-        --env safe_point_goal \
+        --env safe_goal_point \
         --level 2 \
         --episode_length 1000 \
         --num_episodes 3 \
@@ -320,7 +320,7 @@ def main():
 
     # Required arguments
     parser.add_argument("--checkpoint", default=None, help="Path to checkpoint directory")
-    parser.add_argument("--env", required=True, help="Environment name (e.g., safe_point_goal)")
+    parser.add_argument("--env", required=True, help="Environment name (e.g., safe_goal_point)")
 
     # Environment options
     parser.add_argument("--level", type=int, default=None, help="Environment difficulty level (1, 2, or 3)")

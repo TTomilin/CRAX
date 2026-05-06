@@ -3,9 +3,9 @@
 Render initial frames for a given environment across difficulty levels and save images.
 
 Usage examples:
-  python scripts/render_env_levels.py --env safe_point_goal --levels 1 2 3 --outdir assets/envs
+  python scripts/render_env_levels.py --env safe_goal_point --levels 1 2 3 --outdir assets/envs
   python scripts/render_env_levels.py --env safe_walker --levels 1 2 3
-  python scripts/render_env_levels.py  # uses defaults (safe_point_goal, levels 1-3)
+  python scripts/render_env_levels.py  # uses defaults (safe_goal_point, levels 1-3)
 
 Notes:
 - Uses the centralized difficulty system in brax.envs
@@ -24,7 +24,7 @@ from brax.io import image as brax_image
 
 def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Render initial frames for env difficulty levels")
-    p.add_argument("--env", type=str, default="safe_point_goal", help="Environment name")
+    p.add_argument("--env", type=str, default="safe_goal_point", help="Environment name")
     p.add_argument("--levels", type=int, nargs='+', default=None,
                    help="Levels to render (default: all supported levels for the env)")
     p.add_argument("--outdir", type=str, default="assets/envs", help="Output directory for images")

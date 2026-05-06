@@ -59,7 +59,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--store_model", type=bool, default=True, help="Store model checkpoint after training")
 
     # --- Environment ---
-    parser.add_argument("--env_name", type=str, default="safe_point_goal", help="Env name")
+    parser.add_argument("--env_name", type=str, default="safe_goal_point", help="Env name")
     parser.add_argument(
         "--agent",
         type=str,

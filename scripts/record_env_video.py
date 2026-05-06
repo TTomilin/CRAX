@@ -4,12 +4,6 @@ Record video of environment rollouts with optional trained policy.
 
 This script unifies the video recording functionality from various test files.
 Each environment can have specific default configurations.
-
-Usage examples:
-  python scripts/record_env_video.py --env safe_ant
-  python scripts/record_env_video.py --env safe_point_goal --level 2 --steps 500
-  python scripts/record_env_video.py --env safe_walker --model my_checkpoint
-  python scripts/record_env_video.py --env safe_velocity --agent ant --level 1
 """
 import argparse
 import os
@@ -125,41 +119,6 @@ ENV_DEFAULTS = {
         "extra_metrics": [],
         "cameras": [0],
     },
-    # Backward compatibility: old naming convention
-    "safe_point_goal": {
-        "steps": 300,
-        "episodes": 1,
-        "fps": 100,
-        "action_mode": "random",
-        "extra_metrics": [],
-        "cameras": [0],
-    },
-    "safe_point_circle": {
-        "steps": 300,
-        "episodes": 1,
-        "fps": 100,
-        "action_mode": "circular",  # Special case for circular policy
-        "extra_metrics": [],
-        "cameras": ["fixedfar"],
-    },
-    "safe_spider": {
-        "steps": 300,
-        "episodes": 1,
-        "fps": 50,
-        "action_mode": "periodic",
-        "extra_metrics": ["feet_on_ground"],
-        "cameras": ["track"],
-        "width": 640,
-        "height": 480,
-    },
-    "safe_velocity": {
-        "steps": 300,
-        "episodes": 1,
-        "fps": 50,
-        "action_mode": "periodic",
-        "extra_metrics": ["velocity_value", "velocity_violation"],
-        "cameras": [0],
-    },
 }
 
 
@@ -238,7 +197,7 @@ Environment-specific defaults are applied automatically. Override with flags.
 
 Examples:
   %(prog)s --env safe_ant
-  %(prog)s --env safe_point_goal --level 2 --steps 500
+  %(prog)s --env safe_goal_point --level 2 --steps 500
   %(prog)s --env safe_walker --model checkpoint_name
   %(prog)s --env safe_velocity --agent halfcheetah --level 3
 """)

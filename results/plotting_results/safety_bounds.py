@@ -18,7 +18,7 @@ METRIC_COLS = {
 
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
-    "safe_point_goal": 1_000_000_00,
+    "safe_goal_point": 1_000_000_00,
     "safe_reacher": 5_000_000_00,
     "safe_block_push": 5_000_000_00,
     "safe_point_circle": 5_000_000_00,
@@ -277,7 +277,7 @@ def build_args() -> argparse.ArgumentParser:
         "--envs",
         type=str,
         nargs="+",
-        default=["safe_point_goal", "safe_reacher", "safe_block_push", "safe_point_circle"],
+        default=["safe_goal_point", "safe_reacher", "safe_block_push", "safe_point_circle"],
     )
     p.add_argument(
         "--algo",

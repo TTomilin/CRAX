@@ -194,7 +194,7 @@ def create_difficulty_curriculum(
     """Create a curriculum for environments with difficulty levels.
 
     Args:
-        env_name: Environment name (e.g., 'safe_reacher', 'safe_point_goal').
+        env_name: Environment name (e.g., 'safe_reacher', 'safe_goal_point').
         levels: List of difficulty levels to train on.
         steps_per_level: Number of training steps per level.
 
