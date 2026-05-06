@@ -44,7 +44,7 @@ def train(
     tau: float = 0.005,
     min_replay_size: int = 0,
     max_replay_size: Optional[int] = None,
-    grad_updates_per_step: int = 1,
+    grad_updates_per_step: int = 32,
     deterministic_eval: bool = False,
     network_factory: types.NetworkFactory[
         sac_lag_networks.SACLagNetworks
