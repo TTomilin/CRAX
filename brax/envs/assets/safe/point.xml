@@ -15,7 +15,7 @@
   </default>
   <worldbody>
     <geom name="floor" type="plane" size="10 10 0.1" condim="6" rgba="0.7 0.7 0.5 1"/>
-    <geom name="inner_floor" type="box" size="3.0 3.0 0.01" pos="0 0 0.01" rgba="0.8 0.8 0.6 1" condim="3"/>
+    <geom name="inner_floor" type="box" size="3.0 3.0 0.01" pos="0 0 0.01" rgba="0.8 0.8 0.6 1" contype="0" conaffinity="0"/>
     <camera name="fixedfar" pos="0 -5 5" zaxis="0 -1 1.15" mode="fixed"/>
     <body name="agent" pos="0 0 .1">
       <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>

@@ -24,6 +24,7 @@ from typing import Optional, List, Tuple
 
 import imageio.v3 as iio
 import jax
+import jax.numpy as jnp
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -75,6 +76,24 @@ def make_random_policy(action_size: int):
         action = jax.random.uniform(key, shape=(action_size,), minval=-1.0, maxval=1.0)
         return action, {}
     return random_policy
+
+
+def make_circle_policy():
+    """Creates a policy for the point agent that drives in circles.
+
+    Applies max forward thrust and constant rotation so the agent
+    traces a consistent circular arc around the arena.
+    """
+    def circle_policy(obs, key):
+        del obs, key
+        # action[0]: forward thrust (max), action[1]: yaw rate (small for large-radius arc)
+        return jnp.array([1.0, 0.15]), {}
+    return circle_policy
+
+
+def _is_point_agent(env) -> bool:
+    """Return True if the env uses a point-type agent (point.xml, point_push.xml, etc.)."""
+    return getattr(env, 'agent_xml_file', '').startswith('point')
 
 
 def run_rollout(
@@ -352,21 +371,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Create output directory
-    output_dir = Path(args.output_dir) / args.env
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Determine output name
-    if args.name:
-        name = args.name
-    else:
-        if args.checkpoint:
-            checkpoint_name = Path(args.checkpoint).name
-        else:
-            checkpoint_name = 'random_policy'
-        level_str = f"_level_{args.level}" if args.level else ""
-        name = f"{args.env}{level_str}_{checkpoint_name}"
-
     # Build environment kwargs
     env_kwargs = {}
     if args.env_kwargs:
@@ -381,16 +385,36 @@ def main():
     # Create environment with difficulty level
     env = envs.get_environment(args.env, level=args.level, **env_kwargs)
 
+    # Create output directory
+    output_dir = Path(args.output_dir) / args.env
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine output name (needs env to detect agent type)
+    if args.name:
+        name = args.name
+    else:
+        if args.checkpoint:
+            checkpoint_name = Path(args.checkpoint).name
+        elif _is_point_agent(env):
+            checkpoint_name = 'circle_policy'
+        else:
+            checkpoint_name = 'random_policy'
+        level_str = f"_level_{args.level}" if args.level else ""
+        name = f"{args.env}{level_str}_{checkpoint_name}"
+
     # Determine episode length
     episode_length = args.episode_length
     if episode_length is None:
         episode_length = getattr(env, 'episode_length', 1000)
     print(f"  Episode length: {episode_length}")
 
-    # Load policy or create a random one
+    # Load policy or create a fallback one
     if args.checkpoint:
         print(f"Loading policy from: {args.checkpoint}")
         policy = load_policy(args.checkpoint, deterministic=args.deterministic)
+    elif _is_point_agent(env):
+        print("No checkpoint provided, using circle policy for point agent.")
+        policy = make_circle_policy()
     else:
         print("No checkpoint provided, using random policy.")
         policy = make_random_policy(env.action_size)
