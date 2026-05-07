@@ -50,6 +50,26 @@ class MetricsLogger:
 
         self.maybe_log_metrics()
 
+    def update_step_metrics(self, episode_metrics, dones, train_metrics, env_steps):
+        """Update both episodic and training metrics in one call, then log once."""
+        self._num_steps = int((np.uint64(env_steps.hi) << 32) + np.uint64(env_steps.lo))
+
+        if jnp.sum(dones) > 0:
+            for name, metric in episode_metrics.items():
+                done_metrics = np.mean(metric[dones.astype(bool)].flatten()).item()
+                metric_key = f"episodic/{name}"
+                self._metrics_buffer[metric_key].append(done_metrics)
+                self._episodic_metrics_updated.add(metric_key)
+
+        for name, metric in train_metrics.items():
+            arr = np.asarray(metric)
+            if arr.size == 0 or not np.all(np.isfinite(arr)):
+                continue
+            value = arr.reshape(-1).mean().item()
+            self._metrics_buffer[f"training/{name}"].append(value)
+
+        self.maybe_log_metrics()
+
     def update_train_metrics(self, metrics, env_steps):
         """Update training metrics buffer and log if needed.
 

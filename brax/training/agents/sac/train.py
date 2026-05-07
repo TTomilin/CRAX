@@ -388,12 +388,6 @@ def train(
         normalizer_params=normalizer_params,
         env_steps=new_env_steps,
     )
-    jax.debug.callback(
-        metrics_aggregator.update_env_metrics,
-        env_state.info['episode_metrics'],
-        env_state.info['episode_done'],
-        new_env_steps,
-    )
 
     buffer_state, transitions = replay_buffer.sample(buffer_state)
     # Change the front dimension of transitions so 'update_step' is called
@@ -407,6 +401,13 @@ def train(
     )
 
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
+    jax.debug.callback(
+        metrics_aggregator.update_step_metrics,
+        env_state.info['episode_metrics'],
+        env_state.info['episode_done'],
+        metrics,
+        new_env_steps,
+    )
     return training_state, env_state, buffer_state, metrics
 
   def prefill_replay_buffer(
