@@ -357,7 +357,7 @@ def train(
         carry: Tuple[TrainingState, PRNGKey], transitions: Transition
     ) -> Tuple[Tuple[TrainingState, PRNGKey], Metrics]:
         training_state, key = carry
-        key, key_alpha, key_critic, key_cost_critic, key_actor, key_lambda = jax.random.split(key, 6)
+        key, key_alpha, key_critic, key_cost_critic, key_actor = jax.random.split(key, 5)
 
         # --- Entropy temperature update (unchanged from SAC) ---
         alpha_loss_val, alpha_params, alpha_optimizer_state = alpha_update(
@@ -416,25 +416,10 @@ def train(
             training_state.target_qc_params, qc_params,
         )
 
-        # --- Lagrange multiplier update (Qc-based, on-policy estimate) ---
-        # Use current policy to sample actions and evaluate Qc, avoiding off-policy
-        # bias from raw replay buffer costs collected under older policies.
-        pi_dist = sac_network.policy_network.apply(
-            training_state.normalizer_params, policy_params, transitions.observation
-        )
-        pi_action_raw = sac_network.parametric_action_distribution.sample_no_postprocessing(
-            pi_dist, key_lambda
-        )
-        pi_action = sac_network.parametric_action_distribution.postprocess(pi_action_raw)
-        qc_values = sac_network.qc_network.apply(
-            training_state.normalizer_params, qc_params, transitions.observation, pi_action
-        )
-        mean_qc = jnp.mean(jnp.min(qc_values, axis=-1))
-        # Convert discounted sum Qc to per-step scale: Qc ≈ c/(1-γ), so c ≈ Qc*(1-γ)
-        mean_cost_estimate = mean_qc * (1.0 - discounting)
-        mean_cost_raw = jnp.mean(transitions.extras['state_extras']['cost'])
+        # --- Lagrange multiplier update ---
+        mean_cost = jnp.mean(transitions.extras['state_extras']['cost'])
         new_lambda_lagr, new_aux_state, lambda_metrics = lambda_update_fn(
-            training_state.lambda_lagr, training_state.aux_state, mean_cost_estimate
+            training_state.lambda_lagr, training_state.aux_state, mean_cost
         )
 
         metrics = {
@@ -443,9 +428,7 @@ def train(
             'actor_loss': actor_loss_val,
             'alpha_loss': alpha_loss_val,
             'alpha': jnp.exp(alpha_params),
-            'mean_cost_raw': mean_cost_raw,
-            'mean_cost_estimate': mean_cost_estimate,
-            'mean_qc': mean_qc,
+            'mean_cost': mean_cost,
             **lambda_metrics,
         }
 
