@@ -407,6 +407,11 @@ def train(
     )
 
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
+    jax.debug.callback(
+        metrics_aggregator.update_train_metrics,
+        metrics,
+        new_env_steps,
+    )
     return training_state, env_state, buffer_state, metrics
 
   def prefill_replay_buffer(
