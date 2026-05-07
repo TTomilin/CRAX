@@ -133,7 +133,7 @@ def train(
     max_replay_size: Optional[int] = None,
     grad_updates_per_step: int = 32,
     deterministic_eval: bool = False,
-    training_metrics_steps: Optional[int] = None,
+    training_metrics_steps: int = 1_000_000,
     network_factory: types.NetworkFactory[
         sac_networks.SACNetworks
     ] = sac_networks.make_sac_networks,
@@ -407,11 +407,6 @@ def train(
     )
 
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
-    jax.debug.callback(
-        metrics_aggregator.update_train_metrics,
-        metrics,
-        new_env_steps,
-    )
     return training_state, env_state, buffer_state, metrics
 
   def prefill_replay_buffer(
