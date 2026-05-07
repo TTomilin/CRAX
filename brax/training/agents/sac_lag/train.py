@@ -485,14 +485,6 @@ def train(
             experience_key,
         )
         new_env_steps = training_state.env_steps + env_steps_per_actor_step
-        # Log episodic metrics (sum_reward, length, cost, etc.) for any
-        # episodes that completed this step, matching PPO's MetricsLogger pattern.
-        jax.debug.callback(
-            metrics_aggregator.update_env_metrics,
-            env_state.info['episode_metrics'],
-            env_state.info['episode_done'],
-            new_env_steps,
-        )
         training_state = training_state.replace(
             normalizer_params=normalizer_params,
             env_steps=new_env_steps,
@@ -506,6 +498,13 @@ def train(
             sgd_step, (training_state, training_key), transitions
         )
         metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
+        jax.debug.callback(
+            metrics_aggregator.update_step_metrics,
+            env_state.info['episode_metrics'],
+            env_state.info['episode_done'],
+            metrics,
+            new_env_steps,
+        )
         return training_state, env_state, buffer_state, metrics
 
     def prefill_replay_buffer(
