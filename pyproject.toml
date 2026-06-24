@@ -42,7 +42,7 @@ dependencies = [
     "jinja2",
     "ml_collections",
     "mujoco",
-    "mujoco-mjx",
+    "mujoco-mjx==3.4.0",
     "numpy",
     "optax",
     "orbax-checkpoint",
