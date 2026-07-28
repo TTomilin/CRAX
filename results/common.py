@@ -34,6 +34,7 @@ TRANSLATIONS = {
     "safe_reacher": "Safe Reacher",
     "safe_pathway_walker2d": "Safe Pathway",
     "safe_velocity_humanoid": "Safe Velocity",
+    "safe_velocity_ant": "Safe Velocity Ant",
     "safe_lift_spider": "Safe Spider",
     "safe_push_point": "Safe Push",
     "safe_circle_point": "Safe Circle",
@@ -90,6 +91,7 @@ DEFAULT_METRIC_COLS: Dict[str, str] = {
 REWARD_METRIC_MAP = {
     'safe_pathway_walker2d': 'episodic/reward_forward',
     'safe_velocity_humanoid': 'episodic/forward_reward',
+    'safe_velocity_ant': 'episodic/forward_reward',
     'safe_lift_spider': 'episodic/reward_forward',
     'safe_height_humanoid': 'episodic/forward_reward',
 }
