@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "brax"
-version = "0.12.3"
-description = "A differentiable physics engine written in JAX."
+name = "crax"
+version = "0.0.1"
+description = "A GPU-accelerated benchmark and algorithm suite for Safe RL."
 authors = [
-    { name = "Brax Authors", email = "no-reply@google.com" },
+    { name = "CRAX Authors" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -15,23 +15,13 @@ license = { file = "LICENSE" }
 keywords = [
     "JAX",
     "reinforcement learning",
+    "safe reinforcement learning",
+    "constrained reinforcement learning",
     "rigidbody",
     "physics",
 ]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
 dependencies = [
     "absl-py",
-    "dataclasses; python_version < '3.7'",
     "etils",
     "flask",
     "flask_cors",
@@ -60,32 +50,8 @@ dependencies = [
 [project.optional-dependencies]
 develop = [
     "pytest",
-    "transforms3d",
     "gym",
     "dm_env",
-]
-
-[project.urls]
-Homepage = "http://github.com/google/brax"
-
-[tool.hatch.build.targets.wheel]
-packages = ["brax"]
-exclude = [
-  "/datasets",
-  "/docs",
-  "/notebooks",
-  "/tests",
-  "brax/experimental/barkour/assets",
-  "brax/experimental/barkour/data",
-]
-
-[tool.hatch.build.targets.sdist]
-exclude = [
-    "/datasets",
-    "/docs",
-    "/notebooks",
-    "brax/experimental/barkour/assets",
-    "brax/experimental/barkour/data",
 ]
 
 [tool.isort]

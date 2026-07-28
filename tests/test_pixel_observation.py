@@ -28,8 +28,14 @@ from brax.envs.wrappers import training
 # ---------------------------------------------------------------------------
 
 def _make_env(vision_kwargs=None, level=1):
-    """Create a safe_goal_point env with vision wrapper."""
-    vk = dict(cameras=('vision',), height=64, width=64, obs_mode='pixels+state')
+    """Create a safe_goal_point env with the GPU vision wrapper.
+
+    Goes through the registry (`envs.get_environment(vision=True, ...)`),
+    which always constructs `GpuPixelObservationWrapper` — a single-camera,
+    RGB-only renderer. For multi-camera or grayscale coverage, which that
+    wrapper doesn't support, use `_make_env_no_registry` (CPU wrapper) instead.
+    """
+    vk = dict(camera='vision', height=64, width=64, obs_mode='pixels+state')
     if vision_kwargs:
         vk.update(vision_kwargs)
     return envs.get_environment(
@@ -137,8 +143,13 @@ class TestObservationModes:
 # ===========================================================================
 
 class TestCameraOptions:
+    """GpuPixelObservationWrapper is single-camera/RGB-only, so multi-camera
+    and grayscale coverage exercises the CPU PixelObservationWrapper instead
+    (via _make_env_no_registry), which supports both.
+    """
+
     def test_multi_camera(self):
-        env = _make_env(dict(cameras=('vision', 'vision_back')))
+        env = _make_env_no_registry(dict(cameras=('vision', 'vision_back')))
         state = env.reset(jax.random.PRNGKey(0))
         assert 'pixels/vision' in state.obs
         assert 'pixels/vision_back' in state.obs
@@ -146,7 +157,7 @@ class TestCameraOptions:
         assert state.obs['pixels/vision_back'].shape == (64, 64, 3)
 
     def test_grayscale(self):
-        env = _make_env(dict(grayscale=True))
+        env = _make_env_no_registry(dict(grayscale=True))
         state = env.reset(jax.random.PRNGKey(0))
         assert state.obs['pixels/vision'].shape == (64, 64, 1)
         obs_size = env.observation_size
@@ -182,7 +193,7 @@ class TestFrameStacking:
         )
 
     def test_frame_stack_grayscale(self):
-        env = _make_env(dict(frame_stack=4, grayscale=True))
+        env = _make_env_no_registry(dict(frame_stack=4, grayscale=True))
         state = env.reset(jax.random.PRNGKey(0))
         assert state.obs['pixels/vision'].shape == (64, 64, 4)  # 4 * 1
 
@@ -463,7 +474,7 @@ class TestVisionNetworks:
 class TestErrorHandling:
     def test_invalid_camera_name(self):
         with pytest.raises(ValueError, match="Camera .* not found"):
-            _make_env(dict(cameras=('nonexistent_camera',)))
+            _make_env(dict(camera='nonexistent_camera'))
 
     def test_invalid_obs_mode(self):
         with pytest.raises(ValueError, match="obs_mode must be"):

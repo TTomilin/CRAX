@@ -20,7 +20,7 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
-from results.common import get_metrics_for_env
+from results.common import canonicalize_env_name, env_name_variants, get_metrics_for_env
 
 
 def main(args: argparse.Namespace) -> None:
@@ -46,7 +46,10 @@ def build_filters(args: argparse.Namespace) -> dict:
         # For transfer, we filter by config.algorithm
         f["config.alg"] = {"$in": algos_to_filter}
     if args.envs:
-        f["config.env_name"] = {"$in": args.envs}
+        # Expand to all known old/new name variants (e.g. safe_walker <-> safe_pathway_walker2d)
+        # so a request for one alias matches runs logged under either naming era.
+        all_variants = sorted({v for env in args.envs for v in env_name_variants(env)})
+        f["config.env_name"] = {"$in": all_variants}
     if args.seeds:
         f["config.seed"] = {"$in": args.seeds}
 
@@ -72,6 +75,10 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
     metrics = get_metrics_for_env(env, args.metrics)
 
+    # Env names were renamed mid-project (e.g. safe_walker -> safe_pathway_walker2d);
+    # canonicalize so old- and new-named runs of the same env land in the same folder.
+    canonical_env = canonicalize_env_name(env)
+
     # Determine if this is a transfer or curriculum run
     is_transfer = 'TRANSFER' in tags
     is_curriculum = 'CURRICULUM' in tags
@@ -85,7 +92,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     if is_curriculum:
         # Curriculum run: algo stored in config.alg
         algo = config.get('alg', config.get('algorithm', 'unknown'))
-        folder_path = root_dir / args.output / 'curriculum' / env / algo
+        folder_path = root_dir / args.output / 'curriculum' / canonical_env / algo
         file_path = folder_path / f"seed_{seed}.parquet"
         key_metrics = metrics + ['global_step', 'curriculum_stage']
     else:
@@ -100,9 +107,9 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
             if not args.include_unsafe_phase:
                 print(f"Skipping unsafe phase run {run_id}")
                 return
-            folder_path = root_dir / args.output / 'transfer' / env / f"level_{difficulty}" / 'ppo_pretrain'
+            folder_path = root_dir / args.output / 'transfer' / canonical_env / f"level_{difficulty}" / 'ppo_pretrain'
         else:
-            folder_path = root_dir / args.output / 'transfer' / env / f"level_{difficulty}" / algo
+            folder_path = root_dir / args.output / 'transfer' / canonical_env / f"level_{difficulty}" / algo
 
         file_path = folder_path / f"seed_{seed}.parquet"
         key_metrics = metrics
@@ -131,7 +138,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
 def build_args() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Download transfer/curriculum results from wandb")
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5],
+    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+',
                         default=["ppo", "ppo_lag", "ppo_pid", "focops", "p3o"],

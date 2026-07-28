@@ -77,8 +77,39 @@ BASELINES_COLORS: Dict[str, str] = {
     "sac": _tab10_colors[7],
     "sac_lag": _tab10_colors[8],
     "sac_pid": _tab10_colors[9],
-    "crpo": "#000000",  # tab10 is exhausted by the other 10 baselines
+    "crpo": "#B8860B",  # darkgoldenrod: tab10 is exhausted by the other 10 baselines, needs distinct 11th hue
 }
+
+# Renamed mid-project (old short name -> current registry name in brax/envs/__init__.py),
+# but curriculum/transfer wandb runs logged config.env_name as whatever was passed at the
+# time, so older seeds (1-5) are tagged with the old name and newer seeds (6+) with the
+# new one for the *same* environment. Canonicalize to the old short name (what's already
+# on disk under results/data/{curriculum,transfer}/) so both land in one folder and can be
+# combined for CI/seed-count analysis.
+CANONICAL_ENV_ALIASES: Dict[str, str] = {
+    "safe_goal_point": "safe_point_goal",
+    "safe_pathway_walker2d": "safe_walker",
+    "safe_height_humanoid": "safe_height",
+}
+
+
+def canonicalize_env_name(env_name: str) -> str:
+    """Map a possibly-renamed env_name to its canonical (old short-name) form."""
+    return CANONICAL_ENV_ALIASES.get(env_name, env_name)
+
+
+_REVERSE_ENV_ALIASES: Dict[str, str] = {v: k for k, v in CANONICAL_ENV_ALIASES.items()}
+
+
+def env_name_variants(env_name: str) -> List[str]:
+    """All known name variants (old + new) for the given env, e.g. for wandb
+    server-side filters that must match runs logged under either naming era."""
+    canonical = canonicalize_env_name(env_name)
+    variants = {env_name, canonical}
+    if canonical in _REVERSE_ENV_ALIASES:
+        variants.add(_REVERSE_ENV_ALIASES[canonical])
+    return sorted(variants)
+
 
 # Default mapping matching most scripts in this repo
 DEFAULT_METRIC_COLS: Dict[str, str] = {
@@ -94,6 +125,10 @@ REWARD_METRIC_MAP = {
     'safe_velocity_ant': 'episodic/forward_reward',
     'safe_lift_spider': 'episodic/reward_forward',
     'safe_height_humanoid': 'episodic/forward_reward',
+    # Short aliases used by the curriculum/transfer experiment runs (train_curriculum.py /
+    # train_transfer.py --env_name), logged under the same underlying walker2d/humanoid envs.
+    'safe_walker': 'episodic/reward_forward',
+    'safe_height': 'episodic/forward_reward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
