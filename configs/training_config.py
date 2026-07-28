@@ -154,6 +154,11 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--kappa_increase_factor", type=float, default=1.1, help="P3O: multiplicative factor for kappa when constraint violated")
     parser.add_argument("--kappa_max", type=float, default=50.0, help="P3O: maximum kappa value")
 
+    # --- CRPO ---
+    parser.add_argument("--crpo_eta", type=float, default=0.0,
+                        help="CRPO: tolerance added to safety_bound when deciding whether to optimize "
+                             "reward or cost for a training step")
+
     # --- SAC-Lag (off-policy) ---
     parser.add_argument("--lagrangian_lr", type=float, default=0.01,
                         help="SAC-Lag: Lagrange multiplier LR (per-episode scale, comparable to PPO-Lag lagrangian_coef_rate; normalized internally by episode_length)")

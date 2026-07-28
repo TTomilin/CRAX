@@ -63,7 +63,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     fig_w = args.panel_w * total_cols
     fig_h = args.panel_h * total_rows
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.0, wspace=0.35, hspace=0.55)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12, wspace=0.35, hspace=0.55)
 
     # map (env_i, metric_i) -> axis
     def get_ax(env_i: int, metric_i: int):
@@ -116,7 +116,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
                 line, = ax.plot(x, mean, label=algo, color=BASELINES_COLORS.get(algo))
                 # make CI visible
-                ax.fill_between(x, mean - ci, mean + ci, alpha=0.25)
+                ax.fill_between(x, mean - ci, mean + ci, alpha=0.25, color=line.get_color())
 
                 # only store one handle per algo for global legend
                 if algo not in legend_handles:
@@ -164,15 +164,15 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.09), ncol=min(len(labels), 10),
-                   fancybox=True,
-                   shadow=True)
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=min(len(labels), 10),
+                   fancybox=True, shadow=True)
 
+    algo_names = "_".join(args.algos) if len(args.algos) <= 2 else ""
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_level_{args.level}.pdf"
-    plt.savefig(out_path, bbox_inches="tight")
-    # plt.show()
+    out_path = out_dir / f"{args.out_name}_level_{args.level}_{algo_names}.pdf"
+    # plt.savefig(out_path, bbox_inches="tight")
+    plt.show()
     print(f"Saved figure: {out_path}")
 
 

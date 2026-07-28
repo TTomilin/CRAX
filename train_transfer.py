@@ -28,7 +28,7 @@ def main():
     parser = build_base_parser(description='Safety transfer benchmark')
     parser.add_argument('--unsafe_steps', type=float, default=1e8, help='Steps for unsafe pre-training')
     parser.add_argument('--safe_steps', type=float, default=1e8, help='Steps for safe fine-tuning per algorithm')
-    parser.add_argument('--algorithms', type=str, nargs='+', default=['ppo_lag', 'ppo_pid', 'focops', 'p3o'],
+    parser.add_argument('--algorithms', type=str, nargs='+', default=['ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'],
                         help='Safe algorithms to test')
     parser.add_argument('--use_checkpoint_transfer', type=bool, default=True,
                         help='If True, save unsafe model to checkpoint and load via restore_checkpoint_path. '

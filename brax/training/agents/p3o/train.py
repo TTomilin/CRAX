@@ -54,7 +54,7 @@ def train(
         # P3O specific params
         safety_bound: float = 0.0,
         initial_kappa: float = 0.01,
-        kappa_increase_factor: float = 1.5,
+        kappa_increase_factor: float = 1.1,
         kappa_max: float = 1000.0,
         # Eval params
         num_evals: int = 0,

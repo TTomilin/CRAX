@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import wandb
@@ -26,10 +27,16 @@ def build_filters(args: argparse.Namespace) -> dict:
         f["config.alg"] = {"$in": args.algos}
     if args.envs:
         f["config.env_name"] = {"$in": args.envs}
-    if args.envs:
+    if args.levels:
         f["config.difficulty"] = {"$in": args.levels}
     if args.seeds:
         f["config.seed"] = {"$in": args.seeds}
+
+    # only runs created within the last `max_age_days` days
+    max_age_days = getattr(args, "max_age_days", None)
+    if max_age_days is not None:
+        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        f["createdAt"] = {"$gte": cutoff}
 
     # tags live on the run, not in config
     if args.wandb_tags:
@@ -89,7 +96,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
 def common_dl_args() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5],
+    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+',
                         default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o", "focops", "sac_lag", "sac_pid"],

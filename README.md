@@ -24,6 +24,7 @@ CRAX includes efficient JAX implementations of:
 | **FOCOPS** | First Order Constrained Optimization in Policy Space | [Zhang et al., 2020](https://arxiv.org/abs/2002.06506) |
 | **P3O** | Penalized Proximal Policy Optimization | [Zhang et al., 2022](https://arxiv.org/abs/2205.11814) |
 | **PPO-Saute** | State Augmentation for Safe RL | [Sootla et al., 2022](https://arxiv.org/abs/2202.06558) |
+| **CRPO** | Constrained Rectified Policy Optimization | [Xu et al., 2021](https://arxiv.org/abs/2011.05869) |
 
 All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods.
 
@@ -144,7 +145,8 @@ CRAX/
 │           ├── ppo_pid/         # PPO with PID controller
 │           ├── focops/          # FOCOPS
 │           ├── p3o/             # P3O
-│           └── ppo_saute/       # Saute wrapper
+│           ├── ppo_saute/       # Saute wrapper
+│           └── crpo/            # CRPO
 ├── configs/                     # Training configurations
 ├── train_env.py                 # Single environment training
 ├── train_curriculum.py          # Progressive difficulty training
@@ -163,7 +165,8 @@ ppo/train.py          # Base trainer with hooks (loss_fn, post_step_fn, init_aux
     ├── ppo_pid/      # PID controller + lagrange loss
     ├── focops/       # FOCOPS loss + nu update
     ├── p3o/          # P3O loss + kappa adaptation
-    └── ppo_saute/    # Environment wrapper approach
+    ├── ppo_saute/    # Environment wrapper approach
+    └── crpo/         # Rectified reward/cost objective switching
 ```
 
 This design minimizes code duplication and makes it easy to add new algorithms.

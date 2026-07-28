@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 import wandb
 from brax import envs
 from brax.io import json as brax_json
+from brax.training.agents.crpo import train as crpo
 from brax.training.agents.focops import train as focops
 from brax.training.agents.p3o import train as p3o
 from brax.training.agents.ppo import train_ppo_cost
@@ -106,6 +107,7 @@ def get_algorithm_train_fn(alg_name: str):
         'ppo_saute': ppo_saute,
         'p3o': p3o,
         'focops': focops,
+        'crpo': crpo,
         'sac': sac_train,
         'sac_lag': sac_lag,
         'sac_pid': sac_pid,
@@ -128,7 +130,7 @@ def filter_kwargs_for_fn(fn, cfg):
 def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
     """Create a vision-aware network factory for the given algorithm.
 
-    Safe RL algorithms (ppo_lag, ppo_pid, focops, p3o) need a cost_value_network
+    Safe RL algorithms (ppo_lag, ppo_pid, focops, p3o, crpo) need a cost_value_network
     in addition to policy and value networks. This factory ensures the correct
     network is created based on the algorithm.
 
@@ -142,7 +144,7 @@ def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
     """
     from brax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
-    safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o'}
+    safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'}
     needs_cost_value = alg_name in safe_algs
 
     def network_factory(obs_size, action_size, **kwargs):

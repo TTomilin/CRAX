@@ -25,6 +25,10 @@ TRANSLATIONS = {
     "ppo_saute": "PPOSaute",
     "p3o": "P3O",
     "focops": "FOCOPS",
+    "crpo": "CRPO",
+    "sac": "SAC",
+    "sac_lag": "SACLag",
+    "sac_pid": "SACPID",
     # Environments
     "safe_goal_point": "Safe Goal",
     "safe_reacher": "Safe Reacher",
@@ -34,6 +38,28 @@ TRANSLATIONS = {
     "safe_push_point": "Safe Push",
     "safe_circle_point": "Safe Circle",
     "safe_height_humanoid": "Safe Height",
+    # Hyperparameter sweep names
+    "lagrangian_coef_rate": "Lagrangian LR",
+    "pid_kp": "PID Kp",
+    "pid_ki": "PID Ki",
+    "gamma_budget": "Saute Budget Gamma",
+    "violation_penalty": "Saute Violation Penalty",
+    "focops_lam": "FOCOPS Lambda",
+    "nu_lr": "FOCOPS Nu LR",
+    "initial_kappa": "P3O Initial Kappa",
+    "kappa_increase_factor": "P3O Kappa Increase Factor",
+    "crpo_eta": "CRPO Eta",
+}
+
+# Safe-RL-method-specific hyperparameters to sweep, and which algo they belong to.
+# Each entry sweeps ONE hyperparameter at a time (others left at their CLI default).
+HPARAM_SWEEP_SPEC: Dict[str, List[str]] = {
+    "ppo_lag": ["lagrangian_coef_rate"],
+    "ppo_pid": ["pid_kp", "pid_ki"],
+    "ppo_saute": ["gamma_budget", "violation_penalty"],
+    "focops": ["focops_lam", "nu_lr"],
+    "p3o": ["initial_kappa", "kappa_increase_factor"],
+    "crpo": ["crpo_eta"],
 }
 
 # Define a consistent color palette for baselines across all plots
@@ -47,6 +73,10 @@ BASELINES_COLORS: Dict[str, str] = {
     "ppo_saute": _tab10_colors[4],
     "p3o": _tab10_colors[5],
     "focops": _tab10_colors[6],
+    "sac": _tab10_colors[7],
+    "sac_lag": _tab10_colors[8],
+    "sac_pid": _tab10_colors[9],
+    "crpo": "#000000",  # tab10 is exhausted by the other 10 baselines
 }
 
 # Default mapping matching most scripts in this repo
