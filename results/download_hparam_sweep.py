@@ -50,7 +50,7 @@ def build_args() -> argparse.ArgumentParser:
                         choices=list(HPARAM_SWEEP_SPEC.keys()),
                         help="Which methods to download (default: all methods in HPARAM_SWEEP_SPEC)")
     parser.add_argument("--envs", type=str, nargs='+',
-                        default=["safe_goal_point", "safe_reacher", "safe_circle_point"],
+                        default=["safe_goal_point", "safe_reacher", "safe_push_point"],
                         help="Environments to download")
     parser.add_argument("--levels", type=int, nargs='+', default=[1], help="Levels to download")
     parser.add_argument("--output", type=str, default='data', help="Base output directory to store the data")
