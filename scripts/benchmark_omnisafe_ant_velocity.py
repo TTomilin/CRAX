@@ -42,6 +42,7 @@ sys.modules["tensorflow.io"] = _tf_io
 # ---------------------------------------------------------------------------
 
 import argparse
+import glob
 import shutil
 import time
 from pathlib import Path
@@ -52,6 +53,46 @@ import pandas as pd
 ENV_NAME = "SafetyAntVelocity-v1"
 
 
+def record_and_upload_video(
+        run_log_dir: Path,
+        num_epochs: int,
+        num_episodes: int,
+        width: int,
+        height: int,
+) -> None:
+    """Roll out the just-trained policy and log the replay video to the active wandb run.
+
+    Reuses the wandb run omnisafe's Logger already opened for this seed
+    (logger_cfgs.use_wandb=True in run_seed) instead of starting a new one.
+    """
+    import wandb
+    from omnisafe import Evaluator
+
+    model_name = f"epoch-{num_epochs}.pt"
+    evaluator = Evaluator()
+    evaluator.load_saved(
+        save_dir=str(run_log_dir),
+        model_name=model_name,
+        render_mode="rgb_array",
+        width=width,
+        height=height,
+    )
+
+    video_dir = run_log_dir / "video"
+    evaluator.render(num_episodes=num_episodes, save_replay_path=str(video_dir))
+
+    videos = sorted(glob.glob(str(video_dir / "**" / "*.mp4"), recursive=True))
+    if not videos:
+        print(f"WARNING: no video found under {video_dir} after render()")
+        return
+
+    if wandb.run is not None:
+        wandb.log({"eval/video": wandb.Video(videos[0], fps=evaluator.fps, format="mp4")})
+        print(f"Uploaded video to wandb: {videos[0]}")
+    else:
+        print(f"WARNING: no active wandb run, video saved locally only: {videos[0]}")
+
+
 def run_seed(
         seed: int,
         num_timesteps: int,
@@ -60,9 +101,14 @@ def run_seed(
         cost_limit: float,
         device: str,
         output_dir: Path,
+        record_video: bool = True,
+        video_episodes: int = 1,
+        video_width: int = 256,
+        video_height: int = 256,
 ) -> Path:
     """Train one PPOLag run on SafetyAntVelocity-v1 and dump a (step, reward, cost) CSV."""
     import omnisafe  # deferred so the TF patch above is already applied
+    import wandb
 
     steps_per_epoch = steps_per_env * num_envs
     num_epochs = max(num_timesteps // steps_per_epoch, 1)
@@ -108,6 +154,8 @@ def run_seed(
     if not progress_files:
         raise RuntimeError(f"No progress.csv found under {log_dir}")
 
+    run_log_dir = progress_files[0].parent
+
     df = pd.read_csv(progress_files[0])
     out = pd.DataFrame({
         "step": df["TotalEnvSteps"],
@@ -119,6 +167,23 @@ def run_seed(
     out_path = output_dir / f"seed_{seed}.csv"
     out.to_csv(out_path, index=False)
     print(f"Saved: {out_path}")
+
+    if record_video:
+        try:
+            record_and_upload_video(
+                run_log_dir=run_log_dir,
+                num_epochs=num_epochs,
+                num_episodes=video_episodes,
+                width=video_width,
+                height=video_height,
+            )
+        except Exception as e:
+            print(f"WARNING: video recording failed for seed={seed}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    if wandb.run is not None:
+        wandb.finish()
 
     shutil.rmtree(log_dir, ignore_errors=True)
     return out_path
@@ -133,6 +198,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cost-limit", type=float, default=25.0, help="Lagrangian cost budget")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output", type=str, default=None, help="Output dir (default: omnisafe_ant_velocity_benchmark_<timestamp>)")
+    parser.add_argument("--skip-video", action="store_true", help="Skip end-of-training video recording/upload")
+    parser.add_argument("--video-episodes", type=int, default=1, help="Number of eval episodes to record")
+    parser.add_argument("--video-width", type=int, default=256)
+    parser.add_argument("--video-height", type=int, default=256)
     return parser.parse_args()
 
 
@@ -153,6 +222,10 @@ def main() -> None:
                     cost_limit=args.cost_limit,
                     device=args.device,
                     output_dir=output_dir,
+                    record_video=not args.skip_video,
+                    video_episodes=args.video_episodes,
+                    video_width=args.video_width,
+                    video_height=args.video_height,
                 )
             )
         except Exception as e:
