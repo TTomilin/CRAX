@@ -182,8 +182,10 @@ def format_table(rows: List[List], headers: List[str]) -> str:
     str_rows = [[f"{c:.3f}" if isinstance(c, float) else str(c) for c in row] for row in rows]
     widths = [max(len(h), *(len(r[i]) for r in str_rows)) if str_rows else len(h)
               for i, h in enumerate(headers)]
+
     def fmt_row(cells: List[str]) -> str:
         return "  ".join(c.ljust(w) for c, w in zip(cells, widths))
+
     lines = [fmt_row(headers), fmt_row(["-" * w for w in widths])]
     lines += [fmt_row(r) for r in str_rows]
     return "\n".join(lines)
@@ -202,7 +204,7 @@ def build_trend(
             rel_cis_all = []
             for metric in metrics:
                 _, _, rel_cis, _ = per_algo_ci(final_values_by_metric[metric], env, algos, seeds_large[:k],
-                                                method=method)
+                                               method=method)
                 rel_cis_all.extend(rel_cis)
             vals.append(float(np.mean(rel_cis_all)) if rel_cis_all else float("nan"))
         trend[env] = vals
@@ -273,7 +275,7 @@ def main(args: argparse.Namespace) -> None:
             print("\n".join(missing_lines))
 
     rows = build_table(final_values_by_metric, args.envs, args.algos, args.metrics,
-                        seeds_small, seeds_large, method=args.ci_method)
+                       seeds_small, seeds_large, method=args.ci_method)
     headers = [
         "Env",
         "avail_small(min-max/req)", "CI95%(n_small)",
@@ -292,7 +294,7 @@ def main(args: argparse.Namespace) -> None:
               f"{len(seeds_large)} seeds: {avg_reduction:.1f}%")
 
     trend = build_trend(final_values_by_metric, args.envs, args.algos, args.metrics, seeds_large,
-                         method=args.ci_method)
+                        method=args.ci_method)
     out_path = Path(args.output_fig_dir) / f"{args.out_name}.pdf"
     plot_results(rows, trend, args.envs, seeds_small, seeds_large, out_path)
     print(f"Saved figure: {out_path}")
@@ -302,20 +304,20 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Compare CI/variance of final performance across seed-set sizes.")
     p.add_argument("--input", type=str, default="data")
     p.add_argument("--envs", type=str, nargs="+",
-                    default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                             "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                             "safe_velocity_humanoid"])
+                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
+                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
+                            "safe_velocity_humanoid"])
     p.add_argument("--algos", type=str, nargs="+",
-                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
+                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--level", type=int, default=1)
     p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
     p.add_argument("--seeds_small", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--seeds_large", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     p.add_argument("--last_frac", type=float, default=0.1,
-                    help="Fraction of the tail of each run averaged to obtain the per-seed final performance.")
+                   help="Fraction of the tail of each run averaged to obtain the per-seed final performance.")
     p.add_argument("--ci_method", type=str, default="t", choices=["normal", "t"],
-                    help="'normal' (default): 1.96 * population std / sqrt(n). 't': Student's t(n-1) * sample "
-                         "std / sqrt(n), more accurate at small n.")
+                   help="'normal' (default): 1.96 * population std / sqrt(n). 't': Student's t(n-1) * sample "
+                        "std / sqrt(n), more accurate at small n.")
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="seed_variance")
     return p

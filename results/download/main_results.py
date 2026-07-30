@@ -99,10 +99,13 @@ def common_dl_args() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+',
-                        default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o", "focops", "sac_lag", "sac_pid"],
+                        default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o", "focops", "sac_lag",
+                                 "sac_pid"],
                         help="Algorithms to download/plot")
     parser.add_argument("--envs", type=str, nargs='+',
-                        default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"],
+                        default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
+                                 "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
+                                 "safe_velocity_humanoid"],
                         help="Environments to download/plot")
     parser.add_argument("--levels", type=int, nargs='+', default=[1, 2, 3], help="Levels to download/plot")
     parser.add_argument("--output", type=str, default='data', help="Base output directory to store the data")

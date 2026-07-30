@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-import jax
 from jax import random as jrandom
 
 from brax import envs
@@ -110,12 +109,8 @@ def main(output_dir: str = "thesis/assets/env_screenshots", width: int = 640, he
     print(f"  Succeeded ({len(succeeded)}): {succeeded}", flush=True)
     if failed:
         print(f"  Failed ({len(failed)}): {[n for n, _ in failed]}", flush=True)
-        # Optionally exit non-zero if any failed
-        # sys.exit(1)
 
 
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "thesis/assets/env_screenshots"
     main(out_dir)
-
-

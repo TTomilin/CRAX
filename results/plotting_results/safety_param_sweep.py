@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from results.common import HPARAM_SWEEP_SPEC, TRANSLATIONS, set_mpl_style
+from results.common import SAFETY_SWEEP_SPEC, TRANSLATIONS, set_mpl_style
 from results.plotting_results.seed_variance import ci95, format_table, load_final_value
 
 
@@ -107,7 +107,7 @@ def plot_sweep(
         ax.errorbar(x, reward_means, yerr=reward_cis, marker="o", color="tab:blue",
                     label="Reward", capsize=3)
         ax_cost.errorbar(x, cost_means, yerr=cost_cis, marker="s", color="tab:red",
-                          linestyle="--", label="Cost", capsize=3)
+                         linestyle="--", label="Cost", capsize=3)
 
         ax.set_xticks(x)
         ax.set_xticklabels(values)
@@ -128,9 +128,9 @@ def plot_sweep(
 def main(args: argparse.Namespace) -> None:
     base = Path(__file__).parent.parent.resolve() / args.input
 
-    algos = args.algos or list(HPARAM_SWEEP_SPEC.keys())
+    algos = args.algos or list(SAFETY_SWEEP_SPEC.keys())
     for algo in algos:
-        hparams = HPARAM_SWEEP_SPEC.get(algo)
+        hparams = SAFETY_SWEEP_SPEC.get(algo)
         if hparams is None:
             print(f"Skipping '{algo}': no hyperparameter sweep spec defined for it.")
             continue
@@ -145,9 +145,9 @@ def main(args: argparse.Namespace) -> None:
                 continue
 
             reward_data = load_sweep_data(base, args.envs, args.level, algo, hparam, values,
-                                           args.seeds, "reward", args.last_frac)
+                                          args.seeds, "reward", args.last_frac)
             cost_data = load_sweep_data(base, args.envs, args.level, algo, hparam, values,
-                                         args.seeds, "cost", args.last_frac)
+                                        args.seeds, "cost", args.last_frac)
 
             rows, headers = build_table(reward_data, cost_data, args.envs, values, method=args.ci_method)
             print(f"\n=== {algo} / sweep over {hparam} (values: {values}) ===")
@@ -166,10 +166,10 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--envs", type=str, nargs="+",
                    default=["safe_goal_point", "safe_reacher", "safe_push_point"])
     p.add_argument("--algos", type=str, nargs="+", default=None,
-                   choices=list(HPARAM_SWEEP_SPEC.keys()),
+                   choices=list(SAFETY_SWEEP_SPEC.keys()),
                    help="Which methods to analyze (default: all methods in HPARAM_SWEEP_SPEC)")
     p.add_argument("--level", type=int, default=1)
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
+    p.add_argument("--seeds", type=int, nargs="+", default=[*range(1, 6)])
     p.add_argument("--last_frac", type=float, default=0.1,
                    help="Fraction of the tail of each run averaged for final performance.")
     p.add_argument("--ci_method", type=str, default="normal", choices=["normal", "t"])

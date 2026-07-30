@@ -5,8 +5,6 @@ Runs PPOLag training with varying numbers of parallel environments and records
 the Steps-Per-Second reported by the training loop (Time/FPS in the omnisafe
 logger), i.e. throughput including gradient updates.
 
-This mirrors benchmark_crax_training.py so results can be compared directly.
-
 Usage:
     # Default: all envs that have a CRAX counterpart, num_envs=[1,2,4,8,16,32]
     conda run -n omnisafe python scripts/benchmark_omnisafe_training.py
@@ -19,12 +17,6 @@ Usage:
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Fix broken TF namespace package that causes tensorboard import to fail.
-# The user's ~/.local site-packages has an empty tensorflow namespace package
-# that satisfies `import tensorflow` but has no attributes. We patch it before
-# any torch/omnisafe imports trigger the lazy tensorboard-compat loader.
-# ---------------------------------------------------------------------------
 import os
 import sys
 import types
@@ -84,9 +76,9 @@ DEFAULT_ENVS: List[str] = [
 # MIN_EPOCHS). Wall time will decrease as num_envs grows up to the break-even
 # point (TOTAL_STEPS / (MIN_EPOCHS * STEPS_PER_ENV)), then stays flat because
 # the MIN_EPOCHS floor keeps a minimum amount of training data.
-STEPS_PER_ENV = 1_000   # steps per environment per epoch (≥ episode length)
-TOTAL_STEPS   = 60_000  # fixed budget; wall time decreases with more envs up to break-even
-MIN_EPOCHS    = 5       # need at least 1 warmup + 4 stable SPS samples
+STEPS_PER_ENV = 1_000  # steps per environment per epoch (≥ episode length)
+TOTAL_STEPS = 60_000  # fixed budget; wall time decreases with more envs up to break-even
+MIN_EPOCHS = 5  # need at least 1 warmup + 4 stable SPS samples
 
 DEFAULT_NUM_ENVS: List[int] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 

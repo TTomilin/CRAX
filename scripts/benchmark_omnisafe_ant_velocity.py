@@ -190,14 +190,16 @@ def run_seed(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="OmniSafe PPOLag training-performance benchmark on SafetyAntVelocity-v1")
+    parser = argparse.ArgumentParser(
+        description="OmniSafe PPOLag training-performance benchmark on SafetyAntVelocity-v1")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument("--num-timesteps", type=int, default=1_000_000)
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel envs")
     parser.add_argument("--steps-per-env", type=int, default=1000, help="Per-env steps per epoch")
     parser.add_argument("--cost-limit", type=float, default=25.0, help="Lagrangian cost budget")
     parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--output", type=str, default=None, help="Output dir (default: omnisafe_ant_velocity_benchmark_<timestamp>)")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Output dir (default: omnisafe_ant_velocity_benchmark_<timestamp>)")
     parser.add_argument("--skip-video", action="store_true", help="Skip end-of-training video recording/upload")
     parser.add_argument("--video-episodes", type=int, default=1, help="Number of eval episodes to record")
     parser.add_argument("--video-width", type=int, default=256)
@@ -207,7 +209,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    output_dir = Path(args.output) if args.output else Path(f"omnisafe_ant_velocity_benchmark_{time.strftime('%Y%m%d_%H%M%S')}")
+    output_dir = Path(args.output) if args.output else Path(
+        f"omnisafe_ant_velocity_benchmark_{time.strftime('%Y%m%d_%H%M%S')}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     seed_paths: List[Path] = []

@@ -59,7 +59,7 @@ TRANSLATIONS = {
 
 # Safe-RL-method-specific hyperparameters to sweep, and which algo they belong to.
 # Each entry sweeps ONE hyperparameter at a time (others left at their CLI default).
-HPARAM_SWEEP_SPEC: Dict[str, List[str]] = {
+SAFETY_SWEEP_SPEC: Dict[str, List[str]] = {
     "ppo_lag": ["lagrangian_coef_rate"],
     "ppo_pid": ["pid_kp", "pid_ki"],
     "ppo_saute": ["gamma_budget", "violation_penalty"],
@@ -104,6 +104,7 @@ BASELINES_COLORS: Dict[str, str] = {
 # new one for the *same* environment. Canonicalize to the old short name (what's already
 # on disk under results/data/{curriculum,transfer}/) so both land in one folder and can be
 # combined for CI/seed-count analysis.
+# TODO remove the legacy
 CANONICAL_ENV_ALIASES: Dict[str, str] = {
     "safe_goal_point": "safe_point_goal",
     "safe_pathway_walker2d": "safe_walker",
@@ -145,6 +146,7 @@ REWARD_METRIC_MAP = {
     'safe_height_humanoid': 'episodic/forward_reward',
     # Short aliases used by the curriculum/transfer experiment runs (train_curriculum.py /
     # train_transfer.py --env_name), logged under the same underlying walker2d/humanoid envs.
+    # TODO remove the legacy
     'safe_walker': 'episodic/reward_forward',
     'safe_height': 'episodic/forward_reward',
 }

@@ -1,9 +1,9 @@
-"""Download WandB runs for the Safe-RL-method hyperparameter sweep.
+"""Download WandB runs for the core PPO/MJX hyperparameter sweep.
 
-Each method in HPARAM_SWEEP_SPEC varies one of its own safety-mechanism
-hyperparameters (others left at CLI default). Reuses the same filtering/storage
-logic as download.py, keying the output folder by the swept hyperparameter name
-so it slots into the existing data/<env>/level_<level>/<algo>/... tree:
+Each algo varies one core PPO optimization hyperparameter (learning_rate,
+entropy_cost, discounting, gae_lambda, clipping_epsilon) at a time, others
+left at train_env.py's default. Key the output folder by the swept hyperparameter
+name so it slots into the existing data/<env>/level_<level>/<algo>/... tree:
 
     data/<env>/level_<level>/<algo>/<hparam>_<value>/seed_<n>.parquet
 """
@@ -12,18 +12,18 @@ import copy
 
 import wandb
 
-from results.common import HPARAM_SWEEP_SPEC
-from results.download import build_filters, store_data
+from results.common import RL_SWEEP_SPEC
+from results.download.main_results import build_filters, store_data
 
 
 def main(args: argparse.Namespace) -> None:
     api = wandb.Api()
 
-    algos = args.algos or list(HPARAM_SWEEP_SPEC.keys())
+    algos = args.algos or list(RL_SWEEP_SPEC.keys())
     for algo in algos:
-        hparams = HPARAM_SWEEP_SPEC.get(algo)
+        hparams = RL_SWEEP_SPEC.get(algo)
         if hparams is None:
-            print(f"Skipping '{algo}': no hyperparameter sweep spec defined for it.")
+            print(f"Skipping '{algo}': no Stage 1 sweep spec defined for it.")
             continue
 
         for hparam in hparams:
@@ -43,12 +43,12 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download hyperparameter sweep results from WandB.")
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3],
+    parser = argparse.ArgumentParser(description="Download Stage 1 hyperparameter sweep results from WandB.")
+    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                         help="Seed(s) of the run(s) to download")
     parser.add_argument("--algos", type=str, nargs='+', default=None,
-                        choices=list(HPARAM_SWEEP_SPEC.keys()),
-                        help="Which methods to download (default: all methods in HPARAM_SWEEP_SPEC)")
+                        choices=list(RL_SWEEP_SPEC.keys()),
+                        help="Which methods to download (default: all methods in STAGE1_SWEEP_SPEC)")
     parser.add_argument("--envs", type=str, nargs='+',
                         default=["safe_goal_point", "safe_reacher", "safe_push_point"],
                         help="Environments to download")

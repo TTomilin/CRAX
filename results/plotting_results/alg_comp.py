@@ -171,7 +171,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{args.out_name}_level_{args.level}_{algo_names}.pdf"
-    # plt.savefig(out_path, bbox_inches="tight")
+    plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")
 
@@ -192,7 +192,9 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
     p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"])
+                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
+                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
+                            "safe_velocity_humanoid"])
     p.add_argument("--algos", type=str, nargs="+",
                    default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])

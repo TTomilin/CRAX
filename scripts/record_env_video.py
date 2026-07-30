@@ -280,9 +280,11 @@ def main(args: argparse.Namespace) -> None:
             thrust_idx=0,
             yaw_idx=1,
         )
+
         # Use record_episode_video with make_inference_fn for circular policy
         def make_infer(_params):
             return policy
+
         record_episode_video(
             env,
             make_inference_fn=make_infer,

@@ -1,11 +1,12 @@
 """Plot performance comparison between CRAX and Safety-Gymnasium."""
 
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
 from pathlib import Path
 
-# Configure matplotlib for publication quality
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Configure matplotlib
 plt.rcParams.update({
     'font.size': 13,
     'axes.labelsize': 16,
@@ -22,9 +23,10 @@ RESULTS_DIR = Path(__file__).parent.parent / "data" / "performance"
 
 # Load CRAX data from all sources and combine
 crax_main = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_044133" / "benchmark_results.csv")
-crax_extra = pd.read_csv(RESULTS_DIR / "safebrax_benchmark_results_20260129_032509" / "benchmark_results.csv")
-crax_large = pd.read_csv(RESULTS_DIR / "safebrax_benchmark_results_20260129_082641" / "benchmark_results.csv")
-crax_df = pd.concat([crax_extra, crax_main, crax_large], ignore_index=True).drop_duplicates(subset=['num_envs']).sort_values('num_envs')
+crax_extra = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_032509" / "benchmark_results.csv")
+crax_large = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_082641" / "benchmark_results.csv")
+crax_df = pd.concat([crax_extra, crax_main, crax_large], ignore_index=True).drop_duplicates(
+    subset=['num_envs']).sort_values('num_envs')
 
 # Load Safety-Gymnasium data
 safety_gym_df = pd.read_csv(RESULTS_DIR / "safety_gym_benchmark_results_20260129_054930" / "benchmark_results.csv")
@@ -89,6 +91,7 @@ def plot_comparison():
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / 'throughput_comparison.pdf')
     print(f"Saved to {OUTPUT_DIR / 'throughput_comparison.pdf'}")
+    plt.show()
     plt.close()
 
 

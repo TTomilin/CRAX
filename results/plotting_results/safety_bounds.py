@@ -5,7 +5,6 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import FormatStrFormatter
 
 from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, \
     DEFAULT_REWARD_METRIC, TRANSLATIONS
@@ -64,7 +63,7 @@ def load_runs(
     for metric in metrics:
         key = (env, bound, metric)
         out[key] = []
-        
+
         # Determine the column name based on the environment and metric
         if metric == "reward":
             col_name = REWARD_METRIC_MAP.get(env, DEFAULT_REWARD_METRIC)
@@ -197,13 +196,14 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
             ax.set_xlabel("Steps")
             ax.set_ylabel(label_y)
-            
+
             y_max = ax.get_ylim()[1]
             if y_max >= 1000:
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             else:
-                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
-            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
+                ax.ticklabel_format(axis="y", style="plain",
+                                    useOffset=False)  # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False)  # Ensure no offset is used for formatting
 
             # Per-env x max takes priority, then CLI x_max, then data-driven max
             x_max = ENV_X_MAX.get(env, None)
@@ -302,7 +302,7 @@ def build_args() -> argparse.ArgumentParser:
         "--seeds",
         type=int,
         nargs="+",
-        default=[1, 2, 3, 4, 5],
+        default=[*range(1, 11)],
     )
     p.add_argument(
         "--metrics",

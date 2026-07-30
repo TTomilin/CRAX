@@ -2,9 +2,8 @@
 """
 Training-integrated SPS benchmark for CRAX (SafeBrax + JAX/GPU).
 
-Unlike benchmark_crax.py which measures raw env-stepping throughput, this
-script runs actual PPO-Lag training and captures the SPS reported by the
-training loop itself (i.e., including gradient updates, normalisation, etc.).
+This script runs actual PPO-Lag training and captures the SPS reported by the
+training loop itself (i.e., including gradient updates, normalization, etc.).
 """
 
 import argparse
@@ -40,6 +39,7 @@ from brax.training.agents.ppo_lag import train as ppo_lag
 print(f"JAX backend : {jax.default_backend()}")
 print(f"JAX devices : {jax.devices()}")
 
+
 # ---------------------------------------------------------------------------
 
 def parse_args():
@@ -48,7 +48,9 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        '--envs', nargs='+', default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"],
+        '--envs', nargs='+',
+        default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point",
+                 "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"],
         metavar='ENV',
         help='One or more SafeBrax environment names to benchmark',
     )
@@ -119,7 +121,7 @@ def benchmark_num_envs(num_envs: int, env_name: str, base_kwargs: dict) -> Dict:
         'sps_median': float(np.median(stable_samples)),
         'sps_max': float(np.max(stable_samples)),
         'sps_min': float(np.min(stable_samples)),
-        'sps_first': sps_samples[0],   # includes JIT overhead
+        'sps_first': sps_samples[0],  # includes JIT overhead
         'num_samples': len(sps_samples),
         'wall_time_s': wall_time,
         'cpu_memory_mb': mem_used,
@@ -152,7 +154,8 @@ def plot_results(results: List[Dict], output_dir: Path):
 
         axes[0].plot(x, y_mean, 'o-', label=f'{env_name} mean', color=color, linewidth=2, markersize=8)
         axes[0].plot(x, y_max, 's--', label=f'{env_name} max', color=color, linewidth=1.5, markersize=6, alpha=0.7)
-        axes[0].plot(x, y_first, '^:', label=f'{env_name} first (JIT)', color=color, linewidth=1.5, markersize=6, alpha=0.5)
+        axes[0].plot(x, y_first, '^:', label=f'{env_name} first (JIT)', color=color, linewidth=1.5, markersize=6,
+                     alpha=0.5)
 
         if len(env_results) > 1:
             baseline = env_results[0]['sps_mean']
@@ -266,7 +269,8 @@ def main():
                         writer.writerow(r)
             except Exception as e:
                 print(f"  FAILED for env={env_name} num_envs={num_envs}: {e}")
-                import traceback; traceback.print_exc()
+                import traceback;
+                traceback.print_exc()
 
     if results:
         plot_results(results, output_dir)
@@ -276,7 +280,8 @@ def main():
     print('Summary')
     print('=' * 60)
     for r in results:
-        print(f"  {r['env_name']:<25}  num_envs={r['num_envs']:>5}  SPS={r['sps_mean']:>12,.0f}  wall={r['wall_time_s']:.0f}s")
+        print(
+            f"  {r['env_name']:<25}  num_envs={r['num_envs']:>5}  SPS={r['sps_mean']:>12,.0f}  wall={r['wall_time_s']:.0f}s")
 
     if results:
         best = max(results, key=lambda r: r['sps_mean'])

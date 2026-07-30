@@ -71,10 +71,12 @@ def load_policy(checkpoint_path: str, deterministic: bool = True):
 
 def make_random_policy(action_size: int):
     """Creates a policy that returns random actions."""
+
     def random_policy(obs, key):
         del obs
         action = jax.random.uniform(key, shape=(action_size,), minval=-1.0, maxval=1.0)
         return action, {}
+
     return random_policy
 
 
@@ -84,10 +86,12 @@ def make_circle_policy():
     Applies max forward thrust and constant rotation so the agent
     traces a consistent circular arc around the arena.
     """
+
     def circle_policy(obs, key):
         del obs, key
         # action[0]: forward thrust (max), action[1]: yaw rate (small for large-radius arc)
         return jnp.array([1.0, 0.15]), {}
+
     return circle_policy
 
 

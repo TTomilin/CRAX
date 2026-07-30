@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import FormatStrFormatter
 
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
@@ -243,8 +242,9 @@ def plot_training_curves(
             if y_max >= 1000:
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             else:
-                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
-            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
+                ax.ticklabel_format(axis="y", style="plain",
+                                    useOffset=False)  # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False)  # Ensure no offset is used for formatting
             ax.set_xlim(0, args.total_steps)
 
             for algo in args.algos:
@@ -457,13 +457,14 @@ def plot_final_comparison(
             ax.set_xticklabels([TRANSLATIONS.get(m, m.capitalize()) for m in methods], rotation=30, ha="right")
             ax.set_ylabel(ylab)
             ax.set_ylim(bottom=0)
-            
+
             y_max = ax.get_ylim()[1]
             if y_max >= 1000:
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             else:
-                ax.ticklabel_format(axis="y", style="plain", useOffset=False) # Use plain style for non-scientific, no offset
-            ax.yaxis.get_major_formatter().set_useOffset(False) # Ensure no offset is used for formatting
+                ax.ticklabel_format(axis="y", style="plain",
+                                    useOffset=False)  # Use plain style for non-scientific, no offset
+            ax.yaxis.get_major_formatter().set_useOffset(False)  # Ensure no offset is used for formatting
 
             # Threshold only on cost axis
             if metric == "cost" and not args.no_threshold:

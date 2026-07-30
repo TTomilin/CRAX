@@ -38,8 +38,10 @@ from results.common import (
 )
 from results.plotting_results.seed_variance import ci95
 
-EfficiencyBySeed = Dict[Tuple[str, str], Dict[int, Tuple[float, float]]]  # (env, algo) -> {seed: (reward_eff, violation_eff)}
-RawEfficiencyBySeed = Dict[Tuple[str, str], Dict[int, Tuple[float, float, float]]]  # ... -> {seed: (reward_auc/span, violation_eff, final_reward)}
+EfficiencyBySeed = Dict[
+    Tuple[str, str], Dict[int, Tuple[float, float]]]  # (env, algo) -> {seed: (reward_eff, violation_eff)}
+RawEfficiencyBySeed = Dict[Tuple[str, str], Dict[
+    int, Tuple[float, float, float]]]  # ... -> {seed: (reward_auc/span, violation_eff, final_reward)}
 
 
 def per_seed_efficiency(
@@ -149,11 +151,14 @@ def build_table(
 def format_table(rows: List[List], headers: List[str]) -> str:
     def fmt(c) -> str:
         return f"{c:.4g}" if isinstance(c, float) else str(c)
+
     str_rows = [[fmt(c) for c in row] for row in rows]
     widths = [max(len(h), *(len(r[i]) for r in str_rows)) if str_rows else len(h)
               for i, h in enumerate(headers)]
+
     def fmt_row(cells: List[str]) -> str:
         return "  ".join(c.ljust(w) for c, w in zip(cells, widths))
+
     lines = [fmt_row(headers), fmt_row(["-" * w for w in widths])]
     lines += [fmt_row(r) for r in str_rows]
     return "\n".join(lines)
@@ -192,8 +197,10 @@ def plot_efficiency(
                 v_mean, _, v_ci = ci95(v_vals, method=ci_method)
             else:
                 r_mean = r_ci = v_mean = v_ci = float("nan")
-            reward_means.append(r_mean); reward_cis.append(r_ci)
-            viol_means.append(v_mean); viol_cis.append(v_ci)
+            reward_means.append(r_mean);
+            reward_cis.append(r_ci)
+            viol_means.append(v_mean);
+            viol_cis.append(v_ci)
 
         ax_r = get_ax(env_i, 0)
         ax_r.bar(x, reward_means, yerr=reward_cis, color=colors, capsize=3)

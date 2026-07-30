@@ -177,7 +177,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         & (stats["metric"] == metric)
                         & (stats["algo"] == algo)
                         & (stats["level"] == level)
-                    ]
+                        ]
                     if len(sub) > 0:
                         values.append(float(sub["mean"].iloc[0]))
             env_metric_values[(env, metric)] = values
@@ -223,7 +223,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                         & (stats["metric"] == metric)
                         & (stats["algo"] == algo)
                         & (stats["level"] == level)
-                    ]
+                        ]
                     if len(sub) == 0:
                         y, e = np.nan, 0.0
                     else:
@@ -271,7 +271,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
                             & (stats["metric"] == metric)
                             & (stats["algo"] == algo)
                             & (stats["level"] == level)
-                        ]
+                            ]
                         if len(sub) == 0:
                             ys.append(np.nan)
                             es.append(0.0)
@@ -389,7 +389,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{args.out_name}_final.pdf"
-    # plt.savefig(out_path, bbox_inches="tight")
+    plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")
 
@@ -945,8 +945,12 @@ def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
     p.add_argument("--input", type=str, default="data",
                    help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+", default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider", "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d", "safe_velocity_humanoid"])
-    p.add_argument("--algos", type=str, nargs="+", default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
+    p.add_argument("--envs", type=str, nargs="+",
+                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
+                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
+                            "safe_velocity_humanoid"])
+    p.add_argument("--algos", type=str, nargs="+",
+                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--single_level", type=int, default=None,

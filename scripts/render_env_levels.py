@@ -5,7 +5,6 @@ Render initial frames for a given environment across difficulty levels and save 
 Usage examples:
   python scripts/render_env_levels.py --env safe_goal_point --levels 1 2 3 --outdir assets/envs
   python scripts/render_env_levels.py --env safe_walker --levels 1 2 3
-  python scripts/render_env_levels.py  # uses defaults (safe_goal_point, levels 1-3)
 
 Notes:
 - Uses the centralized difficulty system in brax.envs
