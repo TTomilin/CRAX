@@ -60,6 +60,7 @@ def add_velocity_cost_metrics(
         velocity_violation=broadcast_to_reward(violation, reward),
         velocity_cost=broadcast_to_reward(cost, reward),
         cost=broadcast_to_reward(cost, reward),
+        reward_unscaled=broadcast_to_reward(reward, reward),
     )
     return metrics
 

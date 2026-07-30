@@ -50,6 +50,11 @@ TRANSLATIONS = {
     "initial_kappa": "P3O Initial Kappa",
     "kappa_increase_factor": "P3O Kappa Increase Factor",
     "crpo_eta": "CRPO Eta",
+    "learning_rate": "Learning Rate",
+    "entropy_cost": "Entropy Coefficient",
+    "discounting": "Discount Factor",
+    "gae_lambda": "GAE Lambda",
+    "clipping_epsilon": "Clipping Epsilon",
 }
 
 # Safe-RL-method-specific hyperparameters to sweep, and which algo they belong to.
@@ -61,6 +66,19 @@ HPARAM_SWEEP_SPEC: Dict[str, List[str]] = {
     "focops": ["focops_lam", "nu_lr"],
     "p3o": ["initial_kappa", "kappa_increase_factor"],
     "crpo": ["crpo_eta"],
+}
+
+# Core PPO/MJX optimization hyperparameters, swept across baselines
+# FOCOPS has no clipping_epsilon entry: it uses a KL-penalty objective,
+# not PPO's clip-ratio loss, so the parameter is never wired through.
+RL_CORE_HPARAMS: List[str] = [
+    "learning_rate", "entropy_cost", "discounting", "gae_lambda", "clipping_epsilon",
+]
+RL_SWEEP_SPEC: Dict[str, List[str]] = {
+    "ppo_lag": list(RL_CORE_HPARAMS),
+    "ppo_pid": list(RL_CORE_HPARAMS),
+    "focops": [h for h in RL_CORE_HPARAMS if h != "clipping_epsilon"],
+    "p3o": list(RL_CORE_HPARAMS),
 }
 
 # Define a consistent color palette for baselines across all plots
