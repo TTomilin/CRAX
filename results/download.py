@@ -35,7 +35,7 @@ def build_filters(args: argparse.Namespace) -> dict:
     # only runs created within the last `max_age_days` days
     max_age_days = getattr(args, "max_age_days", None)
     if max_age_days is not None:
-        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         f["createdAt"] = {"$gte": cutoff}
 
     # tags live on the run, not in config
