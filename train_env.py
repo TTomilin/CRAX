@@ -73,7 +73,7 @@ def main():
         )
 
         # Determine the episode length
-        episode_length = env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
+        episode_length = config.episode_length or env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
         print(f"Training environment '{env_name}' instantiated with difficulty {difficulty}.")
         print(f"Evaluation environment '{env_name}' instantiated with difficulty {difficulty}.")
