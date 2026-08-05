@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from brax.training import transfer
+from crax.training import transfer
 from configs.training_config import build_base_parser
 from run_utils import (
     setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn,

@@ -18,9 +18,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from brax import envs
-from brax.envs.wrappers.pixel_observation import PixelObservationWrapper
-from brax.envs.wrappers import training
+from crax import envs
+from crax.envs.wrappers.pixel_observation import PixelObservationWrapper
+from crax.envs.wrappers import training
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ class TestTrainingWrapperStack:
 class TestVisionNetworks:
     def test_make_ppo_networks_vision_with_cost_value(self):
         """Verify the vision network factory creates all 3 networks."""
-        from brax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+        from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
         obs_size = {
             'pixels/vision': (64, 64, 3),
@@ -402,7 +402,7 @@ class TestVisionNetworks:
 
     def test_vision_network_forward_pass(self):
         """Verify the networks can do a forward pass with pixel obs."""
-        from brax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+        from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
         obs_size = {
             'pixels/vision': (64, 64, 3),

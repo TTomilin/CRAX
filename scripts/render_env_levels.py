@@ -16,9 +16,9 @@ from pathlib import Path
 
 from jax import random as jrandom
 
-from brax import envs
-from brax.envs.difficulty import get_supported_levels, supports_difficulty
-from brax.io import image as brax_image
+from crax import envs
+from crax.envs.difficulty import get_supported_levels, supports_difficulty
+from crax.io import image as brax_image
 
 
 def build_args() -> argparse.ArgumentParser:

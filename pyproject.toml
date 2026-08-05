@@ -11,7 +11,8 @@ authors = [
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 keywords = [
     "JAX",
     "reinforcement learning",
@@ -31,8 +32,8 @@ dependencies = [
     "jaxopt",
     "jinja2",
     "ml_collections",
-    "mujoco",
-    "mujoco-mjx==3.4.0",
+    "mujoco==3.3.2",
+    "mujoco-mjx==3.3.2",
     "numpy",
     "optax",
     "orbax-checkpoint",
@@ -52,6 +53,9 @@ develop = [
     "pytest",
     "gym",
     "dm_env",
+]
+cuda = [
+    "jax[cuda12]>=0.4.6",
 ]
 
 [tool.isort]

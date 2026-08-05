@@ -1,0 +1,10 @@
+CRAX
+Copyright 2026 Tristan Tomilin
+
+This product includes software developed by The Brax Authors
+(https://github.com/google/brax), licensed under the Apache License,
+Version 2.0. CRAX is a derivative work built on top of Brax, extended
+with GPU-accelerated vision pipelines and safe/constrained reinforcement
+learning components.
+
+Copyright 2024 The Brax Authors.

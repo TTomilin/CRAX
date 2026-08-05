@@ -57,9 +57,9 @@ def _select_backend() -> str:
 
 _select_backend()
 
-from brax import envs
-from brax.io import image as brax_image
-from brax.training.agents.ppo import checkpoint as ppo_checkpoint
+from crax import envs
+from crax.io import image as brax_image
+from crax.training.agents.ppo import checkpoint as ppo_checkpoint
 
 
 def load_policy(checkpoint_path: str, deterministic: bool = True):

@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import wandb
-from brax import envs
+from crax import envs
 from configs.training_config import build_base_parser
 from run_utils import (
     collect_rollout_metrics, record_episode_video, setup_gpu_environment,

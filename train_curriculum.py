@@ -13,7 +13,7 @@ from pathlib import Path
 
 import wandb
 
-from brax.training import curriculum
+from crax.training import curriculum
 from configs.training_config import build_base_parser
 from run_utils import (
     setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn,

@@ -81,15 +81,19 @@ Then install the package:
 pip install -e .
 ```
 
-For GPU support, ensure you have [CUDA and JAX with GPU support](https://github.com/google/jax#installation) installed.
+For GPU support (CUDA 12), install the `cuda` extra instead, which pulls in `jax[cuda12]`:
+
+```bash
+pip install -e ".[cuda]"
+```
 
 ## Quick Start
 
 ### Training an agent
 
 ```python
-from brax import envs
-from brax.training.agents.ppo_lag import train as ppo_lag_train
+from crax import envs
+from crax.training.agents.ppo_lag import train as ppo_lag_train
 
 # Create environment
 env = envs.get_environment('safe_goal_point', level=1)

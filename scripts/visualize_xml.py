@@ -8,16 +8,16 @@ This script provides multiple ways to visualize MuJoCo XML models:
 
 Usage:
     # Render a static image
-    python scripts/visualize_xml.py brax/test_data/double_pendulum.xml
+    python scripts/visualize_xml.py crax/test_data/double_pendulum.xml
 
     # Render multiple XMLs
-    python scripts/visualize_xml.py brax/test_data/*.xml --output-dir renders/
+    python scripts/visualize_xml.py crax/test_data/*.xml --output-dir renders/
 
     # Create an interactive HTML viewer
-    python scripts/visualize_xml.py brax/test_data/capsule.xml --mode html
+    python scripts/visualize_xml.py crax/test_data/capsule.xml --mode html
 
     # Simulate and create a GIF
-    python scripts/visualize_xml.py brax/test_data/triple_pendulum.xml --mode gif --steps 200
+    python scripts/visualize_xml.py crax/test_data/triple_pendulum.xml --mode gif --steps 200
 
     # List all available XMLs in test_data
     python scripts/visualize_xml.py --list
@@ -36,9 +36,9 @@ def find_xml_files(search_dirs=None):
     if search_dirs is None:
         base = Path(__file__).parent.parent
         search_dirs = [
-            base / "brax" / "test_data",
-            base / "brax" / "envs" / "assets",
-            base / "brax" / "envs" / "assets" / "safe",
+            base / "crax" / "test_data",
+            base / "crax" / "envs" / "assets",
+            base / "crax" / "envs" / "assets" / "safe",
         ]
 
     xml_files = []
@@ -142,7 +142,7 @@ def create_html_viewer(xml_path: str, output_path: str = None, steps: int = 100)
     import jax
     import jax.numpy as jp
     import mujoco
-    from brax.io import mjcf, html
+    from crax.io import mjcf, html
 
     model = mujoco.MjModel.from_xml_path(xml_path)
     sys = mjcf.load_model(model)
@@ -152,7 +152,7 @@ def create_html_viewer(xml_path: str, output_path: str = None, steps: int = 100)
     mujoco.mj_resetData(model, data)
 
     # Import brax pipeline
-    from brax.mjx import pipeline
+    from crax.mjx import pipeline
 
     # Initialize pipeline state
     state = pipeline.init(sys, sys.init_q, jp.zeros(sys.qd_size()))

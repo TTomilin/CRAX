@@ -114,7 +114,7 @@ Tips:
 ## Programmatic Usage
 
 ```python
-from brax import envs
+from crax import envs
 
 # Create a vision environment
 env = envs.get_environment(
@@ -154,7 +154,7 @@ network_factory = make_vision_network_factory(
 )
 
 # Pass to training
-from brax.training.agents.ppo_lag import train as ppo_lag
+from crax.training.agents.ppo_lag import train as ppo_lag
 ppo_lag.train(
     environment=env,
     network_factory=network_factory,

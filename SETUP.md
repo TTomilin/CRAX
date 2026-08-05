@@ -30,10 +30,10 @@ pip install -e .
 ### 4. Verify Installation
 
 ```bash
-python -c "from brax import envs; print('CRAX imports successfully!')"
-python -c "from brax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
-python -c "from brax.training.agents.focops import train; print('FOCOPS available!')"
-python -c "from brax.training.agents.p3o import train; print('P3O available!')"
+python -c "from crax import envs; print('CRAX imports successfully!')"
+python -c "from crax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
+python -c "from crax.training.agents.focops import train; print('FOCOPS available!')"
+python -c "from crax.training.agents.p3o import train; print('P3O available!')"
 ```
 
 ## GPU Setup
@@ -147,7 +147,7 @@ export MUJOCO_GL=egl  # or osmesa
 
 ```
 CRAX/
-├── brax/
+├── crax/
 │   ├── envs/                    # Environment definitions
 │   │   ├── safe_point_goal.py
 │   │   ├── safe_ant.py

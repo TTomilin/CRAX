@@ -23,7 +23,7 @@ ENV_DEFAULTS = {
         "extra_metrics": ["feet_on_ground", "x_velocity"],
         "cameras": [0],
         "env_class": "SafeAnt",
-        "env_module": "brax.envs.safe_ant",
+        "env_module": "crax.envs.safe_ant",
     },
     "safe_reacher": {
         "steps": 100,
@@ -33,7 +33,7 @@ ENV_DEFAULTS = {
         "extra_metrics": ["dist"],
         "cameras": [0],
         "env_class": "SafeReacher",
-        "env_module": "brax.envs.safe_reacher",
+        "env_module": "crax.envs.safe_reacher",
     },
     "safe_walker": {
         "steps": 1000,
@@ -124,7 +124,7 @@ ENV_DEFAULTS = {
 
 def load_policy_from_checkpoint(model_path: str):
     """Load a policy from a checkpoint path."""
-    from brax.training.agents.ppo import checkpoint as ppo_checkpoint
+    from crax.training.agents.ppo import checkpoint as ppo_checkpoint
 
     candidates = [model_path]
     if not os.path.isabs(model_path):
@@ -145,7 +145,7 @@ def load_policy_from_checkpoint(model_path: str):
 
 def create_environment(env_name: str, level: int = None, agent: str = None, **extra_kwargs):
     """Create an environment with optional level and agent parameters."""
-    from brax import envs
+    from crax import envs
 
     defaults = ENV_DEFAULTS.get(env_name, {})
 

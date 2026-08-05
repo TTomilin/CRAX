@@ -60,7 +60,7 @@ except ImportError:
 # JAX/CRAX (import after setting environment)
 import jax
 import jax.numpy as jnp
-from brax import envs
+from crax import envs
 
 # Verify JAX backend
 print(f"✓ JAX backend: {jax.default_backend()}", flush=True)

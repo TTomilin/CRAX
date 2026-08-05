@@ -21,7 +21,7 @@ import jax.random as jrandom
 import mujoco
 import pytest
 
-from brax.envs.safe_push import SafePush
+from crax.envs.safe_push import SafePush
 
 
 # -----------------------------------------------------------------------------
@@ -79,10 +79,10 @@ def initial_state(jit_reset):
 def _get_xml_path():
     """Get the absolute path to the point_push.xml file."""
     import pathlib
-    # Navigate from tests/ to brax/envs/assets/safe/
+    # Navigate from tests/ to crax/envs/assets/safe/
     tests_dir = pathlib.Path(__file__).parent
     project_root = tests_dir.parent
-    return str(project_root / "brax" / "envs" / "assets" / "safe" / "point_push.xml")
+    return str(project_root / "crax" / "envs" / "assets" / "safe" / "point_push.xml")
 
 
 class TestXMLLoading:

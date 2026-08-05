@@ -1,0 +1,101 @@
+"""PPO-Saute trainer shim.
+
+Pre-wraps the environment with SauteWrapper and delegates to standard PPO.
+"""
+from typing import Any, Callable, Optional, Tuple
+
+from crax import envs
+from crax.training.agents.ppo import train as ppo_train
+from crax.envs.wrappers.saute import SauteWrapper
+
+TrainReturn = Tuple[ppo_train.InferenceParams, ppo_train.Metrics]
+
+
+def _apply_saute(env: envs.Env, **kwargs) -> envs.Env:
+  return SauteWrapper(env, **kwargs)
+
+
+def train(
+    environment: envs.Env,
+    num_timesteps: int,
+    episode_length: int,
+    # Saute parameters:
+    safety_bound: float = 25.0,
+    gamma_budget: Optional[float] = None,  # defaults to PPO discounting if None
+    violation_penalty: float = -1.0,  # Negative penalty when safety budget depleted
+    normalize_budget_obs: bool = True,
+    # Standard PPO args:
+    wrap_env: bool = True,
+    num_envs: int = 1,
+    action_repeat: int = 1,
+    learning_rate: float = 1e-4,
+    entropy_cost: float = 1e-4,
+    discounting: float = 0.97,
+    unroll_length: int = 10,
+    batch_size: int = 1024,
+    num_minibatches: int = 32,
+    num_updates_per_batch: int = 2,
+    normalize_observations: bool = True,
+    reward_scaling: float = 1.0,
+    clipping_epsilon: float = 0.3,
+    gae_lambda: float = 0.95,
+    seed: int = 0,
+    progress_fn: Callable[[int, ppo_train.Metrics], None] = lambda *args: None,
+    save_checkpoint_path: Optional[str] = None,
+    restore_checkpoint_path: Optional[str] = None,
+    restore_params: Optional[Any] = None,
+    restore_value_fn: bool = True,
+    pretrained_params: Optional[Any] = None,
+    eval_env: Optional[envs.Env] = None,
+    training_metrics_steps: Optional[float] = None,
+    **kwargs,
+) -> TrainReturn:
+  # choose gamma for Saute; default to PPO discounting
+  g_budget = discounting if gamma_budget is None else gamma_budget
+
+  # Pre-wrap envs so vectorization happens after Saute
+  env_for_training = _apply_saute(
+      environment,
+      safety_bound=safety_bound,
+      gamma_budget=g_budget,
+      violation_penalty=violation_penalty,
+      normalize_budget_obs=normalize_budget_obs,
+  ) if wrap_env else environment
+
+  if eval_env is not None and wrap_env:
+    eval_env = _apply_saute(
+        eval_env,
+        safety_bound=safety_bound,
+        gamma_budget=g_budget,
+        violation_penalty=violation_penalty,
+        normalize_budget_obs=normalize_budget_obs,
+    )
+
+  return ppo_train.train(
+      environment=env_for_training,
+      num_timesteps=num_timesteps,
+      wrap_env=wrap_env,
+      num_envs=num_envs,
+      episode_length=episode_length,
+      action_repeat=action_repeat,
+      learning_rate=learning_rate,
+      entropy_cost=entropy_cost,
+      discounting=discounting,
+      unroll_length=unroll_length,
+      batch_size=batch_size,
+      num_minibatches=num_minibatches,
+      num_updates_per_batch=num_updates_per_batch,
+      normalize_observations=normalize_observations,
+      reward_scaling=reward_scaling,
+      clipping_epsilon=clipping_epsilon,
+      gae_lambda=gae_lambda,
+      seed=seed,
+      progress_fn=progress_fn,
+      save_checkpoint_path=save_checkpoint_path,
+      restore_checkpoint_path=restore_checkpoint_path,
+      restore_params=pretrained_params if pretrained_params is not None else restore_params,
+      restore_value_fn=restore_value_fn,
+      eval_env=eval_env,
+      training_metrics_steps=training_metrics_steps,
+      **kwargs,
+  )

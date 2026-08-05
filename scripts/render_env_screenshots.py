@@ -5,8 +5,8 @@ from pathlib import Path
 
 from jax import random as jrandom
 
-from brax import envs
-from brax.io import image as brax_image
+from crax import envs
+from crax.io import image as brax_image
 
 
 def _try_backend(gl_backend: str) -> bool:

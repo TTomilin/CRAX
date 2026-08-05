@@ -13,19 +13,19 @@ from jax import numpy as jnp
 from matplotlib import pyplot as plt
 
 import wandb
-from brax import envs
-from brax.io import json as brax_json
-from brax.training.agents.crpo import train as crpo
-from brax.training.agents.focops import train as focops
-from brax.training.agents.p3o import train as p3o
-from brax.training.agents.ppo import train_ppo_cost
-from brax.training.agents.ppo.train import train as ppo_train
-from brax.training.agents.ppo_lag import train as ppo_lag
-from brax.training.agents.ppo_pid import train as ppo_pid
-from brax.training.agents.ppo_saute import train as ppo_saute
-from brax.training.agents.sac.train import train as sac_train
-from brax.training.agents.sac_lag import train as sac_lag
-from brax.training.agents.sac_pid import train as sac_pid
+from crax import envs
+from crax.io import json as brax_json
+from crax.training.agents.crpo import train as crpo
+from crax.training.agents.focops import train as focops
+from crax.training.agents.p3o import train as p3o
+from crax.training.agents.ppo import train_ppo_cost
+from crax.training.agents.ppo.train import train as ppo_train
+from crax.training.agents.ppo_lag import train as ppo_lag
+from crax.training.agents.ppo_pid import train as ppo_pid
+from crax.training.agents.ppo_saute import train as ppo_saute
+from crax.training.agents.sac.train import train as sac_train
+from crax.training.agents.sac_lag import train as sac_lag
+from crax.training.agents.sac_pid import train as sac_pid
 
 # Global metrics buffer instance
 metrics_buffer = []
@@ -142,7 +142,7 @@ def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
     Returns:
         A network_factory callable compatible with the PPO training loop.
     """
-    from brax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+    from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
     safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'}
     needs_cost_value = alg_name in safe_algs
