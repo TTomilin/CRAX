@@ -63,26 +63,6 @@ def _strip_weak_type(tree):
     return jax.tree_util.tree_map(f, tree)
 
 
-def _validate_madrona_args(
-        madrona_backend: bool,
-        num_envs: int,
-        num_eval_envs: int,
-        action_repeat: int,
-        eval_env: Optional[envs.Env] = None,
-):
-    """Validates arguments for Madrona-MJX."""
-    if madrona_backend:
-        if eval_env:
-            raise ValueError("Madrona-MJX doesn't support multiple env instances")
-        if num_eval_envs != num_envs:
-            raise ValueError('Madrona-MJX requires a fixed batch size')
-        if action_repeat != 1:
-            raise ValueError(
-                "Implement action_repeat using PipelineEnv's _n_frames to avoid"
-                ' unnecessary rendering!'
-            )
-
-
 def _maybe_wrap_env(
         env: envs.Env,
         wrap_env: bool,
@@ -187,7 +167,6 @@ def train(
         max_devices_per_host: Optional[int] = None,
         # high-level control flow
         wrap_env: bool = True,
-        madrona_backend: bool = False,
         augment_pixels: bool = False,
         # environment wrapper
         num_envs: int = 1,
@@ -246,7 +225,6 @@ def train(
       max_devices_per_host: maximum number of chips to use per host process
       wrap_env: If True, wrap the environment for training. Otherwise use the
         environment as is.
-      madrona_backend: whether to use Madrona backend for training
       augment_pixels: whether to add image augmentation to pixel inputs
       num_envs: the number of parallel environments to use for rollouts
         NOTE: `num_envs` must be divisible by the total number of chips since each
@@ -327,9 +305,6 @@ def train(
     _dbg(f"train() called: num_envs={num_envs}, num_timesteps={num_timesteps}, episode_length={episode_length}, augment_pixels={augment_pixels}")
 
     assert batch_size * num_minibatches % num_envs == 0
-    _validate_madrona_args(
-        madrona_backend, num_envs, num_eval_envs, action_repeat, eval_env
-    )
 
     xt = time.time()
 

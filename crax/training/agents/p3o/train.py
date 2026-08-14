@@ -27,7 +27,6 @@ def train(
         episode_length: int,
         max_devices_per_host: Optional[int] = None,
         wrap_env: bool = True,
-        madrona_backend: bool = False,
         augment_pixels: bool = False,
         num_envs: int = 1,
         action_repeat: int = 1,
@@ -118,7 +117,7 @@ def train(
 
     return ppo_train.train(
         environment=environment, num_timesteps=num_timesteps, max_devices_per_host=max_devices_per_host,
-        wrap_env=wrap_env, madrona_backend=madrona_backend, augment_pixels=augment_pixels,
+        wrap_env=wrap_env, augment_pixels=augment_pixels,
         num_envs=num_envs, episode_length=episode_length, action_repeat=action_repeat,
         wrap_env_fn=wrap_env_fn, randomization_fn=randomization_fn, learning_rate=learning_rate,
         entropy_cost=entropy_cost, discounting=discounting, unroll_length=unroll_length,

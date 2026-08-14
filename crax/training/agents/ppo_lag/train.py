@@ -28,7 +28,6 @@ def train(
         episode_length: int,
         max_devices_per_host: Optional[int] = None,
         wrap_env: bool = True,
-        madrona_backend: bool = False,
         augment_pixels: bool = False,
         num_envs: int = 1,
         action_repeat: int = 1,
@@ -81,7 +80,6 @@ def train(
       num_timesteps: the total number of environment steps to use during training
       max_devices_per_host: maximum number of chips to use per host process
       wrap_env: If True, wrap the environment for training.
-      madrona_backend: whether to use Madrona backend for training
       augment_pixels: whether to add image augmentation to pixel inputs
       num_envs: the number of parallel environments to use for rollouts
       episode_length: the length of an environment episode
@@ -179,7 +177,6 @@ def train(
         num_timesteps=num_timesteps,
         max_devices_per_host=max_devices_per_host,
         wrap_env=wrap_env,
-        madrona_backend=madrona_backend,
         augment_pixels=augment_pixels,
         num_envs=num_envs,
         episode_length=episode_length,

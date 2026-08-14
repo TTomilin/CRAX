@@ -90,7 +90,6 @@ def train(
         bc_networks.BCNetworks
     ] = bc_networks.make_bc_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
-    madrona_backend: bool = False,
     seed: int = 0,
     learning_rate=4e-4,
     dagger_steps: int = 1,
@@ -122,7 +121,6 @@ def train(
       times encourages a stationary distribution. This smoothes loss curves.
     network_factory: function that generates networks for policy
     progress_fn: a user-defined callback function for reporting/plotting metrics
-    madrona_backend: whether to use Madrona backend for training
     seed: random seed
     learning_rate: learning rate for optimizer
     dagger_steps: number of DAgger iterations to perform
@@ -146,12 +144,6 @@ def train(
   """
   if env is None:
     raise ValueError('env must be set')
-
-  if madrona_backend:
-    if num_eval_envs and num_eval_envs != num_envs:
-      raise ValueError('Madrona-MJX requires a fixed batch size')
-    else:
-      num_eval_envs = num_envs
 
   if num_evals > 0:
     assert eval_length is not None, 'eval_length must be set if num_evals > 0'
