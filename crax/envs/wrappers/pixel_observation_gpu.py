@@ -133,6 +133,15 @@ class GpuPixelObservationWrapper(Wrapper):
         # -local index (rc.cam_id_map) is always 0.
         self._local_cam_index = 0
 
+        # Warm up eagerly (outside any CUDA graph capture) so the render
+        # megakernel is already JIT-compiled/loaded on-device before the
+        # jax_callable below captures its CUDA graph on first real call.
+        # Loading a new CUDA module during graph capture is illegal and
+        # would otherwise crash the very first render.
+        mjw.refit_bvh(self._m, self._d, self._rc)
+        mjw.render(self._m, self._d, self._rc)
+        wp.synchronize()
+
         self._render_pixels_fn = self._build_render_fn()
 
     # ------------------------------------------------------------------
@@ -169,6 +178,14 @@ class GpuPixelObservationWrapper(Wrapper):
             warp_render,
             num_outputs=1,
             output_dims={'rgb_out': (num_envs, height, width)},
+            # GraphMode.JAX (the default) lets XLA try to capture our warp
+            # kernel launches as a child node inside its own CUDA graph.
+            # Unsupported on at least some driver/arch combos.
+            # GraphMode.WARP has warp capture+replay its own self-contained
+            # graph instead of participating in XLA's, avoiding the nesting
+            # entirely. This is also what mujoco_warp's own jax_callable
+            # usage does.
+            graph_mode=ffi.GraphMode.WARP,
         )
 
         def render_pixels(pipeline_state) -> jnp.ndarray:
