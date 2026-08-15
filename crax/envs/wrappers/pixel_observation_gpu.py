@@ -1,190 +1,85 @@
-"""GPU-based egocentric pixel observation wrapper using pixelbrax renderer.
+"""GPU-based egocentric pixel observation wrapper using MJWarp's batch
+ray-traced renderer.
 
-Renders pixel observations fully on GPU using JAX rasterization — no CPU
-callbacks.
+Renders pixel observations fully on GPU. Geom/camera world poses are read
+directly from mjx.Data.geom_xpos / geom_xmat / cam_xpos / cam_xmat, which
+MJX's forward pass (smooth.kinematics, smooth.camlight) already computes.
+No manual body-transform arithmetic. Those pose arrays are bridged into
+MJWarp's warp-native render buffers with zero host copies, so rendering
+stays on the GPU inside the training loop.
 
-Geom world poses are read directly from mjx.Data.geom_xpos / geom_xmat, which
-MJX's forward pass (smooth.kinematics) computes for every geom — including geoms
-whose parent bodies are mocap-controlled.  Camera pose comes from
-mjx.Data.cam_xpos / cam_xmat, computed by smooth.camlight, also called by the
-forward pass.  Both quantities are therefore always up-to-date without any manual
-body-transform arithmetic on our side.
-
-Usage:
-
-    env = GpuPixelObservationWrapper(env, camera="vision")
-    # → state.obs = {"pixels/vision": (H, W, 3) uint8}
-
-If the environment XML has no camera named <camera_name> the wrapper raises
-at construction time so you can add the camera element to the XML.
+IMPORTANT — placement in the wrapper stack:
+MJWarp's renderer needs a *statically* sized render context (`num_envs`
+fixed at construction) and expects to be called directly with the full
+batch of poses. It cannot itself be `jax.vmap`'d. Wrapping a single,
+unbatched env with this class and then `jax.vmap`-ing the whole stack (the
+way `crax.envs.training.wrap`'s `VmapWrapper` works) fails: the underlying
+FFI call shape-checks against the unbatched per-example shape before vmap's
+batching rule ever applies. So this wrapper must be applied to an ALREADY
+VECTORIZED env, i.e. *after* `VmapWrapper` / `crax.envs.training.wrap`,
+not before. `crax.training.agents.ppo.train._maybe_wrap_env` does this:
+`wrap_for_training(env, ...)` runs first, then this wrapper is applied to
+the result, using the same `num_envs` (or `num_eval_envs`) already known
+at that point to size the render context.
 
 Observation key: 'pixels/<camera_name>'  (e.g. 'pixels/vision')
 """
 
-import os
-import sys
-from collections import namedtuple
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Tuple
 
 import jax
 import jax.numpy as jnp
 import mujoco
-import numpy as np
+import mujoco_warp as mjw
+import warp as wp
+from warp.jax_experimental import ffi
 
 from crax.envs.base import Env, State, Wrapper
 
-# MuJoCo geom type constants
-_MJ_GEOM_PLANE = 0
-_MJ_GEOM_SPHERE = 2
-_MJ_GEOM_CAPSULE = 3
-_MJ_GEOM_CYLINDER = 5
-_MJ_GEOM_BOX = 6
-_MJ_GEOM_MESH = 7
 
-# Lightweight struct: geom index in the MJX data arrays + pre-built mesh.
-_GeomInfo = namedtuple('_GeomInfo', ['geom_idx', 'base_instance'])
-
-
-def _build_renderer_objects(mj_model, geom_group_filter):
-    """Build pixelbrax ModelObject list from MuJoCo model geometry.
-
-    Each entry records the geom's index in mjx.Data.geom_xpos / geom_xmat so
-    that world transforms can be read directly at render time — no manual
-    body-transform arithmetic.
-
-    Args:
-        mj_model: mujoco.MjModel
-        geom_group_filter: if not None, only render geoms in these groups.
-
-    Returns:
-        list of _GeomInfo named tuples.
+@wp.kernel
+def _write_cam_pose(
+        cam_xpos_in: wp.array1d(dtype=wp.vec3f),
+        cam_xmat_in: wp.array1d(dtype=wp.mat33f),
+        cam_id: int,
+        cam_xpos_out: wp.array2d(dtype=wp.vec3f),
+        cam_xmat_out: wp.array2d(dtype=wp.mat33f),
+):
+    """Scatters the (num_envs,) pose of the one camera we render into the
+    (num_envs, ncam) slot MJWarp's Data expects it in. Only the active
+    camera's column is ever read at render time, so other columns are left
+    stale/uninitialized without consequence.
     """
-    _repo_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-    if _repo_root not in sys.path:
-        sys.path.insert(0, _repo_root)
-
-    from crax.renderer import create_capsule, create_cube, UpAxis
-    from crax.renderer.model import Model as RendererMesh, ModelObject as Instance
-
-    geom_infos = []
-    for i in range(mj_model.ngeom):
-        geom_type = int(mj_model.geom_type[i])
-        geom_group = int(mj_model.geom_group[i])
-
-        if geom_group_filter is not None and geom_group not in geom_group_filter:
-            continue
-
-        rgba = mj_model.geom_rgba[i].astype(np.float32)
-        tex = jnp.array(rgba[:3].reshape(1, 1, 3))
-        spec_map = jnp.full((1, 1), 2.0)
-        size = mj_model.geom_size[i]
-
-        try:
-            if geom_type == _MJ_GEOM_CAPSULE:
-                model = create_capsule(
-                    radius=float(size[0]),
-                    half_height=float(size[1]),
-                    up_axis=UpAxis.Z,
-                    diffuse_map=tex,
-                    specular_map=spec_map,
-                )
-            elif geom_type == _MJ_GEOM_BOX:
-                model = create_cube(
-                    half_extents=jnp.array(size[:3], dtype=jnp.float32),
-                    diffuse_map=tex,
-                    texture_scaling=jnp.array(16.0),
-                    specular_map=spec_map,
-                )
-            elif geom_type == _MJ_GEOM_SPHERE:
-                model = create_capsule(
-                    radius=float(size[0]),
-                    half_height=0.0,
-                    up_axis=UpAxis.Z,
-                    diffuse_map=tex,
-                    specular_map=spec_map,
-                )
-            elif geom_type == _MJ_GEOM_PLANE:
-                # Render the ground plane as a large thin box using the geom's
-                # actual colour rather than a hardcoded grey.
-                model = create_cube(
-                    half_extents=jnp.array([50.0, 50.0, 0.001], dtype=jnp.float32),
-                    diffuse_map=tex,
-                    texture_scaling=jnp.array(128.0),
-                    specular_map=spec_map,
-                )
-            elif geom_type == _MJ_GEOM_CYLINDER:
-                model = create_capsule(
-                    radius=float(size[0]),
-                    half_height=float(size[1]),
-                    up_axis=UpAxis.Z,
-                    diffuse_map=tex,
-                    specular_map=spec_map,
-                )
-            elif geom_type == _MJ_GEOM_MESH:
-                try:
-                    import trimesh
-                except ImportError:
-                    continue
-                mesh_id = int(mj_model.geom_dataid[i])
-                if mesh_id < 0:
-                    continue
-                v_start = int(mj_model.mesh_vertadr[mesh_id])
-                v_count = int(mj_model.mesh_vertnum[mesh_id])
-                f_start = int(mj_model.mesh_faceadr[mesh_id])
-                f_count = int(mj_model.mesh_facenum[mesh_id])
-                verts = mj_model.mesh_vert[v_start: v_start + v_count]
-                faces = mj_model.mesh_face[f_start: f_start + f_count]
-                tm = trimesh.Trimesh(vertices=verts, faces=faces)
-                model = RendererMesh.create(
-                    verts=jnp.array(tm.vertices, dtype=jnp.float32),
-                    norms=jnp.array(tm.vertex_normals, dtype=jnp.float32),
-                    uvs=jnp.zeros((len(tm.vertices), 2), dtype=jnp.int32),
-                    faces=jnp.array(tm.faces, dtype=jnp.int32),
-                    diffuse_map=tex,
-                )
-            else:
-                continue
-        except Exception:
-            continue
-
-        geom_infos.append(_GeomInfo(
-            geom_idx=i,
-            base_instance=Instance(model=model),
-        ))
-
-    return geom_infos
+    w = wp.tid()
+    cam_xpos_out[w, cam_id] = cam_xpos_in[w]
+    cam_xmat_out[w, cam_id] = cam_xmat_in[w]
 
 
 class GpuPixelObservationWrapper(Wrapper):
-    """Wraps a CRAX/MJX environment to add GPU-rendered pixel observations.
-
-    Rendering is done entirely in JAX on the GPU using pixelbrax's rasterizer.
-    All world transforms are read from mjx.Data fields that the MJX forward pass
-    already computes:
-      - geom_xpos / geom_xmat  (smooth.kinematics, always computed)
-      - cam_xpos  / cam_xmat   (smooth.camlight, always computed)
-
-    Observation key: 'pixels/<camera_name>'  (e.g. 'pixels/vision').
+    """Wraps an already-vectorized CRAX/MJX env to add MJWarp-rendered pixel
+    observations.
 
     Args:
-        env: The environment to wrap.
+        env: The (already-vectorized) environment to wrap.
+        num_envs: Number of parallel worlds `env` produces per step/reset.
         camera: Name of the MuJoCo camera to render from (must exist in XML).
         height: Render height in pixels.
         width: Render width in pixels.
         obs_mode: 'pixels', 'pixels+state', or 'state'.
         frame_stack: Number of frames to stack channel-wise.
-        geom_group_filter: If given, only render geoms in these MuJoCo groups.
+        use_shadows: Whether MJWarp should ray-trace shadows (slower).
     """
 
     def __init__(
-        self,
-        env: Env,
-        camera: str = 'vision',
-        height: int = 64,
-        width: int = 64,
-        obs_mode: str = 'pixels',
-        frame_stack: int = 1,
-        geom_group_filter: Optional[Sequence[int]] = None,
+            self,
+            env: Env,
+            num_envs: int,
+            camera: str = 'vision',
+            height: int = 64,
+            width: int = 64,
+            obs_mode: str = 'pixels',
+            frame_stack: int = 1,
+            use_shadows: bool = False,
     ):
         super().__init__(env)
 
@@ -194,6 +89,7 @@ class GpuPixelObservationWrapper(Wrapper):
             )
 
         self._obs_key = f'pixels/{camera}'
+        self._num_envs = num_envs
         self._height = height
         self._width = width
         self._obs_mode = obs_mode
@@ -201,51 +97,94 @@ class GpuPixelObservationWrapper(Wrapper):
         self._channels = 3
 
         mj_model = self.sys.mj_model
+        if getattr(self, 'backend', None) != 'mjx':
+            raise ValueError(
+                "GpuPixelObservationWrapper (MJWarp) requires backend='mjx' "
+                f"(geom_xpos/cam_xpos are only populated by the MJX pipeline), "
+                f"got backend='{getattr(self, 'backend', None)}'. Pass "
+                "backend='mjx' to get_environment()/create()."
+            )
 
-        # Resolve camera index
         cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
         if cam_id == -1:
             available = [mj_model.camera(i).name for i in range(mj_model.ncam)]
             raise ValueError(
                 f"Camera '{camera}' not found in model. Available: {available}"
             )
+        self._cam_id = cam_id
 
-        # Vertical FOV from XML; derive horizontal FOV for non-square renders.
-        vfov = float(mj_model.cam_fovy[cam_id])
-        hfov = float(
-            2.0 * np.degrees(
-                np.arctan(np.tan(np.radians(vfov) / 2.0) * width / height)
-            )
+        # Scratch MjData purely to seed MJWarp's model/render-context
+        # construction (mesh/texture/light setup) — its dynamic fields are
+        # never read; poses come from mjx.Data every step via the bridge below.
+        mj_data = mujoco.MjData(mj_model)
+        mujoco.mj_forward(mj_model, mj_data)
+
+        self._m = mjw.put_model(mj_model)
+        self._d = mjw.put_data(mj_model, mj_data, nworld=num_envs)
+        self._rc = mjw.create_render_context(
+            mj_model,
+            nworld=num_envs,
+            cam_res=(width, height),
+            render_rgb=True,
+            use_shadows=use_shadows,
+            cam_active=[i == cam_id for i in range(mj_model.ncam)],
         )
+        # cam_active has exactly one True entry (cam_id) -> its render-context
+        # -local index (rc.cam_id_map) is always 0.
+        self._local_cam_index = 0
 
-        geom_infos = _build_renderer_objects(mj_model, geom_group_filter)
-        if not geom_infos:
-            raise RuntimeError(
-                "GPU renderer: no renderable geometry found. "
-                "Check geom_group_filter or ensure the model has visual geoms."
-            )
-
-        self._jit_render = _make_render_fn(
-            geom_infos=geom_infos,
-            cam_id=cam_id,
-            height=height,
-            width=width,
-            hfov=hfov,
-            vfov=vfov,
-        )
+        self._render_pixels_fn = self._build_render_fn()
 
     # ------------------------------------------------------------------
-    # Rendering helpers
+    # Rendering
     # ------------------------------------------------------------------
+
+    def _build_render_fn(self):
+        m, d, rc = self._m, self._d, self._rc
+        cam_id = self._cam_id
+        local_cam_index = self._local_cam_index
+        num_envs, height, width = self._num_envs, self._height, self._width
+
+        def warp_render(
+                geom_xpos_in: wp.array2d(dtype=wp.vec3f),
+                geom_xmat_in: wp.array2d(dtype=wp.mat33f),
+                cam_xpos_in: wp.array1d(dtype=wp.vec3f),
+                cam_xmat_in: wp.array1d(dtype=wp.mat33f),
+                rgb_out: wp.array3d(dtype=wp.vec3f),
+        ):
+            wp.copy(d.geom_xpos, geom_xpos_in)
+            wp.copy(d.geom_xmat, geom_xmat_in)
+            wp.launch(
+                _write_cam_pose, dim=num_envs,
+                inputs=[cam_xpos_in, cam_xmat_in, cam_id],
+                outputs=[d.cam_xpos, d.cam_xmat],
+            )
+            mjw.refit_bvh(m, d, rc)
+            mjw.render(m, d, rc)
+            rgb_local = wp.zeros((num_envs, height, width), dtype=wp.vec3f)
+            mjw.get_rgb(rc, camera_index=local_cam_index, rgb_out=rgb_local)
+            wp.copy(rgb_out, rgb_local)
+
+        render_callable = ffi.jax_callable(
+            warp_render,
+            num_outputs=1,
+            output_dims={'rgb_out': (num_envs, height, width)},
+        )
+
+        def render_pixels(pipeline_state) -> jnp.ndarray:
+            """(num_envs, H, W, 3) uint8 from a BATCHED mjx pipeline state."""
+            cam_xpos = pipeline_state.cam_xpos[:, cam_id]
+            cam_xmat = pipeline_state.cam_xmat[:, cam_id]
+            (rgb,) = render_callable(
+                pipeline_state.geom_xpos, pipeline_state.geom_xmat,
+                cam_xpos, cam_xmat,
+            )
+            return (jnp.clip(rgb, 0.0, 1.0) * 255).astype(jnp.uint8)
+
+        return render_pixels
 
     def _render_pixels(self, pipeline_state) -> jnp.ndarray:
-        """Render (H, W, 3) uint8 image from MJX pipeline state."""
-        return self._jit_render(
-            pipeline_state.geom_xpos,
-            pipeline_state.geom_xmat,
-            pipeline_state.cam_xpos,
-            pipeline_state.cam_xmat,
-        )
+        return self._render_pixels_fn(pipeline_state)
 
     def _build_obs(self, state_obs, pixels):
         if self._obs_mode == 'state':
@@ -281,6 +220,7 @@ class GpuPixelObservationWrapper(Wrapper):
         if self._obs_mode == 'state':
             return state
 
+        orig_obs = state.obs
         pixels = self._render_pixels(state.pipeline_state)
 
         if self._frame_stack > 1:
@@ -290,13 +230,22 @@ class GpuPixelObservationWrapper(Wrapper):
         else:
             pixels_out = pixels
 
-        return state.replace(obs=self._build_obs(state.obs, pixels_out))
+        # Stash the inner env's native obs so step() can hand it back down
+        # unchanged on the next call. The inner Episode/AutoReset/Vmap chain
+        # (below) is never aware we replace `obs` with a pixel dict. Feeding
+        # it our dict back in would break its internal action_repeat scan
+        # (carry pytree must stay the inner env's own plain-obs shape across
+        # iterations).
+        state.info['_orig_state_obs'] = orig_obs
+        return state.replace(obs=self._build_obs(orig_obs, pixels_out))
 
     def step(self, state: State, action: jax.Array) -> State:
-        state = self.env.step(state, action)
+        inner_state = state.replace(obs=state.info['_orig_state_obs'])
+        state = self.env.step(inner_state, action)
         if self._obs_mode == 'state':
             return state
 
+        orig_obs = state.obs
         pixels = self._render_pixels(state.pipeline_state)
 
         if self._frame_stack > 1:
@@ -307,7 +256,9 @@ class GpuPixelObservationWrapper(Wrapper):
         else:
             pixels_out = pixels
 
-        return state.replace(obs=self._build_obs(state.obs, pixels_out))
+        state.info['_orig_state_obs'] = orig_obs
+
+        return state.replace(obs=self._build_obs(orig_obs, pixels_out))
 
     # ------------------------------------------------------------------
     # Observation size
@@ -331,92 +282,3 @@ class GpuPixelObservationWrapper(Wrapper):
             else:
                 obs_size['state'] = (inner_size,)
         return obs_size
-
-
-def _make_render_fn(
-    geom_infos,
-    cam_id: int,
-    height: int,
-    width: int,
-    hfov: float,
-    vfov: float,
-):
-    """Build a jax.jit-compiled single-frame render function.
-
-    Signature:
-        render_fn(geom_xpos, geom_xmat, cam_xpos, cam_xmat) -> (H, W, 3) uint8
-
-    All inputs come directly from mjx.Data, which MJX's forward pass populates:
-      - geom_xpos: (ngeom, 3)   world position of every geom centroid
-      - geom_xmat: (ngeom, 3,3) world rotation matrix of every geom
-                   columns = geom axes expressed in world frame
-      - cam_xpos:  (ncam, 3)    world position of every camera
-      - cam_xmat:  (ncam, 3,3)  world rotation matrix of every camera
-                   col 1 = camera Y (up in image)
-                   col 2 = camera Z (backward; camera looks in -Z)
-
-    The pixelbrax renderer returns a canvas of shape (width, height, 3).
-    We transpose to (height, width, 3) and flip the row axis to convert
-    from OpenGL bottom-up convention to standard top-down image convention.
-
-    Args:
-        geom_infos: list of _GeomInfo built at wrapper init.
-        cam_id: integer index of the camera in the model.
-        height, width: image dimensions (static).
-        hfov: horizontal field of view in degrees.
-        vfov: vertical field of view in degrees.
-
-    Returns:
-        jax.jit-compiled callable.
-    """
-    from crax.renderer import CameraParameters, LightParameters, Renderer
-
-    default_light = LightParameters(
-        direction=jnp.array([0.57735, -0.57735, 0.57735], dtype=jnp.float32),
-        colour=jnp.ones(3, dtype=jnp.float32),
-        ambient=jnp.array([0.8, 0.8, 0.8], dtype=jnp.float32),
-        diffuse=jnp.array([0.8, 0.8, 0.8], dtype=jnp.float32),
-        specular=jnp.array([0.6, 0.6, 0.6], dtype=jnp.float32),
-    )
-
-    def render_fn(geom_xpos, geom_xmat, cam_xpos, cam_xmat):
-        # --- Update geom world transforms from MJX pre-computed data ---
-        instances = []
-        for gi in geom_infos:
-            idx = gi.geom_idx
-            inst = gi.base_instance
-            inst = inst.replace_with_position(geom_xpos[idx])
-            inst = inst.replace_with_orientation(rotation_matrix=geom_xmat[idx])
-            instances.append(inst)
-
-        # --- Camera pose from mjx.Data.cam_xpos / cam_xmat ---
-        # cam_xmat columns: col 1 = camera Y (up), col 2 = camera Z (backward)
-        cam_pos = cam_xpos[cam_id]
-        mat = cam_xmat[cam_id]            # (3, 3)
-        cam_forward = -mat[:, 2]          # camera looks in -Z
-        cam_up = mat[:, 1]                # camera Y is up in image
-
-        camera = CameraParameters(
-            viewWidth=width,
-            viewHeight=height,
-            position=cam_pos,
-            target=cam_pos + cam_forward,
-            up=cam_up,
-            hfov=hfov,
-            vfov=vfov,
-        )
-
-        # --- Render ---
-        # pixelbrax canvas: (width, height, 3), OpenGL bottom-up convention.
-        # Transpose → (height, width, 3), then flip rows for top-down images.
-        img = Renderer.get_camera_image(
-            objects=instances,
-            light=default_light,
-            camera=camera,
-            width=width,
-            height=height,
-        )
-        img = jnp.clip(jnp.flip(img.transpose(1, 0, 2), axis=0), 0.0, 1.0)
-        return (img * 255).astype(jnp.uint8)
-
-    return jax.jit(render_fn)

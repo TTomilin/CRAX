@@ -32,7 +32,7 @@ def main():
     use_wandb = config.use_wandb
 
     # Setup GPU environment
-    setup_gpu_environment()
+    setup_gpu_environment(vision=config.vision)
 
     # Run training for each seed
     for seed in config.seeds:
@@ -43,7 +43,9 @@ def main():
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         run_name = f"{env_name}_Level_{difficulty}_{alg_name}_seed{seed}_{timestamp}"
 
-        # Build vision kwargs if vision mode is enabled
+        # Build vision kwargs if vision mode is enabled. Pixel-obs wrapping
+        # happens inside the training function (GpuPixelObservationWrapper
+        # must be applied after env vmapping, not here at env construction time.
         vision_kwargs = None
         if config.vision:
             vision_kwargs = dict(
@@ -54,7 +56,7 @@ def main():
                 frame_stack=config.vision_frame_stack,
             )
             print(
-                f"Vision mode: GPU rendering (pixelbrax), "
+                f"Vision mode: GPU rendering (MJWarp), "
                 f"camera='{config.vision_camera}', "
                 f"{config.vision_width}x{config.vision_height}"
             )
@@ -63,14 +65,12 @@ def main():
         env_kwargs = config.env_kwargs or {}
         if env_name == 'safe_velocity':
             env_kwargs['agent'] = config.agent
-        env = envs.get_environment(
-            env_name, level=difficulty, vision=config.vision,
-            vision_kwargs=vision_kwargs, **env_kwargs,
-        )
-        eval_env = envs.get_environment(
-            env_name, level=difficulty, vision=config.vision,
-            vision_kwargs=vision_kwargs, **env_kwargs,
-        )
+        if config.vision:
+            # GpuPixelObservationWrapper reads geom_xpos/cam_xpos, which only
+            # the MJX pipeline populates.
+            env_kwargs.setdefault('backend', 'mjx')
+        env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
+        eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
 
         # Determine the episode length
         episode_length = config.episode_length or env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
@@ -113,25 +113,32 @@ def main():
         train_fn_base = get_algorithm_train_fn(alg_name)
         train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
 
-        # Inject vision network factory if vision mode is enabled
+        # Inject vision network factory + pixel-obs wrapping kwargs if vision
+        # mode is enabled. 'vision_kwargs' is only accepted by train_fns that
+        # support GpuPixelObservationWrapper (ppo and its pass-throughs). For
+        # others, it's silently dropped by `filter_kwargs_for_fn` below if the
+        # target signature doesn't declare it, so re-filter after adding it.
         if config.vision:
             state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
-            print(f"[DEBUG] Creating vision network factory (alg={alg_name}, obs_key='{state_obs_key}')...")
             train_kwargs['network_factory'] = make_vision_network_factory(
                 alg_name,
                 policy_obs_key=state_obs_key,
                 value_obs_key=state_obs_key,
             )
             train_kwargs['augment_pixels'] = True
-            print(f"[DEBUG] Vision network factory created.")
+            train_kwargs['vision_kwargs'] = vision_kwargs
+            train_kwargs = filter_kwargs_for_fn(train_fn_base, train_kwargs)
+            if 'vision_kwargs' not in train_kwargs:
+                raise ValueError(
+                    f"--vision was set but algorithm '{alg_name}' does not "
+                    f"support pixel observations (its train() has no "
+                    f"'vision_kwargs' parameter)."
+                )
 
         # Create the training function
-        print(f"[DEBUG] train_kwargs keys: {list(train_kwargs.keys())}")
         train_fn = functools.partial(train_fn_base, **train_kwargs)
 
         # Train the agent
-        print(f"[DEBUG] Calling train_fn for {alg_name} / {env_name}...")
-        import sys; sys.stdout.flush()
         make_inference_fn, params, final_metrics, eval_env = train_fn(
             environment=env,
             eval_env=eval_env,
@@ -179,9 +186,10 @@ def main():
             video_inference_fn = make_inference_fn
             if config.vision:
                 _raw_make_policy = make_inference_fn
-                _pixel_keys = [f'pixels/{c}' for c in config.vision_cameras]
-                _pixel_shape = (config.vision_height, config.vision_width,
-                                1 if config.vision_grayscale else 3)
+                # GpuPixelObservationWrapper is single-camera (config.vision_camera)
+                # and always RGB (see GpuPixelObservationWrapper._channels).
+                _pixel_keys = [f'pixels/{config.vision_camera}']
+                _pixel_shape = (config.vision_height, config.vision_width, 3)
 
                 def _vision_inference_fn(params, **kwargs):
                     inner_policy = _raw_make_policy(params, **kwargs)

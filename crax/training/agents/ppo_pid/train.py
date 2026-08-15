@@ -3,7 +3,7 @@
 Thin wrapper around the base PPO trainer with PID-based Lagrangian constraint handling.
 """
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +26,7 @@ def train(
         max_devices_per_host: Optional[int] = None,
         wrap_env: bool = True,
         augment_pixels: bool = False,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
         num_envs: int = 1,
         action_repeat: int = 1,
         wrap_env_fn: Optional[Callable[[Any], Any]] = None,
@@ -109,7 +110,7 @@ def train(
 
     return ppo_train.train(
         environment=environment, num_timesteps=num_timesteps, max_devices_per_host=max_devices_per_host,
-        wrap_env=wrap_env, augment_pixels=augment_pixels,
+        wrap_env=wrap_env, augment_pixels=augment_pixels, vision_kwargs=vision_kwargs,
         num_envs=num_envs, episode_length=episode_length, action_repeat=action_repeat,
         wrap_env_fn=wrap_env_fn, randomization_fn=randomization_fn, learning_rate=learning_rate,
         entropy_cost=entropy_cost, discounting=discounting, unroll_length=unroll_length,

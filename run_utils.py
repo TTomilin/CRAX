@@ -75,8 +75,16 @@ def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool 
         metrics_buffer.clear()
 
 
-def setup_gpu_environment():
-    """Setup GPU environment for MuJoCo and XLA."""
+def setup_gpu_environment(vision: bool = False):
+    """Setup GPU environment for MuJoCo and XLA.
+
+    Args:
+      vision: if True, caps JAX's GPU memory preallocation so MJWarp (the
+        pixel-obs renderer) has room to instantiate its own CUDA graphs/
+        buffers alongside JAX in the same process. JAX preallocates ~75-90%
+        of GPU memory by default. On small GPUs this starves MJWarp. Only
+        applied if the user hasn't already set XLA_PYTHON_CLIENT_MEM_FRACTION.
+    """
     # Configure MuJoCo to use the EGL rendering backend (requires GPU)
     os.environ['MUJOCO_GL'] = 'egl'
 
@@ -84,6 +92,14 @@ def setup_gpu_environment():
     xla_flags = os.environ.get('XLA_FLAGS', '')
     xla_flags += ' --xla_gpu_triton_gemm_any=True'
     os.environ['XLA_FLAGS'] = xla_flags
+
+    if vision and 'XLA_PYTHON_CLIENT_MEM_FRACTION' not in os.environ:
+        os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
+        print(
+            "Vision mode: capped XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 to leave "
+            "GPU headroom for MJWarp's renderer (override by setting the env "
+            "var yourself before running)."
+        )
 
     # Check installation
     try:

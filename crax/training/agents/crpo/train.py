@@ -7,7 +7,7 @@ Learning with Convergence Guarantee", ICML 2021.
 https://arxiv.org/abs/2011.05869
 """
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +32,7 @@ def train(
         max_devices_per_host: Optional[int] = None,
         wrap_env: bool = True,
         augment_pixels: bool = False,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
         num_envs: int = 1,
         action_repeat: int = 1,
         wrap_env_fn: Optional[Callable[[Any], Any]] = None,
@@ -83,6 +84,8 @@ def train(
       max_devices_per_host: maximum number of chips to use per host process
       wrap_env: If True, wrap the environment for training.
       augment_pixels: whether to add image augmentation to pixel inputs
+      vision_kwargs: if given, adds MJWarp-rendered pixel observations
+        (forwarded to ppo_train.train's GpuPixelObservationWrapper wiring)
       num_envs: the number of parallel environments to use for rollouts
       episode_length: the length of an environment episode
       action_repeat: the number of timesteps to repeat an action
@@ -181,6 +184,7 @@ def train(
         max_devices_per_host=max_devices_per_host,
         wrap_env=wrap_env,
         augment_pixels=augment_pixels,
+        vision_kwargs=vision_kwargs,
         num_envs=num_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,

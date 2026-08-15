@@ -5,7 +5,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 
 import functools
 import time
-from typing import Any, Callable, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 import flax
 import jax
@@ -75,8 +75,16 @@ def _maybe_wrap_env(
         randomization_fn: Optional[
             Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
         ] = None,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
 ):
-    """Wraps the environment for training/eval if wrap_env is True."""
+    """Wraps the environment for training/eval if wrap_env is True.
+
+    vision_kwargs, if given, applies GpuPixelObservationWrapper (MJWarp) LAST
+    — after episode/vmap/autoreset — since MJWarp's render context needs a
+    static batch size and must see the already-fully-batched env. `num_envs`
+    (this function's batch size for whichever of env/eval_env is being
+    wrapped) is threaded in automatically; do not pass it in vision_kwargs.
+    """
     if not wrap_env:
         return env
     if episode_length is None:
@@ -99,6 +107,9 @@ def _maybe_wrap_env(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )  # pytype: disable=wrong-keyword-args
+    if vision_kwargs is not None:
+        from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+        env = GpuPixelObservationWrapper(env, num_envs=num_envs, **vision_kwargs)
     return env
 
 
@@ -168,6 +179,7 @@ def train(
         # high-level control flow
         wrap_env: bool = True,
         augment_pixels: bool = False,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
         # environment wrapper
         num_envs: int = 1,
         action_repeat: int = 1,
@@ -226,6 +238,10 @@ def train(
       wrap_env: If True, wrap the environment for training. Otherwise use the
         environment as is.
       augment_pixels: whether to add image augmentation to pixel inputs
+      vision_kwargs: if given, adds MJWarp-rendered pixel observations to
+        `environment`/`eval_env` (see GpuPixelObservationWrapper). Applied
+        after env wrapping/vmapping; `num_envs`/`num_eval_envs` are threaded
+        in automatically, do not include them here.
       num_envs: the number of parallel environments to use for rollouts
         NOTE: `num_envs` must be divisible by the total number of chips since each
           chip gets `num_envs // total_number_of_chips` environments to roll out
@@ -365,6 +381,7 @@ def train(
         key_env,
         wrap_env_fn,
         randomization_fn,
+        vision_kwargs,
     )
     _dbg(f"Environment wrapped. obs_size={env.observation_size}, action_size={env.action_size}")
     use_pmap = local_devices_to_use > 1
@@ -771,6 +788,7 @@ def train(
             key_env=eval_key,
             wrap_env_fn=wrap_env_fn,
             randomization_fn=randomization_fn,
+            vision_kwargs=vision_kwargs,
         )
         _dbg(f"Creating Evaluator (num_eval_envs={num_eval_envs})...")
         evaluator = acting.Evaluator(

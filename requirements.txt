@@ -19,8 +19,10 @@ orbax-checkpoint
 chex>=0.1.89
 
 # MuJoCo (physics engine) - IMPORTANT: Keep these versions synchronized!
-mujoco==3.3.2
-mujoco-mjx==3.3.2
+mujoco==3.11.0
+mujoco-mjx==3.11.0
+mujoco-warp==3.11.0
+warp-lang==1.16.0
 
 # Training and logging
 wandb>=0.19.0
