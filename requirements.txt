@@ -16,7 +16,6 @@ ml_collections>=1.1.0
 numpy>=2.2.0
 optax>=0.2.0
 orbax-checkpoint
-chex>=0.1.89
 
 # MuJoCo (physics engine) - IMPORTANT: Keep these versions synchronized!
 mujoco==3.11.0
@@ -32,7 +31,6 @@ tensorboardX
 matplotlib>=3.10.0
 imageio>=2.37.0
 Pillow
-seaborn
 
 # Web server (for visualization)
 flask>=3.1.0
@@ -47,7 +45,6 @@ pandas
 
 # Optional: Gym compatibility
 gym>=0.26.0
-gymnasium>=0.28.0
 
 # Development tools (optional)
 pytest
