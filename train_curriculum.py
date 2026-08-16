@@ -18,6 +18,7 @@ from configs.training_config import build_base_parser
 from run_utils import (
     setup_gpu_environment, get_algorithm_train_fn, filter_kwargs_for_fn,
     custom_progress_fn, record_episode_video, make_vision_network_factory,
+    morphology_override, VISION_CAMERA_OVERRIDES,
 )
 
 
@@ -30,8 +31,12 @@ def main():
     env_name = config.env_name
     use_wandb = config.use_wandb
 
+    # Fill in the morphology-specific pixel-obs training camera
+    if config.vision_camera is None:
+        config.vision_camera = morphology_override(env_name, VISION_CAMERA_OVERRIDES) or 'vision'
+
     # Setup GPU environment
-    setup_gpu_environment()
+    setup_gpu_environment(vision=config.vision)
 
     # Run training for each seed
     for seed in config.seeds:

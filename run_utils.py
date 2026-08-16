@@ -30,6 +30,24 @@ from crax.training.agents.sac_pid import train as sac_pid
 # Global metrics buffer instance
 metrics_buffer = []
 
+# Pixel-observation training camera
+VISION_CAMERA_OVERRIDES = {
+    'humanoid': 'track',
+    'ant': 'track',
+    'cheetah': 'track',
+    'walker2d': 'track',
+    'spider': 'track',
+    'reacher': 'fixedfar',
+}
+
+
+def morphology_override(env_name, overrides):
+    """First substring match of `overrides`' keys found in `env_name`, else None."""
+    for key, value in overrides.items():
+        if key in env_name:
+            return value
+    return None
+
 
 def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool = False, verbose: bool = True) -> None:
     """

@@ -17,7 +17,7 @@ from configs.training_config import build_base_parser
 from run_utils import (
     collect_rollout_metrics, record_episode_video, setup_gpu_environment,
     get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn,
-    make_vision_network_factory,
+    make_vision_network_factory, morphology_override, VISION_CAMERA_OVERRIDES,
 )
 
 
@@ -30,6 +30,11 @@ def main():
     alg_name = config.alg
     difficulty = config.difficulty
     use_wandb = config.use_wandb
+
+    # Fill in the morphology-specific pixel-obs training camera, but only if
+    # the user didn't explicitly pass --vision_camera
+    if config.vision_camera is None:
+        config.vision_camera = morphology_override(env_name, VISION_CAMERA_OVERRIDES) or 'vision'
 
     # Setup GPU environment
     setup_gpu_environment(vision=config.vision)

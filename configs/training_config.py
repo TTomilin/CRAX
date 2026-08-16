@@ -176,10 +176,13 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--wandb_tags", type=str, nargs='+', help="JSON list or path of tags")
 
     # --- Vision (Pixel Observation) ---
-    parser.add_argument("--vision", action="store_true", help="Use egocentric pixel observations (GPU via pixelbrax)")
+    parser.add_argument("--vision", action="store_true", help="Use egocentric pixel observations (GPU via MJWarp)")
     parser.add_argument(
-        "--vision_camera", type=str, default="vision",
-        help="Name of the MuJoCo camera to render from (must exist in the XML, default: 'vision')",
+        "--vision_camera", type=str, default=None,
+        help="Name of the MuJoCo camera to render pixel observations from "
+             "(must exist in the XML). Default: 'vision' (egocentric), except "
+             "'track' (external side/chase view) for humanoid/ant/cheetah/"
+             "walker2d/spider morphologies, and 'fixedfar' for reacher.",
     )
     parser.add_argument("--vision_height", type=int, default=64, help="Render height in pixels")
     parser.add_argument("--vision_width", type=int, default=64, help="Render width in pixels")
