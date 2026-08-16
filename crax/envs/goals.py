@@ -87,7 +87,7 @@ class CubeGoal(BaseGoal):
         return f'''    
         <body name="goal{self.goal_id}" pos="{x} {y} {z}" mocap="true">
             <geom type="box" name="goal{self.goal_id}" size="{w} {h} {self.height}" condim="3"
-                friction="1 .03 .003" rgba="0 1 0 0.8" contype="0" conaffinity="0" solref="0.01 1"/>
+                friction="1 .03 .003" rgba="0 1 0 1" contype="0" conaffinity="0" solref="0.01 1"/>
         </body>'''
 
     @property
@@ -133,8 +133,8 @@ class CylinderGoal(BaseGoal):
         x, y, z = self.position
         return f'''    
         <body name="goal{self.goal_id}" pos="{x} {y} {z}" mocap="true">
-            <geom type="cylinder" name="goal{self.goal_id}" size="{self.size} {self.height}" 
-                rgba="0 1 0 0.2" contype="0" conaffinity="0" solref="0.01 1"/>
+            <geom type="cylinder" name="goal{self.goal_id}" size="{self.size} {self.height}"
+                rgba="0 1 0 1" contype="0" conaffinity="0" solref="0.01 1"/>
         </body>'''
 
     @property
@@ -197,7 +197,7 @@ class GoalManager:
             XML string defining goal materials
         """
         assets = [
-            '<material name="goal" rgba="0.3 0.9 0.3 0.7"/>',
+            '<material name="goal" rgba="0.3 0.9 0.3 1"/>',
             '<material name="goal_inactive" rgba="0.5 0.5 0.5 0.3"/>'
         ]
         return '\n    '.join(assets)
@@ -245,8 +245,8 @@ class SphereGoal(BaseGoal):
         x, y, z = self.position
         return f'''    
         <body name="goal{self.goal_id}" pos="{x} {y} {z}" mocap="true">
-            <geom type="sphere" name="goal{self.goal_id}" size="{self.size}" 
-                rgba="0 1 0 0.8" contype="0" conaffinity="0" solref="0.01 1"/>
+            <geom type="sphere" name="goal{self.goal_id}" size="{self.size}"
+                rgba="0 1 0 1" contype="0" conaffinity="0" solref="0.01 1"/>
         </body>'''
 
     @property

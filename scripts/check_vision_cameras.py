@@ -15,10 +15,23 @@ Usage:
 import argparse
 import os
 
+import jax.numpy as jnp
 import mujoco
 
 from crax import envs
 from run_utils import record_episode_video_simple
+
+
+def _turn_policy(action_size, turn_rate):
+    """Spins the agent in place: zero everywhere except the last actuator,
+    held at a constant rate."""
+    action = jnp.zeros(action_size).at[-1].set(turn_rate)
+
+    def policy(obs, rng):
+        del obs, rng
+        return action, {}
+
+    return policy
 
 
 def _check_one_env(env_name, args, results):
@@ -54,11 +67,18 @@ def _check_one_env(env_name, args, results):
         results.append((env_name, 'MISSING_CAMERA', f'available: {cam_names}'))
         return
 
+    policy = None
+    action_mode = args.action_mode
+    if action_mode == 'turn':
+        policy = _turn_policy(env.action_size, args.turn_rate)
+        action_mode = None  # record_episode_video_simple ignores action_mode when policy is given
+
     try:
         video_path = record_episode_video_simple(
             env,
             steps=args.steps,
-            action_mode=args.action_mode,
+            policy=policy,
+            action_mode=action_mode,
             cameras=[args.camera],
             width=args.width,
             height=args.height,
@@ -86,11 +106,15 @@ def main():
                          help='subset of env names to check (default: all registered envs)')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--action-mode', type=str, default='periodic',
-                         choices=['periodic', 'random', 'zero'],
+                         choices=['periodic', 'random', 'zero', 'turn'],
                          help="periodic (default) is gentler on floppy chains "
                               "(hopper/walker2d/humanoid/swimmer) than fully "
                               "independent per-step random torques, which can "
-                              "blow the physics solver up within ~100 steps")
+                              "blow the physics solver up within ~100 steps. "
+                              "'turn' spins the agent in place.")
+    parser.add_argument('--turn-rate', type=float, default=0.6,
+                         help="constant action value for --action-mode turn (range depends "
+                              "on the actuator; Point's turn actuator is ctrlrange [-1, 1])")
     args = parser.parse_args()
 
     os.environ.setdefault('MUJOCO_GL', 'egl')
