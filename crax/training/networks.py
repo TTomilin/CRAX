@@ -16,7 +16,7 @@
 
 import dataclasses
 import functools
-from typing import Any, Callable, Mapping, Sequence, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 import warnings
 
 from crax.training import types
@@ -156,25 +156,21 @@ class CNN(linen.Module):
     return hidden
 
 
-class VisionMLP(linen.Module):
-  """Applies a CNN backbone then an MLP.
+VISION_LATENT_KEY = '_vision_latent'
+
+
+class VisionEncoder(linen.Module):
+  """NatureCNN backbone shared by the policy/value(/cost-value) heads.
 
   The CNN architecture originates from the paper:
   "Human-level control through deep reinforcement learning",
   Nature 518, no. 7540 (2015): 529-533
   """
 
-  layer_sizes: Sequence[int]
-  activation: ActivationFn = linen.relu
-  kernel_init: Initializer = jax.nn.initializers.lecun_uniform()
-  activate_final: bool = False
-  layer_norm: bool = False
   normalise_channels: bool = False
-  state_obs_key: str = ''
-  policy_head: bool = True  # = False is useful for frozen encoders.
 
   @linen.compact
-  def __call__(self, data: dict):
+  def __call__(self, data: dict) -> jnp.ndarray:
     pixels_hidden = {
         k: v.astype(jnp.float32) / 255.0
         for k, v in data.items()
@@ -206,15 +202,71 @@ class VisionMLP(linen.Module):
         use_bias=False,
     )
     cnn_outs = [natureCNN()(pixels_hidden[key]) for key in pixels_hidden]
-    cnn_outs = [jnp.mean(cnn_out, axis=(-2, -3)) for cnn_out in cnn_outs]
+    flat_outs = [
+        jnp.reshape(cnn_out, cnn_out.shape[:-3] + (-1,)) for cnn_out in cnn_outs
+    ]
+    return jnp.concatenate(flat_outs, axis=-1)
+
+
+class VisionMLP(linen.Module):
+  """Applies a VisionEncoder CNN backbone then an MLP.
+
+  This owns its own (unshared) copy of the CNN backbone. Used when the
+  policy/value/cost-value heads each get an independent encoder. For a
+  shared backbone across heads (fewer params, one CNN forward per timestep
+  instead of one per head), use `VisionEncoder` + `VisionMLPHead` and
+  `make_ppo_networks_vision(..., share_encoder=True)`.
+  """
+
+  layer_sizes: Sequence[int]
+  activation: ActivationFn = linen.relu
+  kernel_init: Initializer = jax.nn.initializers.lecun_uniform()
+  activate_final: bool = False
+  layer_norm: bool = False
+  normalise_channels: bool = False
+  state_obs_key: str = ''
+  policy_head: bool = True  # = False is useful for frozen encoders.
+
+  @linen.compact
+  def __call__(self, data: dict):
+    latent = VisionEncoder(normalise_channels=self.normalise_channels)(data)
     if not self.policy_head:
-      return jnp.concatenate(cnn_outs, axis=-1)
+      return latent
     if self.state_obs_key:
-      cnn_outs.append(
-          data[self.state_obs_key]
+      latent = jnp.concatenate(
+          [latent, data[self.state_obs_key]], axis=-1
       )  # TODO: Try with dedicated state network
 
-    hidden = jnp.concatenate(cnn_outs, axis=-1)
+    return MLP(
+        layer_sizes=self.layer_sizes,
+        activation=self.activation,
+        kernel_init=self.kernel_init,
+        activate_final=self.activate_final,
+        layer_norm=self.layer_norm,
+    )(latent)
+
+
+class VisionMLPHead(linen.Module):
+  """MLP head over a precomputed VisionEncoder latent (+ optional state).
+
+  Used with a shared `VisionEncoder`: the encoder runs once and its output
+  is stashed under `VISION_LATENT_KEY` in the obs dict passed to `__call__`,
+  so multiple heads (policy/value/cost-value) can reuse the same CNN forward
+  pass instead of each recomputing it.
+  """
+
+  layer_sizes: Sequence[int]
+  activation: ActivationFn = linen.relu
+  kernel_init: Initializer = jax.nn.initializers.lecun_uniform()
+  activate_final: bool = False
+  layer_norm: bool = False
+  state_obs_key: str = ''
+
+  @linen.compact
+  def __call__(self, data: dict):
+    hidden = data[VISION_LATENT_KEY]
+    if self.state_obs_key:
+      hidden = jnp.concatenate([hidden, data[self.state_obs_key]], axis=-1)
     return MLP(
         layer_sizes=self.layer_sizes,
         activation=self.activation,
@@ -472,6 +524,117 @@ def make_value_network_vision(
   }
   return FeedForwardNetwork(
       init=lambda key: value_module.init(key, dummy_obs), apply=apply
+  )
+
+
+def make_vision_encoder_network(
+    observation_size: Mapping[str, Tuple[int, ...]],
+    normalise_channels: bool = False,
+) -> FeedForwardNetwork:
+  """Creates a shared CNN encoder network for vision PPO heads.
+
+  `apply(processor_params, encoder_params, obs) -> latent` follows the same
+  3-arg calling convention as the other vision networks so callers (loss
+  functions, inference) can treat it uniformly. `processor_params` is unused
+  since pixels are normalized internally (/255, optional per-channel LN)
+  rather than via running statistics.
+  """
+  module = VisionEncoder(normalise_channels=normalise_channels)
+  dummy_obs = {
+      key: jnp.zeros((1,) + shape)
+      for key, shape in observation_size.items()
+      if key.startswith('pixels/')
+  }
+
+  def apply(processor_params, encoder_params, obs):
+    del processor_params
+    return module.apply(encoder_params, obs)
+
+  return FeedForwardNetwork(
+      init=lambda key: module.init(key, dummy_obs), apply=apply
+  )
+
+
+def _make_vision_head_network(
+    layer_sizes: Sequence[int],
+    observation_size: Mapping[str, Tuple[int, ...]],
+    latent_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn,
+    activation: ActivationFn,
+    kernel_init: Initializer,
+    state_obs_key: str,
+    squeeze_output: bool,
+) -> FeedForwardNetwork:
+  """Shared helper for the policy/value/cost-value heads of a shared-encoder
+  vision network. `latent_size` is the (already known) output width of the
+  `VisionEncoder` this head will be fed from at apply time.
+  """
+  head_module = VisionMLPHead(
+      layer_sizes=list(layer_sizes),
+      activation=activation,
+      kernel_init=kernel_init,
+      state_obs_key=state_obs_key,
+  )
+  dummy_obs = {VISION_LATENT_KEY: jnp.zeros((1, latent_size))}
+  if state_obs_key:
+    dummy_obs[state_obs_key] = jnp.zeros((1,) + observation_size[state_obs_key])
+
+  def apply(processor_params, head_params, obs):
+    if state_obs_key:
+      state_obs = preprocess_observations_fn(
+          obs[state_obs_key], normalizer_select(processor_params, state_obs_key)
+      )
+      obs = {**obs, state_obs_key: state_obs}
+    out = head_module.apply(head_params, obs)
+    return jnp.squeeze(out, axis=-1) if squeeze_output else out
+
+  return FeedForwardNetwork(
+      init=lambda key: head_module.init(key, dummy_obs), apply=apply
+  )
+
+
+def make_policy_head_network_vision(
+    output_size: int,
+    observation_size: Mapping[str, Tuple[int, ...]],
+    latent_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    hidden_layer_sizes: Sequence[int] = [256, 256],
+    activation: ActivationFn = linen.swish,
+    kernel_init: Initializer = jax.nn.initializers.lecun_uniform(),
+    state_obs_key: str = '',
+) -> FeedForwardNetwork:
+  """Policy head over a precomputed shared-VisionEncoder latent."""
+  return _make_vision_head_network(
+      layer_sizes=list(hidden_layer_sizes) + [output_size],
+      observation_size=observation_size,
+      latent_size=latent_size,
+      preprocess_observations_fn=preprocess_observations_fn,
+      activation=activation,
+      kernel_init=kernel_init,
+      state_obs_key=state_obs_key,
+      squeeze_output=False,
+  )
+
+
+def make_value_head_network_vision(
+    observation_size: Mapping[str, Tuple[int, ...]],
+    latent_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    hidden_layer_sizes: Sequence[int] = [256, 256],
+    activation: ActivationFn = linen.swish,
+    kernel_init: Initializer = jax.nn.initializers.lecun_uniform(),
+    state_obs_key: str = '',
+) -> FeedForwardNetwork:
+  """Value (or cost-value) head over a precomputed shared-VisionEncoder latent."""
+  return _make_vision_head_network(
+      layer_sizes=list(hidden_layer_sizes) + [1],
+      observation_size=observation_size,
+      latent_size=latent_size,
+      preprocess_observations_fn=preprocess_observations_fn,
+      activation=activation,
+      kernel_init=kernel_init,
+      state_obs_key=state_obs_key,
+      squeeze_output=True,
   )
 
 

@@ -365,7 +365,7 @@ def train(
     local_key, key_env, eval_key = jax.random.split(local_key, 3)
     # key_networks should be global, so that networks are initialized the same
     # way for different processes.
-    key_policy, key_value, key_cost_value = jax.random.split(global_key, 3)
+    key_policy, key_value, key_cost_value, key_encoder = jax.random.split(global_key, 4)
     del global_key
 
     assert num_envs % device_count == 0
@@ -411,6 +411,18 @@ def train(
     )
     _dbg(f"PPO network created. cost_value_network={'yes' if ppo_network.cost_value_network else 'no'}")
     make_policy = ppo_networks.make_inference_fn(ppo_network)
+
+    def _policy_params_tuple(state: 'TrainingState') -> Tuple[Any, ...]:
+        """(normalizer, policy, value) params, plus a 4th encoder slot iff
+        `ppo_network` has a shared vision encoder. Keeping the encoder slot
+        conditional (rather than always-present-but-None) preserves the
+        existing 3-tuple shape for state-based / non-shared-encoder networks,
+        so it doesn't break callers that unpack that tuple positionally.
+        """
+        base = (state.normalizer_params, state.params.policy, state.params.value)
+        if ppo_network.encoder_network is not None:
+            return base + (state.params.encoder,)
+        return base
 
     optimizer = optax.adam(learning_rate=learning_rate)
     if max_grad_norm is not None:
@@ -546,11 +558,7 @@ def train(
         training_state, state, key = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
-        policy = make_policy((
-            training_state.normalizer_params,
-            training_state.params.policy,
-            training_state.params.value,
-        ))
+        policy = make_policy(_policy_params_tuple(training_state))
 
         def f(carry, unused_t):
             current_state, current_key = carry
@@ -672,11 +680,16 @@ def train(
     if ppo_network.cost_value_network is not None:
         cost_value_params = ppo_network.cost_value_network.init(key_value)
 
+    encoder_params = None
+    if ppo_network.encoder_network is not None:
+        encoder_params = ppo_network.encoder_network.init(key_encoder)
+
     _dbg("Initializing network params...")
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
         cost_value=cost_value_params,
+        encoder=encoder_params,
     )
     _dbg(f"Network params initialized. policy keys: {list(init_params.policy['params'].keys()) if isinstance(init_params.policy, dict) and 'params' in init_params.policy else 'N/A'}")
 
@@ -721,6 +734,9 @@ def train(
     if restore_checkpoint_path is not None:
         params = checkpoint.load(restore_checkpoint_path)
         value_params = params[2] if restore_value_fn else init_params.value
+        # Old (pre shared-encoder) checkpoints only have 3 elements; fall
+        # back to a freshly-initialized encoder for those.
+        encoder_params = params[3] if len(params) > 3 else init_params.encoder
         # Check if normalizer shapes are compatible
         if _check_normalizer_shape_compatible(params[0], training_state.normalizer_params):
             normalizer_to_use = params[0]
@@ -734,13 +750,16 @@ def train(
         training_state = training_state.replace(
             normalizer_params=normalizer_to_use,
             params=training_state.params.replace(
-                policy=params[1], value=value_params
+                policy=params[1], value=value_params, encoder=encoder_params
             ),
         )
 
     if restore_params is not None:
         logging.info('Restoring TrainingState from `restore_params`.')
         value_params = restore_params[2] if restore_value_fn else init_params.value
+        encoder_params = (
+            restore_params[3] if len(restore_params) > 3 else init_params.encoder
+        )
         # Check if normalizer shapes are compatible
         if _check_normalizer_shape_compatible(restore_params[0], training_state.normalizer_params):
             normalizer_to_use = restore_params[0]
@@ -754,18 +773,14 @@ def train(
         training_state = training_state.replace(
             normalizer_params=normalizer_to_use,
             params=training_state.params.replace(
-                policy=restore_params[1], value=value_params
+                policy=restore_params[1], value=value_params, encoder=encoder_params
             ),
         )
 
     if num_timesteps == 0:
         return (
             make_policy,
-            (
-                training_state.normalizer_params,
-                training_state.params.policy,
-                training_state.params.value,
-            ),
+            _policy_params_tuple(training_state),
             {},
         )
 
@@ -807,11 +822,7 @@ def train(
         _dbg("Running initial evaluation...")
         _t0 = time.time()
         metrics = evaluator.run_evaluation(
-            _unpmap((
-                training_state.normalizer_params,
-                training_state.params.policy,
-                training_state.params.value,
-            )),
+            _unpmap(_policy_params_tuple(training_state)),
             training_metrics={},
         )
         _dbg(f"Initial evaluation completed in {time.time() - _t0:.1f}s")
@@ -849,11 +860,7 @@ def train(
             continue
 
         # Process id == 0.
-        params = _unpmap((
-            training_state.normalizer_params,
-            training_state.params.policy,
-            training_state.params.value,
-        ))
+        params = _unpmap(_policy_params_tuple(training_state))
 
         policy_params_fn(current_step, make_policy, params)
 
@@ -887,11 +894,7 @@ def train(
     # If there was no mistakes the training_state should still be identical on all
     # devices.
     pmap.assert_is_replicated(training_state)
-    params = _unpmap((
-        training_state.normalizer_params,
-        training_state.params.policy,
-        training_state.params.value,
-    ))
+    params = _unpmap(_policy_params_tuple(training_state))
 
     # If no evaluation was run, create basic final metrics
     if not metrics:

@@ -190,7 +190,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
         "--vision_obs_mode", type=str, choices=["pixels", "pixels+state"], default="pixels",
         help="'pixels' (pixels only) or 'pixels+state' (pixels + state vector)",
     )
-    parser.add_argument("--vision_frame_stack", type=int, default=1, help="Number of frames to stack channel-wise")
+    parser.add_argument("--vision_frame_stack", type=int, default=3, help="Number of frames to stack channel-wise (3 is standard for RGB dm_control-style pixel RL, e.g. DrQ/RAD)")
 
     # --- Video Recording ---
     parser.add_argument("--cameras", type=str, nargs="+", default=["fixedfar", "vision"], help="Camera names/ids")
