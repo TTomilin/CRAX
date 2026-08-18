@@ -11,6 +11,8 @@ Usage:
     python scripts/check_vision_cameras.py
     python scripts/check_vision_cameras.py --envs ant safe_goal_point --steps 200
     python scripts/check_vision_cameras.py --camera fixedfar  # check a different camera
+    python scripts/check_vision_cameras.py --downscale        # render at agent's 64x64 obs res
+    python scripts/check_vision_cameras.py --downscale 84     # ... or a custom resolution
 """
 import argparse
 import os
@@ -69,6 +71,13 @@ def _check_one_env(env_name, args, results):
         policy = _turn_policy(env.action_size, args.turn_rate)
         action_mode = None  # record_episode_video_simple ignores action_mode when policy is given
 
+    # --downscale renders at the agent's actual --vision observation resolution
+    # (square) instead of --width/--height, so what you eyeball is what the
+    # policy actually sees, not an upscaled/prettier stand-in.
+    render_width = args.downscale or args.width
+    render_height = args.downscale or args.height
+    out_suffix = f'_{render_width}x{render_height}' if args.downscale else ''
+
     try:
         video_path = record_episode_video_simple(
             env,
@@ -76,14 +85,14 @@ def _check_one_env(env_name, args, results):
             policy=policy,
             action_mode=action_mode,
             cameras=[camera],
-            width=args.width,
-            height=args.height,
+            width=render_width,
+            height=render_height,
             fps=args.fps,
-            out_name=f'vision_check_{env_name}',
+            out_name=f'vision_check_{env_name}{out_suffix}',
             seed=args.seed,
             show_metrics=False,
         )
-        print(f"  OK ({used_backend} backend, camera='{camera}') -> {video_path}")
+        print(f"  OK ({used_backend} backend, camera='{camera}', {render_width}x{render_height}) -> {video_path}")
         results.append((env_name, 'OK', video_path))
     except Exception as e:
         print(f"  FAIL rendering: {e}")
@@ -96,6 +105,11 @@ def main():
     parser.add_argument('--fps', type=int, default=30)
     parser.add_argument('--width', type=int, default=320)
     parser.add_argument('--height', type=int, default=240)
+    parser.add_argument('--downscale', type=int, nargs='?', const=64, default=None,
+                         help="render at the agent's actual --vision observation resolution "
+                              "instead of --width/--height (square, e.g. 64x64 to match "
+                              "configs/training_config.py's --vision_height/--vision_width "
+                              "defaults). Bare '--downscale' uses 64; '--downscale 84' uses 84.")
     parser.add_argument('--camera', type=str, default=None, help="camera name to check for every env")
     parser.add_argument('--level', type=int, default=1, help="difficulty level")
     parser.add_argument('--envs', type=str, nargs='*', default=None,
