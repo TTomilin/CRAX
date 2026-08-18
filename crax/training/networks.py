@@ -149,6 +149,7 @@ class CNN(linen.Module):
           num_filter,
           kernel_size=kernel_size,
           strides=stride,
+          padding='VALID',
           use_bias=self.use_bias,
       )(hidden)
 

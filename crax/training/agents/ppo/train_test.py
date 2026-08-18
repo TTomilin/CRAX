@@ -229,7 +229,7 @@ class PPOTest(parameterized.TestCase):
         augment_pixels=True,
     )
     num_views = 2
-    cnn_features = 64
+    cnn_features = 4 * 4 * 64
 
     if asymmetric_obs:
       self.assertEqual(
