@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import mujoco
 
 from crax import envs
-from run_utils import record_episode_video_simple
+from run_utils import VISION_CAMERA_OVERRIDES, morphology_override, record_episode_video_simple
 
 
 def _turn_policy(action_size, turn_rate):
@@ -35,19 +35,15 @@ def _turn_policy(action_size, turn_rate):
 
 
 def _check_one_env(env_name, args, results):
-    # Mirror real --vision training as closely as possible: it forces
-    # backend='mjx' (see train_env.py). Fall back to the env's default
-    # backend if 'mjx' isn't supported, so a missing-camera report still
-    # comes back for envs that can't run mjx at all.
-    env = None
+    camera = args.camera or morphology_override(env_name, VISION_CAMERA_OVERRIDES) or 'vision'
     used_backend = 'mjx'
     try:
-        env = envs.get_environment(env_name, backend='mjx')
+        env = envs.get_environment(env_name, level=args.level, backend='mjx')
     except Exception as e:
         print(f"  backend='mjx' failed ({e}); falling back to default backend")
         used_backend = 'default'
         try:
-            env = envs.get_environment(env_name)
+            env = envs.get_environment(env_name, level=args.level)
         except Exception as e2:
             print(f"  FAIL: could not construct env at all: {e2}")
             results.append((env_name, 'CTOR_FAIL', str(e2)))
@@ -61,9 +57,9 @@ def _check_one_env(env_name, args, results):
         return
 
     cam_names = [mj_model.camera(i).name for i in range(mj_model.ncam)]
-    cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, args.camera)
+    cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
     if cam_id == -1:
-        print(f"  MISSING '{args.camera}' camera. Available cameras: {cam_names}")
+        print(f"  MISSING '{camera}' camera. Available cameras: {cam_names}")
         results.append((env_name, 'MISSING_CAMERA', f'available: {cam_names}'))
         return
 
@@ -79,7 +75,7 @@ def _check_one_env(env_name, args, results):
             steps=args.steps,
             policy=policy,
             action_mode=action_mode,
-            cameras=[args.camera],
+            cameras=[camera],
             width=args.width,
             height=args.height,
             fps=args.fps,
@@ -87,7 +83,7 @@ def _check_one_env(env_name, args, results):
             seed=args.seed,
             show_metrics=False,
         )
-        print(f"  OK ({used_backend} backend) -> {video_path}")
+        print(f"  OK ({used_backend} backend, camera='{camera}') -> {video_path}")
         results.append((env_name, 'OK', video_path))
     except Exception as e:
         print(f"  FAIL rendering: {e}")
@@ -100,8 +96,8 @@ def main():
     parser.add_argument('--fps', type=int, default=30)
     parser.add_argument('--width', type=int, default=320)
     parser.add_argument('--height', type=int, default=240)
-    parser.add_argument('--camera', type=str, default='vision',
-                         help="camera name to check (default: 'vision', what --vision training uses)")
+    parser.add_argument('--camera', type=str, default=None, help="camera name to check for every env")
+    parser.add_argument('--level', type=int, default=1, help="difficulty level")
     parser.add_argument('--envs', type=str, nargs='*', default=None,
                          help='subset of env names to check (default: all registered envs)')
     parser.add_argument('--seed', type=int, default=0)
@@ -142,7 +138,8 @@ def main():
 
     n_ok = sum(1 for _, s, _ in results if s == 'OK')
     n_missing = sum(1 for _, s, _ in results if s == 'MISSING_CAMERA')
-    print(f'\n{n_ok}/{len(results)} envs rendered OK from camera \'{args.camera}\'.')
+    camera_desc = f"'{args.camera}' (forced)" if args.camera else "each env's --vision training default"
+    print(f'\n{n_ok}/{len(results)} envs rendered OK from {camera_desc}.')
     if n_missing:
         print(f'{n_missing} env(s) are MISSING the camera entirely — --vision '
               f'training will hard-fail on those until the XML is fixed.')
