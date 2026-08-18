@@ -52,7 +52,7 @@
             <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
             <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
 
-            <camera name="track" mode="trackcom" pos="0.5 -4 0.5" xyaxes="1 0 0 0 0.2 1"/>
+            <camera name="track" mode="trackcom" pos="0.5 -3 0.5" xyaxes="1 0 0 0 0.2 1"/>
             <camera name="track2" mode="trackcom" pos="0.5 -4 0.4" xyaxes="1 0 0 0 0.1 1"/>
             <camera name="track3" mode="trackcom" pos="0.5 -4 0.3" xyaxes="1 0 0 0 0.0 1"/>
             <joint armature="0" damping="0" limited="false" name="root" pos="0 0 0" stiffness="0" type="free"/>
