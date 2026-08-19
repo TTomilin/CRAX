@@ -286,7 +286,7 @@ class SafeLift(PipelineEnv, ABC):
             local_offset = self._foot_local_offsets[foot_key]
 
             # Transform local offset to world coordinates
-            world_offset = math.rotate(body_rot, local_offset)
+            world_offset = math.rotate(local_offset, body_rot)
             foot_world_z = body_pos[2] + world_offset[2]
             foot_z_positions.append(foot_world_z)
 
