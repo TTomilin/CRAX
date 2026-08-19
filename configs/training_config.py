@@ -202,6 +202,21 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument(
         "--num_video_episodes", type=int, default=5, help="Number of episodes to record per evaluation",
     )
+    parser.add_argument(
+        "--video_every_steps", type=int, default=25_000_000,
+        help="--vision only: log a short clip to wandb roughly every this many env "
+             "steps, rendered directly from the policy's own GPU (MJWarp) pixel "
+             "observations (no separate CPU render pass). Actual cadence is bounded "
+             "below by the eval interval (--num_evals): it can skip evals until this "
+             "many steps have passed, but can't fire more often than evals run. "
+             "0 disables periodic video logging.",
+    )
+    parser.add_argument(
+        "--periodic_video_steps", type=int, default=300,
+        help="--vision only: env steps per periodic clip (kept short since this "
+             "runs many times over a training run; unrelated to --video_length, "
+             "which is only for the CPU-rendered non-vision end-of-training video).",
+    )
 
     return parser
 

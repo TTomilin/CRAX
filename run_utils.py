@@ -627,6 +627,164 @@ def record_episode_video(
         print("Saved video:", mp4_path)
 
 
+def make_periodic_vision_video_fn(
+        env,
+        every_steps: int,
+        steps: int = 300,
+        pixel_camera: str = 'vision',
+        extra_cameras: Optional[List[str]] = None,
+        frame_stack: int = 1,
+        width: int = 320,
+        height: int = 240,
+        fps: int = 30,
+        out_dir: str = "videos",
+        run_name: str = "run",
+        deterministic: bool = False,
+        log_to_wandb: bool = True,
+        seed: int = 0,
+):
+    """Builds a `policy_params_fn`-compatible callback that periodically
+    renders short clips and logs them to wandb during training.
+
+    Unlike `record_episode_video` (CPU MuJoCo render from `pipeline_state`,
+    only feasible once at the end of a vector-obs run because it's too slow
+    to run mid-training), `pixel_camera`'s clip reads frames directly off
+    `env`'s own GPU-rendered (MJWarp) pixel observations -- the same ones the
+    policy is actually trained on -- so there's no separate render pass and
+    no CPU/EGL cost for it. `env` must already be wrapped with
+    `GpuPixelObservationWrapper` (e.g. via `envs.get_environment(...,
+    vision=True, vision_kwargs=...)`) with `num_envs=1` and the same
+    camera/height/width/obs_mode/frame_stack the policy was trained with, so
+    observation shapes match.
+
+    `extra_cameras`, if given, adds further clips from the *same* rollout for
+    parity with vector-obs training's multi-camera video (e.g. `--cameras
+    fixedfar vision`): these don't feed the policy (only `pixel_camera` does)
+    and aren't free like `pixel_camera` -- they're rendered post-hoc with
+    MuJoCo's CPU renderer from the rollout's `pipeline_state`s (same approach
+    `record_episode_video` uses), at `width`x`height`. Cheap in absolute terms
+    (num_envs=1, `steps` frames) but not GPU-free the way `pixel_camera` is.
+
+    `ppo.train()` calls `policy_params_fn(step, make_policy, params)` once
+    per eval iteration (see crax/training/agents/ppo/train.py), so the
+    actual cadence is bounded below by the eval interval (`num_evals`) --
+    this can't fire more often than evals run, only skip evals until
+    `every_steps` has elapsed.
+
+    Args:
+        env: single-env (num_envs=1), vision-wrapped rollout environment.
+        every_steps: minimum env-step gap between clips. <=0 disables.
+        steps: env steps to render per clip (kept short; this runs many
+            times over a training run).
+        pixel_camera: the camera `env` is wrapped with -- drives the policy's
+            actual observations, and is logged as one clip at its native
+            trained resolution.
+        extra_cameras: additional camera names to log alongside
+            `pixel_camera`, cosmetic only (see above). None/[] skips the CPU
+            render pass entirely (same cost as before this arg existed).
+        frame_stack: must match the env's frame_stack; only the most recent
+            RGB frame is kept per step for `pixel_camera` (a raw
+            frame_stack>1 observation encodes stale history in its extra
+            channels, not a paintable image).
+        width, height: render size for `extra_cameras` only.
+        fps: output video fps.
+        out_dir: local directory for the mp4s (also uploaded to wandb).
+        run_name: filename prefix.
+        deterministic: whether to use the deterministic policy for the clip.
+        log_to_wandb: whether to wandb.log the clip (skipped if wandb.run
+            is None even when True).
+        seed: seed for the rollout RNG stream (advances across calls).
+    """
+    extra_cameras = list(extra_cameras or [])
+    obs_key = f'pixels/{pixel_camera}'
+    os.makedirs(out_dir, exist_ok=True)
+
+    mj_model = None
+    cpu_renderer = None
+    if extra_cameras:
+        mj_model = env.sys.mj_model
+        cpu_renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+    state = {'key': jax.random.PRNGKey(seed), 'last_bucket': -1, 'jit_rollout': None}
+
+    def _build_rollout(make_policy):
+        def rollout(params, key):
+            policy = make_policy(params, deterministic=deterministic)
+            reset_key, roll_key = jax.random.split(key)
+            init_state = env.reset(reset_key)
+
+            def step_body(carry, _):
+                carry_state, k = carry
+                k, sk = jax.random.split(k)
+                action, _ = policy(carry_state.obs, sk)
+                next_state = env.step(carry_state, action)
+                # pipeline_state is retained even when extra_cameras is empty
+                # (it's already computed as part of next_state -- free) so a
+                # later call can add extra_cameras without rebuilding the JIT.
+                return (next_state, k), (next_state.obs[obs_key], next_state.pipeline_state)
+
+            (_, _), (frames, pipeline_states) = jax.lax.scan(
+                step_body, (init_state, roll_key), xs=None, length=steps
+            )
+            return frames, pipeline_states  # (steps, num_envs=1, ...) each
+
+        return jax.jit(rollout)
+
+    def _cpu_render_frame(mj_model, single_pipeline_state, camera):
+        d = mujoco.MjData(mj_model)
+        d.qpos[:] = np.asarray(single_pipeline_state.qpos)
+        d.qvel[:] = np.asarray(single_pipeline_state.qvel)
+        if mj_model.nmocap > 0:
+            d.mocap_pos[:] = np.asarray(single_pipeline_state.mocap_pos)
+            d.mocap_quat[:] = np.asarray(single_pipeline_state.mocap_quat)
+        mujoco.mj_forward(mj_model, d)
+        cpu_renderer.update_scene(d, camera=camera)
+        return cpu_renderer.render().copy()
+
+    def video_fn(step: int, make_policy, params, force: bool = False):
+        if every_steps <= 0 and not force:
+            return
+        bucket = step // every_steps if every_steps > 0 else 0
+        if not force and bucket <= state['last_bucket']:
+            return
+        state['last_bucket'] = bucket
+
+        if state['jit_rollout'] is None:
+            # Built lazily (once) on first call and reused for every later
+            # call -- `make_policy` is the same object every time ppo.train()
+            # invokes this, so this is a one-time JIT compile, not per-clip.
+            state['jit_rollout'] = _build_rollout(make_policy)
+
+        state['key'], call_key = jax.random.split(state['key'])
+        frames, pipeline_states = jax.device_get(state['jit_rollout'](params, call_key))
+        frames = np.asarray(frames)[:, 0]  # drop the num_envs=1 axis -> (T, H, W, C)
+        if frame_stack > 1:
+            frames = frames[..., -3:]  # most recent RGB frame only, drop stale history
+
+        clips = {pixel_camera: frames}
+
+        if extra_cameras:
+            for camera in extra_cameras:
+                clips[camera] = np.stack([
+                    _cpu_render_frame(
+                        mj_model,
+                        jax.tree_util.tree_map(lambda x, t=t: x[t, 0], pipeline_states),
+                        camera,
+                    )
+                    for t in range(steps)
+                ])
+
+        for camera, camera_frames in clips.items():
+            mp4_path = os.path.join(out_dir, f"{run_name}_step{step}_{camera}.mp4")
+            iio.imwrite(mp4_path, camera_frames, fps=fps)
+            print(f"[periodic vision video] step {step}: saved {mp4_path}")
+
+            if log_to_wandb and wandb.run is not None:
+                wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")}, step=step)
+
+    return video_fn
+
+
 def record_episode_video_simple(
         env,
         steps: int = 500,

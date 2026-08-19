@@ -8,7 +8,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import jax.numpy as jnp
 import numpy as np
 
 import wandb
@@ -18,6 +17,7 @@ from run_utils import (
     collect_rollout_metrics, record_episode_video, setup_gpu_environment,
     get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn,
     make_vision_network_factory, morphology_override, VISION_CAMERA_OVERRIDES,
+    make_periodic_vision_video_fn,
 )
 
 
@@ -77,6 +77,36 @@ def main():
         env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
         eval_env = envs.get_environment(env_name, level=difficulty, **env_kwargs)
 
+        # Periodic mid-training video, --vision only: a dedicated single-env
+        # (num_envs=1) vision-wrapped rollout env, reading frames straight off
+        # its own GPU (MJWarp) pixel observations.
+        video_fn = None
+        if config.vision and not config.skip_video:
+            periodic_video_env = envs.get_environment(
+                env_name, level=difficulty,
+                vision=True,
+                vision_kwargs=dict(**vision_kwargs, num_envs=1),
+                **env_kwargs,
+            )
+            video_fn = make_periodic_vision_video_fn(
+                periodic_video_env,
+                every_steps=config.video_every_steps,
+                steps=config.periodic_video_steps,
+                pixel_camera=config.vision_camera,
+                # Same extra-camera set vector-obs training's end-of-run video
+                # uses (config.cameras, default ["fixedfar", "vision"]) minus
+                # whichever one is already the (free) pixel_camera clip.
+                extra_cameras=[c for c in config.cameras if c != config.vision_camera],
+                frame_stack=config.vision_frame_stack,
+                width=config.video_width,
+                height=config.video_height,
+                fps=config.video_fps,
+                run_name=run_name,
+                deterministic=config.deterministic_eval,
+                log_to_wandb=config.use_wandb,
+                seed=seed,
+            )
+
         # Determine the episode length
         episode_length = config.episode_length or env_kwargs.get('episode_length') or getattr(env, 'episode_length', None)
 
@@ -132,6 +162,8 @@ def main():
             )
             train_kwargs['augment_pixels'] = True
             train_kwargs['vision_kwargs'] = vision_kwargs
+            if video_fn is not None:
+                train_kwargs['policy_params_fn'] = video_fn
             train_kwargs = filter_kwargs_for_fn(train_fn_base, train_kwargs)
             if 'vision_kwargs' not in train_kwargs:
                 raise ValueError(
@@ -177,51 +209,34 @@ def main():
             )
 
         if not config.skip_video:
-            video_length = config.video_length if config.video_length else config.episode_length
-            if video_length is None:
-                video_length = getattr(eval_env, 'episode_length', None) or getattr(eval_env, 'default_episode_length', None)
-            # Use a non-vision env for video recording. Video frames are
-            # rendered from pipeline_state via brax.io.image (main thread),
-            # avoiding EGL threading issues from pure_callback.
-            # The inference fn is wrapped to feed the state-only obs through
-            # the vision policy with zeroed-out pixel channels.
-            video_env = envs.get_environment(
-                env_name, level=difficulty, **env_kwargs,
-            )
-            video_inference_fn = make_inference_fn
             if config.vision:
-                _raw_make_policy = make_inference_fn
-                # GpuPixelObservationWrapper is single-camera (config.vision_camera)
-                # and always RGB (see GpuPixelObservationWrapper._channels).
-                _pixel_keys = [f'pixels/{config.vision_camera}']
-                _pixel_shape = (config.vision_height, config.vision_width, 3)
-
-                def _vision_inference_fn(params, **kwargs):
-                    inner_policy = _raw_make_policy(params, **kwargs)
-                    def _wrapped_policy(obs, key):
-                        # Build dict obs with zeroed pixels + real state
-                        dict_obs = {k: jnp.zeros(_pixel_shape, dtype=jnp.uint8)
-                                    for k in _pixel_keys}
-                        dict_obs['state'] = obs
-                        return inner_policy(dict_obs, key)
-                    return _wrapped_policy
-                video_inference_fn = _vision_inference_fn
-
-            record_episode_video(
-                env=video_env,
-                make_inference_fn=video_inference_fn,
-                params=params,
-                steps=video_length,
-                cameras=config.cameras,
-                width=config.video_width,
-                height=config.video_height,
-                fps=config.video_fps,
-                frame_stride=config.video_frame_stride,
-                out_name=run_name,
-                log_to_wandb=config.use_wandb,
-                seed=seed,
-                num_episodes=config.num_video_episodes,
-            )
+                # Force one last clip from the actual final params, bypassing
+                # the every_steps cadence gate. This covers the case where the
+                # last periodic call during training landed before the true
+                # final step.
+                video_fn(int(config.num_timesteps), make_inference_fn, params, force=True)
+            else:
+                video_length = config.video_length if config.video_length else config.episode_length
+                if video_length is None:
+                    video_length = getattr(eval_env, 'episode_length', None) or getattr(eval_env, 'default_episode_length', None)
+                video_env = envs.get_environment(
+                    env_name, level=difficulty, **env_kwargs,
+                )
+                record_episode_video(
+                    env=video_env,
+                    make_inference_fn=make_inference_fn,
+                    params=params,
+                    steps=video_length,
+                    cameras=config.cameras,
+                    width=config.video_width,
+                    height=config.video_height,
+                    fps=config.video_fps,
+                    frame_stride=config.video_frame_stride,
+                    out_name=run_name,
+                    log_to_wandb=config.use_wandb,
+                    seed=seed,
+                    num_episodes=config.num_video_episodes,
+                )
 
         # Finish wandb run if active
         if config.use_wandb and wandb.run is not None:
