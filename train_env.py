@@ -95,7 +95,7 @@ def main():
                 pixel_camera=config.vision_camera,
                 # Same extra-camera set vector-obs training's end-of-run video
                 # uses (config.cameras, default ["fixedfar", "vision"]) minus
-                # whichever one is already the (free) pixel_camera clip.
+                # whichever one is already pixel_camera's own clip.
                 extra_cameras=[c for c in config.cameras if c != config.vision_camera],
                 frame_stack=config.vision_frame_stack,
                 width=config.video_width,

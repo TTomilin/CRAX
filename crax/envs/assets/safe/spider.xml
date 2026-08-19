@@ -35,7 +35,7 @@
   <camera name="fixedfar" pos="0 -4 2" zaxis="0 -1 0.5" mode="trackcom"/>
   <body name="torso" pos="0 0 0.75">
       <site name="torso" rgba="1 0 0 .1"/>
-      <camera name="vision" pos="0 0 0.2" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
+      <camera name="vision" pos="0 0 0.3" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
       <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
       <geom name="torso_geom" pos="0 0 0" size="0.22" type="sphere"/>
       <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
@@ -51,7 +51,7 @@
             <geom fromto="0.0 0.0 0.0 0.3 0.3 0.0" name="ankle_fl_geom" size="0.06" type="capsule"/>
             <geom name="foot_fl_geom" contype="1" pos="0.3 0.3 0" size="0.06" type="sphere" mass="0"/>
             <!-- Violation indicator (visual only, initially transparent) -->
-            <geom name="indicator_fl" contype="0" conaffinity="0" pos="0.3 0.3 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_fl" contype="0" conaffinity="0" pos="0.3 0.3 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -66,7 +66,7 @@
             <joint axis="1 1 0" name="ankle_fr" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
             <geom fromto="0.0 0.0 0.0 -0.3 0.3 0.0" name="ankle_fr_geom" size="0.06" type="capsule"/>
             <geom name="foot_fr_geom" contype="1" pos="-0.3 0.3 0" size="0.06" type="sphere" mass="0"/>
-            <geom name="indicator_fr" contype="0" conaffinity="0" pos="-0.3 0.3 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_fr" contype="0" conaffinity="0" pos="-0.3 0.3 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -81,7 +81,7 @@
             <joint axis="0 1 0" name="ankle_ml" pos="0.0 0.0 0.0" range="30 70" type="hinge"/>
             <geom fromto="0.0 0.0 0.0 0.35 0.0 0.0" name="ankle_ml_geom" size="0.06" type="capsule"/>
             <geom name="foot_ml_geom" contype="1" pos="0.35 0.0 0" size="0.06" type="sphere" mass="0"/>
-            <geom name="indicator_ml" contype="0" conaffinity="0" pos="0.35 0.0 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_ml" contype="0" conaffinity="0" pos="0.35 0.0 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -96,7 +96,7 @@
             <joint axis="0 1 0" name="ankle_mr" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
             <geom fromto="0.0 0.0 0.0 -0.35 0.0 0.0" name="ankle_mr_geom" size="0.06" type="capsule"/>
             <geom name="foot_mr_geom" contype="1" pos="-0.35 0.0 0" size="0.06" type="sphere" mass="0"/>
-            <geom name="indicator_mr" contype="0" conaffinity="0" pos="-0.35 0.0 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_mr" contype="0" conaffinity="0" pos="-0.35 0.0 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -111,7 +111,7 @@
             <joint axis="1 1 0" name="ankle_bl" pos="0.0 0.0 0.0" range="30 70" type="hinge"/>
             <geom fromto="0.0 0.0 0.0 0.3 -0.3 0.0" name="ankle_bl_geom" size="0.06" type="capsule"/>
             <geom name="foot_bl_geom" contype="1" pos="0.3 -0.3 0" size="0.06" type="sphere" mass="0"/>
-            <geom name="indicator_bl" contype="0" conaffinity="0" pos="0.3 -0.3 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_bl" contype="0" conaffinity="0" pos="0.3 -0.3 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>
@@ -126,7 +126,7 @@
             <joint axis="-1 1 0" name="ankle_br" pos="0.0 0.0 0.0" range="-70 -30" type="hinge"/>
             <geom fromto="0.0 0.0 0.0 -0.3 -0.3 0.0" name="ankle_br_geom" size="0.06" type="capsule"/>
             <geom name="foot_br_geom" contype="1" pos="-0.3 -0.3 0" size="0.06" type="sphere" mass="0"/>
-            <geom name="indicator_br" contype="0" conaffinity="0" pos="-0.3 -0.3 0" size="0.20" type="sphere" rgba="1 0 0 0" mass="0"/>
+            <geom name="indicator_br" contype="0" conaffinity="0" pos="-0.3 -0.3 0" size="0.09" type="sphere" rgba="1 0 0 0" mass="0"/>
           </body>
         </body>
       </body>

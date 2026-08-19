@@ -633,6 +633,7 @@ def make_periodic_vision_video_fn(
         steps: int = 300,
         pixel_camera: str = 'vision',
         extra_cameras: Optional[List[str]] = None,
+        high_res: bool = True,
         frame_stack: int = 1,
         width: int = 320,
         height: int = 240,
@@ -646,24 +647,29 @@ def make_periodic_vision_video_fn(
     """Builds a `policy_params_fn`-compatible callback that periodically
     renders short clips and logs them to wandb during training.
 
-    Unlike `record_episode_video` (CPU MuJoCo render from `pipeline_state`,
-    only feasible once at the end of a vector-obs run because it's too slow
-    to run mid-training), `pixel_camera`'s clip reads frames directly off
-    `env`'s own GPU-rendered (MJWarp) pixel observations -- the same ones the
-    policy is actually trained on -- so there's no separate render pass and
-    no CPU/EGL cost for it. `env` must already be wrapped with
-    `GpuPixelObservationWrapper` (e.g. via `envs.get_environment(...,
-    vision=True, vision_kwargs=...)`) with `num_envs=1` and the same
-    camera/height/width/obs_mode/frame_stack the policy was trained with, so
-    observation shapes match.
+    The rollout always drives its actions off `env`'s real GPU-rendered
+    (MJWarp) pixel observations (the same ones the policy is actually
+    trained on). So `env` must stay wrapped with `GpuPixelObservationWrapper`
+    at the policy's native training resolution (e.g. via
+    `envs.get_environment(..., vision=True, vision_kwargs=...)`) with
+    `num_envs=1` and the same camera/height/width/obs_mode/frame_stack it was
+    trained with, or actions won't match training behavior.
 
-    `extra_cameras`, if given, adds further clips from the *same* rollout for
+    That's independent from what resolution the video itself is saved at,
+    controlled by `high_res`:
+      - `high_res=True` (default): `pixel_camera`'s video is rendered at
+        `width`x`height` (e.g. 320x240, not the policy's tiny training
+        resolution, e.g. 64x64) via a CPU MuJoCo render pass over the
+        rollout's own `pipeline_state`s.
+      - `high_res=False`: `pixel_camera`'s video instead reads frames straight
+        off the low-res GPU pixel observations already computed to drive the
+        policy. We get zero-cost, but it's capped at the training resolution.
+
+    `extra_cameras`, if given, adds further videos from the *same* rollout for
     parity with vector-obs training's multi-camera video (e.g. `--cameras
-    fixedfar vision`): these don't feed the policy (only `pixel_camera` does)
-    and aren't free like `pixel_camera` -- they're rendered post-hoc with
-    MuJoCo's CPU renderer from the rollout's `pipeline_state`s (same approach
-    `record_episode_video` uses), at `width`x`height`. Cheap in absolute terms
-    (num_envs=1, `steps` frames) but not GPU-free the way `pixel_camera` is.
+    fixedfar vision`): these never feed the policy (only `pixel_camera`'s
+    GPU observations do) and are always rendered the `high_res=True` way,
+    regardless of the `high_res` setting for `pixel_camera` itself.
 
     `ppo.train()` calls `policy_params_fn(step, make_policy, params)` once
     per eval iteration (see crax/training/agents/ppo/train.py), so the
@@ -676,17 +682,22 @@ def make_periodic_vision_video_fn(
         every_steps: minimum env-step gap between clips. <=0 disables.
         steps: env steps to render per clip (kept short; this runs many
             times over a training run).
-        pixel_camera: the camera `env` is wrapped with -- drives the policy's
-            actual observations, and is logged as one clip at its native
-            trained resolution.
+        pixel_camera: the camera `env` is wrapped with. Drives the policy's
+            actual observations always. Also one of the logged clips (at
+            `width`x`height` if `high_res`, else the training resolution).
         extra_cameras: additional camera names to log alongside
             `pixel_camera`, cosmetic only (see above). None/[] skips the CPU
-            render pass entirely (same cost as before this arg existed).
-        frame_stack: must match the env's frame_stack; only the most recent
-            RGB frame is kept per step for `pixel_camera` (a raw
-            frame_stack>1 observation encodes stale history in its extra
+            render pass entirely when `high_res=False` (same cost as before
+            this arg existed). With `high_res=True` the pass is already
+            happening for `pixel_camera` so extra cameras ride along nearly
+            free.
+        high_res: see above.
+        frame_stack: must match the env's frame_stack; only used when
+            `high_res=False`, to keep the most recent RGB frame per step (a
+            raw frame_stack>1 observation encodes stale history in its extra
             channels, not a paintable image).
-        width, height: render size for `extra_cameras` only.
+        width, height: render size for `high_res=True` clips (`pixel_camera`
+            when enabled, and always for `extra_cameras`).
         fps: output video fps.
         out_dir: local directory for the mp4s (also uploaded to wandb).
         run_name: filename prefix.
@@ -696,12 +707,13 @@ def make_periodic_vision_video_fn(
         seed: seed for the rollout RNG stream (advances across calls).
     """
     extra_cameras = list(extra_cameras or [])
+    cpu_cameras = list(extra_cameras) + ([pixel_camera] if high_res else [])
     obs_key = f'pixels/{pixel_camera}'
     os.makedirs(out_dir, exist_ok=True)
 
     mj_model = None
     cpu_renderer = None
-    if extra_cameras:
+    if cpu_cameras:
         mj_model = env.sys.mj_model
         cpu_renderer = mujoco.Renderer(mj_model, height=height, width=width)
 
@@ -757,22 +769,25 @@ def make_periodic_vision_video_fn(
 
         state['key'], call_key = jax.random.split(state['key'])
         frames, pipeline_states = jax.device_get(state['jit_rollout'](params, call_key))
-        frames = np.asarray(frames)[:, 0]  # drop the num_envs=1 axis -> (T, H, W, C)
-        if frame_stack > 1:
-            frames = frames[..., -3:]  # most recent RGB frame only, drop stale history
 
-        clips = {pixel_camera: frames}
+        clips = {}
+        if not high_res:
+            # Zero-cost path: read straight off the GPU pixel obs that already
+            # drove the policy, at the training resolution.
+            pixel_frames = np.asarray(frames)[:, 0]  # drop num_envs=1 axis -> (T, H, W, C)
+            if frame_stack > 1:
+                pixel_frames = pixel_frames[..., -3:]  # most recent RGB frame only
+            clips[pixel_camera] = pixel_frames
 
-        if extra_cameras:
-            for camera in extra_cameras:
-                clips[camera] = np.stack([
-                    _cpu_render_frame(
-                        mj_model,
-                        jax.tree_util.tree_map(lambda x, t=t: x[t, 0], pipeline_states),
-                        camera,
-                    )
-                    for t in range(steps)
-                ])
+        for camera in cpu_cameras:
+            clips[camera] = np.stack([
+                _cpu_render_frame(
+                    mj_model,
+                    jax.tree_util.tree_map(lambda x, t=t: x[t, 0], pipeline_states),
+                    camera,
+                )
+                for t in range(steps)
+            ])
 
         for camera, camera_frames in clips.items():
             mp4_path = os.path.join(out_dir, f"{run_name}_step{step}_{camera}.mp4")

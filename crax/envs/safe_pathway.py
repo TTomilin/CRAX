@@ -491,6 +491,40 @@ class SafePathway(PipelineEnv, ABC):
             original_rgba[gid] = self.sys.mj_model.geom_rgba[gid].copy()
 
         def get_image(state: base.State):
+            # Update indicator colors based on live hazard violations. Mirrors
+            # `_calculate_safety_cost`'s cylinder/rect inside-check
+            if self._indicator_geom_ids and self._hazard_mocap_ids:
+                hazard_positions = np.asarray(state.mocap_pos)[self._hazard_mocap_ids]
+                feet_pos = np.asarray(state.x.pos)[self._foot_link_ids]  # (num_feet, 3)
+                feet_xy = feet_pos[:, :2]
+                ground_contact_threshold = self._hazard_height * 2 + 0.08
+                feet_on_ground = feet_pos[:, 2] < ground_contact_threshold
+
+                centers = hazard_positions[:, :2]
+                dxdy = feet_xy[:, None, :] - centers[None, :, :]
+                d_dist = np.sqrt(np.sum(dxdy ** 2, axis=2) + 1e-8)
+
+                radii = np.maximum(np.asarray(self._hazard_radii)[None, :], 1e-6)
+                cyl_inside = (d_dist / radii) <= 1.0
+
+                half_extents = np.maximum(np.asarray(self._hazard_half_extents)[None, :, :], 1e-6)
+                normalized_rect_dist = np.abs(dxdy) / half_extents
+                rect_inside = (normalized_rect_dist[:, :, 0] <= 1.0) & (normalized_rect_dist[:, :, 1] <= 1.0)
+
+                is_rect = np.asarray(self._hazard_is_rect).astype(bool)[None, :]
+                inside = np.where(is_rect, rect_inside, cyl_inside)  # (num_feet, num_hazards)
+                violating = np.any(inside & feet_on_ground[:, None], axis=1)  # (num_feet,)
+
+                for foot_name, is_violating in zip(self.foot_link_names, violating):
+                    if foot_name not in self._indicator_geom_ids:
+                        continue
+                    gid = self._indicator_geom_ids[foot_name]
+                    base_rgba = original_rgba[gid]
+                    self.sys.mj_model.geom_rgba[gid] = (
+                        [base_rgba[0], base_rgba[1], base_rgba[2], 0.6] if is_violating
+                        else [base_rgba[0], base_rgba[1], base_rgba[2], 0.0]
+                    )
+
             # Render the frame
             d = mujoco.MjData(self.sys.mj_model)
             d.qpos, d.qvel = np.asarray(state.q), np.asarray(state.qd)
