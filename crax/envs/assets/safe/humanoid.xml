@@ -6,7 +6,7 @@
         <motor ctrllimited="true" ctrlrange="-.4 .4"/>
     </default>
     <!-- Removed RK4 integrator for brax. -->
-    <option iterations="8" timestep="0.003"/>
+    <option iterations="8" timestep="0.003" ls_iterations="6"/>
     <custom>
         <!-- brax custom params -->
         <numeric data="2500" name="constraint_limit_stiffness"/>

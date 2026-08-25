@@ -6,7 +6,7 @@
     <motor ctrlrange="-.4 .4"/>
   </default>
 
-  <option timestep="0.002" iterations="4"/>
+  <option timestep="0.002" iterations="4" ls_iterations="6"/>
 
   <custom>
     <numeric data="10000" name="constraint_limit_stiffness"/>

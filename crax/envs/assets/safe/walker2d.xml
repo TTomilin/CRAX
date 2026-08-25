@@ -4,8 +4,9 @@
     <joint limited="true" armature="0.01" damping="0.1"/>
     <geom contype="0" conaffinity="0" friction="0.7 0.1 0.1" rgba="0.75 0.65 0.55 0.8"/>
   </default>
-  <!-- Removed RK4 integrator for brax. -->
-  <option timestep="0.002" iterations="4" gravity="0 0 -6.5"/>
+  <!-- Removed RK4 integrator for brax. ls_iterations default is 50, but we should lower it
+       https://mujoco.readthedocs.io/en/3.11.0/mjx.html#performance-tuning -->
+  <option timestep="0.002" iterations="4" ls_iterations="6" gravity="0 0 -6.5"/>
   <custom>
     <!-- brax custom params -->
     <numeric data="5000" name="constraint_limit_stiffness"/>
