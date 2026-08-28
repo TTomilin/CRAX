@@ -11,7 +11,7 @@ PID update (per gradient step):
   lambda     = clip(relu(lambda + pid_output), 0, pid_lambda_clip)
 """
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -55,6 +55,9 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    # Vision (pixel-obs) training -- see sac_lag.train.train.
+    vision_kwargs: Optional[Dict[str, Any]] = None,
+    augment_pixels: bool = False,
     # Constraint
     safety_bound: float = 25.0,
     initial_lambda: float = 0.0,
@@ -123,6 +126,8 @@ def train(
         training_metrics_steps=training_metrics_steps,
         eval_env=eval_env,
         randomization_fn=randomization_fn,
+        vision_kwargs=vision_kwargs,
+        augment_pixels=augment_pixels,
         safety_bound=safety_bound,
         initial_lambda=initial_lambda,
         lambda_update_fn=pid_lambda_update,

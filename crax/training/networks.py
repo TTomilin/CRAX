@@ -528,6 +528,85 @@ def make_value_network_vision(
   )
 
 
+class VisionQMLP(linen.Module):
+  """CNN encoder + N-critic Q-heads over vision observations.
+
+  Owns its own (unshared) copy of the CNN backbone, like `VisionMLP`. The
+  encoder latent is computed once and shared across the `n_critics` heads —
+  mirroring how `make_q_network`'s QModule shares raw obs across its heads
+  for state-based SAC.
+  """
+
+  hidden_layer_sizes: Sequence[int]
+  n_critics: int = 2
+  activation: ActivationFn = linen.relu
+  kernel_init: Initializer = jax.nn.initializers.lecun_uniform()
+  layer_norm: bool = False
+  normalise_channels: bool = False
+  state_obs_key: str = ''
+
+  @linen.compact
+  def __call__(self, data: dict, actions: jnp.ndarray):
+    latent = VisionEncoder(normalise_channels=self.normalise_channels)(data)
+    if self.state_obs_key:
+      latent = jnp.concatenate([latent, data[self.state_obs_key]], axis=-1)
+    hidden = jnp.concatenate([latent, actions], axis=-1)
+    res = []
+    for _ in range(self.n_critics):
+      q = MLP(
+          layer_sizes=list(self.hidden_layer_sizes) + [1],
+          activation=self.activation,
+          kernel_init=self.kernel_init,
+          layer_norm=self.layer_norm,
+      )(hidden)
+      res.append(q)
+    return jnp.concatenate(res, axis=-1)
+
+
+def make_q_network_vision(
+    observation_size: Mapping[str, Tuple[int, ...]],
+    action_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    hidden_layer_sizes: Sequence[int] = (256, 256),
+    activation: ActivationFn = linen.relu,
+    n_critics: int = 2,
+    layer_norm: bool = False,
+    state_obs_key: str = '',
+    normalise_channels: bool = False,
+) -> FeedForwardNetwork:
+  """Creates a Q-network (or cost-Q-network) for vision inputs.
+
+  Same role as `make_q_network`, but the observation is a pixel dict rather
+  than a flat state vector: a CNN encoder replaces the raw-obs concat, and
+  (optionally) a `state_obs_key` slice is normalized via running stats and
+  concatenated in, exactly as the vision policy/value heads do.
+  """
+  module = VisionQMLP(
+      hidden_layer_sizes=list(hidden_layer_sizes),
+      n_critics=n_critics,
+      activation=activation,
+      layer_norm=layer_norm,
+      normalise_channels=normalise_channels,
+      state_obs_key=state_obs_key,
+  )
+
+  def apply(processor_params, q_params, obs, actions):
+    if state_obs_key:
+      state_obs = preprocess_observations_fn(
+          obs[state_obs_key], normalizer_select(processor_params, state_obs_key)
+      )
+      obs = {**obs, state_obs_key: state_obs}
+    return module.apply(q_params, obs, actions)
+
+  dummy_obs = {
+      key: jnp.zeros((1,) + shape) for key, shape in observation_size.items()
+  }
+  dummy_action = jnp.zeros((1, action_size))
+  return FeedForwardNetwork(
+      init=lambda key: module.init(key, dummy_obs, dummy_action), apply=apply
+  )
+
+
 def make_vision_encoder_network(
     observation_size: Mapping[str, Tuple[int, ...]],
     normalise_channels: bool = False,

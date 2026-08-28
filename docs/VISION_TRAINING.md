@@ -24,7 +24,9 @@ python train_curriculum.py --env_name safe_goal_point --alg ppo_lag --vision
 python train_transfer.py --env_name safe_goal_point --vision
 ```
 
-All 5 safe RL algorithms (PPO-Lag, PPO-PID, FOCOPS, P3O, PPO-Saute) and plain PPO work with vision out of the box.
+All on-policy algorithms — plain PPO and the safe RL variants PPO-Lag, PPO-PID, FOCOPS, P3O, PPO-Saute, CRPO — work with vision out of the box.
+
+The off-policy algorithms — SAC, SAC-Lag, SAC-PID — also support `--vision`, with a few differences worth knowing about: see [Off-policy: SAC / SAC-Lag / SAC-PID](#off-policy-sac--sac-lag--sac-pid) below.
 
 ## What Happens Under the Hood
 
@@ -84,6 +86,24 @@ python train_env.py --env_name safe_goal_point --alg ppo_lag --vision \
 ```
 
 This produces `obs['pixels/vision']` and `obs['pixels/vision_back']`, each processed by a separate CNN and concatenated before the MLP head.
+
+## Off-policy: SAC / SAC-Lag / SAC-PID
+
+SAC, SAC-Lag, and SAC-PID are off-policy: they keep a replay buffer of past transitions and train on samples from it, rather than consuming a rollout once (like PPO and its safe-RL variants do). That difference matters for vision:
+
+- **Replay buffer memory.** Every stored transition now includes one or more `(H, W, C)` image frames. CRAX's replay buffer stores frames as `uint8` (not upcast to `float32`) so a full buffer doesn't blow up memory 4x, but `--max_replay_size` (in *transitions*, not bytes) still bounds total size directly — the state-vector default (`num_timesteps`) is far too large for images, so vision runs default to a much smaller buffer (100k transitions) unless you pass `--max_replay_size` explicitly.
+- **Pixel augmentation** is applied per-sample at training time (each replay sample gets its own independent random crop-pad shift), not shared across a rollout the way PPO's is.
+- **Every Q-critic gets its own CNN encoder**, independent of the policy's and of each other — 2 CNNs total for plain SAC (policy + Q), 3 for SAC-Lag/SAC-PID (policy + reward-Q + cost-Q) — more parameters/compute than the shared-encoder PPO path.
+
+```bash
+# Off-policy safe RL
+python train_env.py --env_name safe_goal_point --alg sac_lag --difficulty 1 --vision \
+    --max_replay_size 50000
+
+# Off-policy, unconstrained
+python train_env.py --env_name safe_goal_point --alg sac --difficulty 1 --vision \
+    --max_replay_size 50000
+```
 
 ## Performance Considerations
 
@@ -146,7 +166,7 @@ To use with a custom training loop, create the vision network factory:
 ```python
 from run_utils import make_vision_network_factory
 
-# For safe RL algorithms (automatically adds cost_value_network)
+# On-policy safe RL algorithms (automatically adds cost_value_network)
 network_factory = make_vision_network_factory(
     'ppo_lag',
     policy_obs_key='state',
@@ -159,6 +179,42 @@ ppo_lag.train(
     environment=env,
     network_factory=network_factory,
     augment_pixels=True,
+    ...
+)
+```
+
+`make_vision_network_factory` routes to a CNN reward-Q-critic for `'sac'`, and to CNN reward-/cost-Q-critics for `'sac_lag'`/`'sac_pid'`:
+
+```python
+network_factory = make_vision_network_factory(
+    'sac',
+    policy_obs_key='state',
+    value_obs_key='state',
+)
+
+from crax.training.agents.sac import train as sac
+sac.train(
+    environment=env,
+    network_factory=network_factory,
+    augment_pixels=True,
+    max_replay_size=50_000,
+    ...
+)
+```
+
+```python
+network_factory = make_vision_network_factory(
+    'sac_lag',
+    policy_obs_key='state',
+    value_obs_key='state',
+)
+
+from crax.training.agents.sac_lag import train as sac_lag
+sac_lag.train(
+    environment=env,
+    network_factory=network_factory,
+    augment_pixels=True,
+    max_replay_size=50_000,  # see "Off-policy: SAC-Lag / SAC-PID" above
     ...
 )
 ```

@@ -164,34 +164,50 @@ def filter_kwargs_for_fn(fn, cfg):
 def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
     """Create a vision-aware network factory for the given algorithm.
 
-    Safe RL algorithms (ppo_lag, ppo_pid, focops, p3o, crpo) need a cost_value_network
-    in addition to policy and value networks. This factory ensures the correct
-    network is created based on the algorithm.
+    On-policy safe RL algorithms (ppo_lag, ppo_pid, focops, p3o, crpo; plus
+    ppo_saute and plain ppo, which pass through to the same PPO trainer) need
+    a cost_value_network in addition to policy and value networks. Off-policy
+    safe RL algorithms (sac_lag, sac_pid) need CNN reward- and cost-Q-critics
+    instead, and plain sac needs a CNN reward-Q-critic only (no cost side).
+    This factory routes to the correct network builder based on the
+    algorithm.
 
     Args:
-        alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'focops').
-        **vision_net_kwargs: Extra kwargs passed to make_ppo_networks_vision
-            (e.g., normalise_channels, policy_obs_key, value_obs_key).
+        alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'sac_lag').
+        **vision_net_kwargs: Extra kwargs passed to the underlying
+            make_*_networks_vision factory (e.g., normalise_channels,
+            policy_obs_key, value_obs_key).
 
     Returns:
-        A network_factory callable compatible with the PPO training loop.
+        A network_factory callable compatible with the algorithm's training
+        loop.
     """
+    def _bind(builder, **default_kwargs):
+        """Wrap a make_*_networks_vision builder into a network_factory closure.
+
+        Precedence for a given kwarg: explicit call-site kwargs > factory-level
+        vision_net_kwargs > alg-specific default_kwargs.
+        """
+
+        def network_factory(observation_size, action_size, **kwargs):
+            merged = {**default_kwargs, **vision_net_kwargs, **kwargs}
+            return builder(observation_size=observation_size, action_size=action_size, **merged)
+
+        return network_factory
+
+    if alg_name == 'sac':
+        from crax.training.agents.sac.networks import make_sac_networks_vision
+        return _bind(make_sac_networks_vision)
+
+    if alg_name in {'sac_lag', 'sac_pid'}:
+        from crax.training.agents.sac_lag.networks import make_sac_lag_networks_vision
+        return _bind(make_sac_lag_networks_vision)
+
     from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
     safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'}
-    needs_cost_value = alg_name in safe_algs
-
-    def network_factory(obs_size, action_size, **kwargs):
-        merged = {**vision_net_kwargs, **kwargs}
-        if needs_cost_value and 'cost_value_hidden_layer_sizes' not in merged:
-            merged['cost_value_hidden_layer_sizes'] = (256,) * 5
-        return make_ppo_networks_vision(
-            observation_size=obs_size,
-            action_size=action_size,
-            **merged,
-        )
-
-    return network_factory
+    defaults = {'cost_value_hidden_layer_sizes': (256,) * 5} if alg_name in safe_algs else {}
+    return _bind(make_ppo_networks_vision, **defaults)
 
 
 def collect_rollout_metrics(env_name: str, make_inference_fn, params,

@@ -71,9 +71,44 @@ def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
 
 
+def _remove_pixels(obs):
+  """Drops 'pixels/*' keys -- those are normalized internally (/255) by the
+  vision CNN encoder, not via running statistics. No-op for flat (non-dict)
+  state observations. Mirrors crax.training.agents.ppo.train / sac_lag.train.
+  """
+  if not isinstance(obs, dict):
+    return obs
+  return {k: v for k, v in obs.items() if not k.startswith('pixels/')}
+
+
+def _random_translate_pixels(obs: Dict[str, jax.Array], key: PRNGKey) -> Dict[str, jax.Array]:
+  """DrQ-style random crop-pad shift on pixel obs, independent per sample.
+
+  See crax.training.agents.sac_lag.train's identical helper for why this
+  differs from ppo.train's version (no temporal axis to share a shift
+  across in a replay-sampled batch).
+  """
+
+  def rt_view(img: jax.Array, padding: int, key: PRNGKey) -> jax.Array:  # HxWxC
+    crop_from = jax.random.randint(key, (2,), 0, 2 * padding + 1)
+    crop_from = jnp.concatenate([crop_from, jnp.zeros((1,), dtype=jnp.int32)])
+    padded = jnp.pad(
+        img, ((padding, padding), (padding, padding), (0, 0)), mode='edge'
+    )
+    return jax.lax.dynamic_slice(padded, crop_from, img.shape)
+
+  out = {}
+  for k, v in obs.items():
+    if k.startswith('pixels/'):
+      key, key_shift = jax.random.split(key)
+      keys = jax.random.split(key_shift, v.shape[0])
+      out[k] = jax.vmap(lambda img, kk: rt_view(img, 4, kk))(v, keys)
+  return {**obs, **out}
+
+
 def _init_training_state(
     key: PRNGKey,
-    obs_size: int,
+    obs_size: Any,
     local_devices_to_use: int,
     sac_network: sac_networks.SACNetworks,
     alpha_optimizer: optax.GradientTransformation,
@@ -90,9 +125,13 @@ def _init_training_state(
   q_params = sac_network.q_network.init(key_q)
   q_optimizer_state = q_optimizer.init(q_params)
 
-  normalizer_params = running_statistics.init_state(
-      specs.Array((obs_size,), jnp.dtype('float32'))
-  )
+  if isinstance(obs_size, dict):
+    obs_spec = _remove_pixels(
+        {k: specs.Array(v, jnp.dtype('float32')) for k, v in obs_size.items()}
+    )
+  else:
+    obs_spec = specs.Array((obs_size,), jnp.dtype('float32'))
+  normalizer_params = running_statistics.init_state(obs_spec)
 
   training_state = TrainingState(
       policy_optimizer_state=policy_optimizer_state,
@@ -144,6 +183,9 @@ def train(
     ] = None,
     checkpoint_logdir: Optional[str] = None,
     restore_checkpoint_path: Optional[str] = None,
+    # Vision (pixel-obs) training -- see ppo.train.train / sac_lag.train.
+    vision_kwargs: Optional[Dict[str, Any]] = None,
+    augment_pixels: bool = False,
 ):
   """SAC training."""
   process_id = jax.process_index()
@@ -163,7 +205,18 @@ def train(
     )
 
   if max_replay_size is None:
-    max_replay_size = num_timesteps
+    if vision_kwargs is not None:
+      # num_timesteps (the flat-state default) sizes a buffer of raw pixel
+      # frames catastrophically -- see sac_lag.train for the full rationale.
+      max_replay_size = min(num_timesteps, 100_000)
+      logging.info(
+          'vision_kwargs set and max_replay_size not given -- defaulting '
+          'replay buffer to %d transitions (pass max_replay_size explicitly '
+          'to change this).',
+          max_replay_size,
+      )
+    else:
+      max_replay_size = num_timesteps
   max_replay_size = int(max_replay_size)
 
   # The number of environment steps executed for every `actor_step()` call.
@@ -217,10 +270,13 @@ def train(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )  # pytype: disable=wrong-keyword-args
+    if vision_kwargs is not None:
+      # Must wrap AFTER wrap_for_training (post-vmap/episode/autoreset) --
+      # see GpuPixelObservationWrapper's module docstring.
+      from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+      env = GpuPixelObservationWrapper(env, num_envs=num_envs, **vision_kwargs)
 
   obs_size = env.observation_size
-  if isinstance(obs_size, Dict):
-    raise NotImplementedError('Dictionary observations not implemented in SAC')
   action_size = env.action_size
 
   normalize_fn = lambda x, y: x
@@ -238,7 +294,18 @@ def train(
   policy_optimizer = optax.adam(learning_rate=learning_rate)
   q_optimizer = optax.adam(learning_rate=learning_rate)
 
-  dummy_obs = jnp.zeros((obs_size,))
+  if isinstance(obs_size, dict):
+    # uint8 for pixel keys (matches GpuPixelObservationWrapper's output
+    # dtype), float32 for everything else (e.g. 'state' in
+    # --vision_obs_mode pixels+state).
+    dummy_obs = {
+        key: jnp.zeros(
+            shape, jnp.uint8 if key.startswith('pixels/') else jnp.float32
+        )
+        for key, shape in obs_size.items()
+    }
+  else:
+    dummy_obs = jnp.zeros((obs_size,))
   dummy_action = jnp.zeros((action_size,))
   dummy_transition = Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
       observation=dummy_obs,
@@ -248,7 +315,12 @@ def train(
       next_observation=dummy_obs,
       extras={'state_extras': {'truncation': 0.0}, 'policy_extras': {}},
   )
-  replay_buffer = replay_buffers.UniformSamplingQueue(
+  replay_buffer_cls = (
+      replay_buffers.PytreeUniformSamplingQueue
+      if isinstance(obs_size, dict)
+      else replay_buffers.UniformSamplingQueue
+  )
+  replay_buffer = replay_buffer_cls(
       max_replay_size=max_replay_size // device_count,
       dummy_data_sample=dummy_transition,
       sample_batch_size=batch_size * grad_updates_per_step // device_count,
@@ -357,7 +429,7 @@ def train(
 
     normalizer_params = running_statistics.update(
         normalizer_params,
-        transitions.observation,
+        _remove_pixels(transitions.observation),
         pmap_axis_name=_PMAP_AXIS_NAME,
     )
 
@@ -390,6 +462,14 @@ def train(
     )
 
     buffer_state, transitions = replay_buffer.sample(buffer_state)
+    if augment_pixels:
+      training_key, key_aug_obs, key_aug_next = jax.random.split(training_key, 3)
+      transitions = transitions._replace(
+          observation=_random_translate_pixels(transitions.observation, key_aug_obs),
+          next_observation=_random_translate_pixels(
+              transitions.next_observation, key_aug_next
+          ),
+      )
     # Change the front dimension of transitions so 'update_step' is called
     # grad_updates_per_step times by the scan.
     transitions = jax.tree_util.tree_map(
@@ -545,6 +625,11 @@ def train(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )  # pytype: disable=wrong-keyword-args
+    if vision_kwargs is not None:
+      from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+      eval_env = GpuPixelObservationWrapper(
+          eval_env, num_envs=num_eval_envs, **vision_kwargs
+      )
 
   evaluator = acting.Evaluator(
       eval_env,
