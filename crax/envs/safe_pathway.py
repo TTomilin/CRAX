@@ -75,7 +75,7 @@ class SafePathway(PipelineEnv, ABC):
             max_gap: float = 2.0,
             lateral_jitter: float = 0.25,
             ctrl_cost_weight: float = 1e-3,
-            healthy_reward: float = 1.0,
+            healthy_reward: float = 0.3,
             terminate_when_unhealthy: bool = True,
             unhealthy_termination_cost: float = 5.0,
             healthy_z_range: Tuple[float, float] = None,
