@@ -2,7 +2,7 @@
 
 Pre-wraps the environment with SauteWrapper and delegates to standard PPO.
 """
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from crax import envs
 from crax.training.agents.ppo import train as ppo_train
@@ -48,6 +48,9 @@ def train(
     pretrained_params: Optional[Any] = None,
     eval_env: Optional[envs.Env] = None,
     training_metrics_steps: Optional[float] = None,
+    network_factory: Optional[Any] = None,
+    vision_kwargs: Optional[Dict[str, Any]] = None,
+    augment_pixels: bool = False,
     **kwargs,
 ) -> TrainReturn:
   # choose gamma for Saute; default to PPO discounting
@@ -70,6 +73,13 @@ def train(
         violation_penalty=violation_penalty,
         normalize_budget_obs=normalize_budget_obs,
     )
+
+  if network_factory is not None:
+    kwargs['network_factory'] = network_factory
+  if vision_kwargs is not None:
+    kwargs['vision_kwargs'] = vision_kwargs
+  if augment_pixels:
+    kwargs['augment_pixels'] = augment_pixels
 
   return ppo_train.train(
       environment=env_for_training,
