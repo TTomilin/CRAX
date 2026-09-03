@@ -61,7 +61,7 @@ Every environment offers three difficulty levels that progressively increase con
 ## Installation
 
 ```bash
-git clone https://github.com/your-repo/CRAX.git
+git clone https://github.com/TTomilin/CRAX.git
 cd CRAX
 ```
 
