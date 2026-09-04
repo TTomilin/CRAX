@@ -1,174 +1,150 @@
 # CRAX Setup Instructions
 
-## Quick Start
+Getting a working install and your first training run. For the algorithm and
+environment catalogue, see the [README](README.md); for pixel observations, see
+[docs/VISION_TRAINING.md](docs/VISION_TRAINING.md).
 
-### 1. Create Virtual Environment
+## 1. Create Virtual Environment
+
+Python **3.10+** is required (`requires-python = ">=3.10"`).
 
 ```bash
-python3.10 -m venv env
+python3 -m venv env
 source env/bin/activate  # On Windows: env\Scripts\activate
 ```
 
-### 2. Install Dependencies
+Conda works too:
 
-**Option A: Flexible versions (recommended for development)**
 ```bash
-pip install -r requirements.txt
+conda create -n crax python=3.11 && conda activate crax
 ```
 
-**Option B: Exact pinned versions (for reproducibility)**
+## 2. Install CRAX
+
+**Option A: package + CUDA 12 extra (recommended)**
 ```bash
-pip install -r requirements-pinned.txt
+pip install -e ".[cuda]"
 ```
 
-### 3. Install CRAX in Editable Mode
-
+**Option B: CPU-only**
 ```bash
 pip install -e .
 ```
 
-### 4. Verify Installation
-
+**Option C: pinned versions (for reproducibility)**
 ```bash
-python -c "from crax import envs; print('CRAX imports successfully!')"
-python -c "from crax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
-python -c "from crax.training.agents.focops import train; print('FOCOPS available!')"
-python -c "from crax.training.agents.p3o import train; print('P3O available!')"
+pip install -r requirements-pinned.txt
+pip install -e . --no-deps
 ```
 
-## GPU Setup
+`requirements.txt` holds the same stack with looser bounds and is kept for
+environments that install dependencies separately from the package.
 
-### NVIDIA GPU with CUDA 12.x
+> **Do not mix MuJoCo versions.** `mujoco`, `mujoco-mjx` and `mujoco-warp` must
+> all be `3.11.0`, paired with `warp-lang==1.16.0`. MJWarp is what the GPU
+> vision renderer runs on.
 
-The requirements include `jax-cuda12-plugin` which requires:
-- NVIDIA GPU
-- CUDA Toolkit 12.x
-- cuDNN
+## 3. Verify Installation
 
-To verify GPU is detected:
 ```bash
+python -c "from crax import envs; print(sorted(envs._envs))"
+python -c "from crax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
 python -c "import jax; print(f'Devices: {jax.devices()}')"
 ```
 
-### CPU-only Installation
+The `cuda` extra pulls `jax[cuda12]`, which needs an NVIDIA GPU, CUDA Toolkit
+12.x and cuDNN. Without the extra you get CPU JAX: training runs, but far too
+slowly for the default `--num_envs 2048`, so drop it to a few dozen envs.
+Vision mode (`--vision`) needs a GPU, since MJWarp renders on CUDA.
 
-If you don't have a GPU, remove these lines from requirements.txt:
-```
-jax-cuda12-plugin
-jax-cuda12-pjrt
-```
-
-Then install CPU-only JAX:
-```bash
-pip install jax[cpu]
-```
-
-## Running Training
-
-### Basic Usage
+## 4. First Training Run
 
 ```bash
 python train_env.py \
-  --env_name safe_point_goal \
+  --env_name safe_goal_point \
   --alg ppo_lag \
   --difficulty 1 \
+  --num_envs 32 \
   --seeds 0
 ```
 
-### Using a Config File
+`--seeds` takes a list, so `--seeds 0 1 2` runs three sequential experiments.
+`--difficulty` accepts `1`, `2` or `3`.
+
+Other entry points:
 
 ```bash
-python scripts/run_from_config.py configs/pointgoal_lidar/ppol_bound_0.05.json
+# Curriculum training (progressive difficulty)
+python train_curriculum.py --env_name safe_goal_point --alg ppo_lag
+
+# Safety transfer (pre-train with PPO, then fine-tune with a safe algorithm)
+python train_transfer.py --env_name safe_velocity_ant --alg ppo_lag
+
+# Pixel observations, rendered on GPU via MJWarp
+python train_env.py --env_name safe_goal_point --alg ppo_lag --vision
 ```
 
-### Using tmux for Long Training Runs
+All three scripts share the same argument set, defined in
+`configs/training_config.py` (`build_base_parser`). Run with `--help` for the
+full list, including the per-algorithm sections (`--safety_bound`, `--pid_kp`,
+`--nu_lr`, `--tau`, ...).
+
+Boolean flags (`--use_wandb`, `--store_model`, `--normalize_observations`,
+`--deterministic_eval`) accept `true/false`, `1/0`, `yes/no` in either case,
+and default to `True` when passed bare (`--use_wandb` == `--use_wandb true`).
+Anything else is a parse error.
+
+
+## 5. Weights & Biases (wandb)
+
+Training logs to wandb by default. Log in once:
 
 ```bash
-# Start training in background
-tmux new -s training "python train_env.py --env_name safe_point_goal --alg ppo_lag --difficulty 1 --seeds 0"
-
-# Detach: Ctrl+b, then d
-# Reattach: tmux attach -t training
-# Kill: tmux kill-session -t training
+wandb login
 ```
 
-## Available Algorithms
+```bash
+# Disable wandb
+python train_env.py --env_name safe_goal_point --alg ppo_lag --use_wandb false
 
-CRAX supports multiple constrained RL algorithms via the `--alg` flag:
-
-| Algorithm | Flag | Description |
-|-----------|------|-------------|
-| **PPO** | `ppo` | Vanilla PPO (unconstrained baseline) |
-| **PPO-Cost** | `ppo_cost` | PPO with cost penalty in reward |
-| **PPO-Lagrange** | `ppo_lag` | PPO with Lagrangian constraint relaxation |
-| **PPO-PID** | `ppo_pid` | PPO with PID-controlled Lagrange multiplier |
-| **FOCOPS** | `focops` | First Order Constrained Optimization in Policy Space |
-| **P3O** | `p3o` | Penalized Proximal Policy Optimization |
-| **PPO-Saute** | `ppo_saute` | State Augmentation for Safe RL |
-
-The training script prints the selected algorithm on startup.
-
-## Available Environments
-
-| Environment | Description |
-|-------------|-------------|
-| `safe_point_goal` | Point mass navigation with hazard avoidance |
-| `safe_ant` | Ant locomotion with safety constraints |
-| `safe_walker` | Walker2D with boundary constraints |
-| `safe_reacher` | Reacher with obstacle avoidance |
-
-Most environments support a `--difficulty` parameter (1-3) that controls hazard density.
+# Set project, group, and tags
+python train_env.py --env_name safe_goal_point --alg ppo_lag \
+  --wandb_project crax-experiments \
+  --wandb_group safe_goal_point \
+  --wandb_tags tag1 tag2
+```
 
 ## Troubleshooting
 
-### Mujoco Import Errors
+### MuJoCo import errors
 
 If you see `ModuleNotFoundError: No module named 'mujoco.introspect'`:
 ```bash
 pip install --upgrade mujoco mujoco-mjx
 ```
+Keep `mujoco`, `mujoco-mjx` and `mujoco-warp` on the same version (3.11.0).
 
-### GPU Out of Memory
+### GPU out of memory
 
 Reduce the number of parallel environments:
 ```bash
-python train_env.py --env_name safe_point_goal --alg ppo_lag --difficulty 1 \
-  --num_envs 1024 --num_eval_envs 64
+python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1 \
+  --num_envs 32 --num_eval_envs 32
 ```
 
-### Rendering Issues (Headless Server)
+(Defaults are `--num_envs 2048`, `--num_eval_envs 128`.)
 
-Set the MuJoCo rendering backend:
+In vision mode, JAX and MJWarp share the GPU. `setup_gpu_environment` caps
+`XLA_PYTHON_CLIENT_MEM_FRACTION=0.5` automatically so the renderer has
+headroom. Set the variable yourself before launching to override it.
+
+### Rendering issues (headless server)
+
+`setup_gpu_environment` sets `MUJOCO_GL=egl` at startup, which needs a GPU with
+EGL. On a machine without one, use software rendering:
 ```bash
-export MUJOCO_GL=egl  # or osmesa
-```
-
-## File Structure
-
-```
-CRAX/
-├── crax/
-│   ├── envs/                    # Environment definitions
-│   │   ├── safe_point_goal.py
-│   │   ├── safe_ant.py
-│   │   ├── safe_walker.py
-│   │   ├── safe_reacher.py
-│   │   ├── hazards.py           # Hazard generation
-│   │   └── goals.py             # Goal sampling
-│   └── training/
-│       └── agents/
-│           ├── ppo/             # Base PPO with hooks
-│           ├── ppo_lag/         # PPO-Lagrange
-│           ├── ppo_pid/         # PPO-PID
-│           ├── focops/          # FOCOPS
-│           ├── p3o/             # P3O
-│           └── ppo_saute/       # Saute wrapper
-├── configs/                     # Training configurations
-├── scripts/                     # Utility scripts
-├── train_env.py                 # Main training script (CLI)
-├── requirements.txt             # Flexible versions
-├── requirements-pinned.txt      # Exact versions
-└── pyproject.toml               # Package configuration
+export MUJOCO_GL=osmesa   # also edit run_utils.setup_gpu_environment, which
+                          # currently overwrites MUJOCO_GL unconditionally
 ```
 
 ## Updating Dependencies
@@ -177,23 +153,4 @@ To update to latest compatible versions:
 ```bash
 pip install --upgrade -r requirements.txt
 pip freeze > requirements-pinned.txt  # Save new versions
-```
-
-## Weights & Biases (wandb)
-
-Login to Weights & Biases for experiment tracking:
-```bash
-wandb login
-```
-
-By default, training enables wandb logging. You can disable it or configure it:
-```bash
-# Disable wandb
-python train_env.py --env_name safe_point_goal --alg ppo_lag --use_wandb False
-
-# Set project, group, and tags
-python train_env.py --env_name safe_point_goal --alg ppo_lag \
-  --wandb_project crax-experiments \
-  --wandb_group safe_point_goal \
-  --wandb_tags tag1 tag2
 ```
