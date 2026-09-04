@@ -5,6 +5,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 
 from typing import Any, Optional, Tuple
 
+from crax.training import networks
 from crax.training import types
 from crax.training.agents.ppo import networks as ppo_networks
 from crax.training.types import Params
@@ -20,6 +21,34 @@ class PPONetworkParams:
     policy: Params
     value: Params
     cost_value: Optional[Params] = None
+    # Shared vision CNN backbone params (see
+    # networks_vision.make_ppo_networks_vision, share_encoder=True). None
+    # for state-based networks and for vision networks with
+    # share_encoder=False.
+    encoder: Optional[Params] = None
+
+
+def with_shared_latent(
+    ppo_network: ppo_networks.PPONetworks,
+    params: PPONetworkParams,
+    normalizer_params: Any,
+    obs: types.Observation,
+) -> types.Observation:
+    """Runs the shared vision encoder once and stashes its output in `obs`.
+
+    No-op when `ppo_network` wasn't built with a shared encoder (state-based
+    training, or vision with `share_encoder=False`), so this is safe to call
+    unconditionally from every PPO-family loss function. Letting the policy,
+    value, and cost-value heads all read the same `VISION_LATENT_KEY` off of
+    one encoder forward pass -- rather than each head recomputing its own --
+    is what ties their gradients into a single shared CNN backbone.
+    """
+    if ppo_network.encoder_network is None:
+        return obs
+    latent = ppo_network.encoder_network.apply(
+        normalizer_params, params.encoder, obs
+    )
+    return {**obs, networks.VISION_LATENT_KEY: latent}
 
 
 def compute_gae(
@@ -115,10 +144,12 @@ def compute_ppo_loss(
     value_apply = ppo_network.value_network.apply
 
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits = policy_apply(normalizer_params, params.policy, data.observation)
+    obs = with_shared_latent(ppo_network, params, normalizer_params, data.observation)
+    policy_logits = policy_apply(normalizer_params, params.policy, obs)
 
-    baseline = value_apply(normalizer_params, params.value, data.observation)
+    baseline = value_apply(normalizer_params, params.value, obs)
     terminal_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    terminal_obs = with_shared_latent(ppo_network, params, normalizer_params, terminal_obs)
     bootstrap_value = value_apply(normalizer_params, params.value, terminal_obs)
 
     rewards = data.reward * reward_scaling

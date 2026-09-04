@@ -90,7 +90,7 @@ class PPOTest(parameterized.TestCase):
         value_obs_key='privileged_state',
     )
 
-    _, (_, policy_params, value_params), _ = ppo.train(
+    _, (_, policy_params, value_params), _, _ = ppo.train(
         env,
         num_timesteps=2**15,
         episode_length=1000,
@@ -209,7 +209,7 @@ class PPOTest(parameterized.TestCase):
         value_obs_key=value_obs_key,
     )
 
-    _, (_, policy_params, value_params), _ = ppo.train(
+    _, (_, policy_params, value_params, _), _, _ = ppo.train(
         env,
         num_timesteps=2**15,
         episode_length=1000,
@@ -229,7 +229,7 @@ class PPOTest(parameterized.TestCase):
         augment_pixels=True,
     )
     num_views = 2
-    cnn_features = 64
+    cnn_features = 4 * 4 * 64
 
     if asymmetric_obs:
       self.assertEqual(

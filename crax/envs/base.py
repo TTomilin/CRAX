@@ -184,6 +184,16 @@ class Wrapper(Env):
   def step(self, state: State, action: jax.Array) -> State:
     return self.env.step(state, action)
 
+  def render(
+      self,
+      trajectory: List[base.State],
+      height: int = 240,
+      width: int = 320,
+      camera: Optional[str] = None,
+  ) -> Sequence[np.ndarray]:
+    # Without this, `render` resolves via normal Python MRO to Env.render
+    return self.env.render(trajectory, height=height, width=width, camera=camera)
+
   @property
   def observation_size(self) -> ObservationSize:
     return self.env.observation_size

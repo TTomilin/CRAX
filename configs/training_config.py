@@ -22,6 +22,28 @@ def _json_type(s):
         raise argparse.ArgumentTypeError(f"Invalid JSON string for env_kwargs: {e}")
 
 
+_TRUE_STRINGS = {"1", "true", "t", "yes", "y", "on"}
+_FALSE_STRINGS = {"0", "false", "f", "no", "n", "off", ""}
+
+
+def bool_type(s):
+    """Parse a CLI boolean.
+
+    Passing `bool` as an argparse `type` is a trap: argparse hands the raw
+    string to `bool()`, so `--flag False` evaluates to True. This accepts the
+    usual spellings of both values instead, and still allows the flag to be
+    passed bare (`--flag` == `--flag true`) via `nargs="?"`/`const=True`.
+    """
+    if isinstance(s, bool):
+        return s
+    v = str(s).strip().lower()
+    if v in _TRUE_STRINGS:
+        return True
+    if v in _FALSE_STRINGS:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected a boolean value, got {s!r}")
+
+
 DEFAULT_ENV_KWARGS: Dict[str, Any] = {
     "physics": {
         "backend": "mjx",
@@ -56,7 +78,8 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument(
         "--out_dir", type=str, default="runs/experimental_results", help="Directory for metrics/outputs"
     )
-    parser.add_argument("--store_model", type=bool, default=True, help="Store model checkpoint after training")
+    parser.add_argument("--store_model", type=bool_type, nargs="?", const=True, default=True,
+                        help="Store model checkpoint after training")
 
     # --- Environment ---
     parser.add_argument("--env_name", type=str, default="safe_goal_point", help="Env name")
@@ -100,14 +123,14 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--reward_scaling", type=float, default=0.1, help="Reward scaling")
     parser.add_argument("--gae_lambda", type=float, default=0.95, help="GAE lambda")
     parser.add_argument("--clipping_epsilon", type=float, default=0.3, help="PPO clipping epsilon")
-    parser.add_argument(
-        "--normalize_observations", type=bool, default=True, help="Normalize observations (true/false)"
-    )
+    parser.add_argument("--normalize_observations", type=bool_type, nargs="?", const=True, default=True,
+                        help="Normalize observations (true/false)")
 
     # --- Evaluation / Logging cadence ---
     parser.add_argument("--num_evals", type=int, default=5, help="Number of eval passes during training")
     parser.add_argument("--num_eval_envs", type=int, default=128, help="Parallel envs during eval")
-    parser.add_argument("--deterministic_eval", type=bool, default=False, help="Deterministic eval policy")
+    parser.add_argument("--deterministic_eval", type=bool_type, nargs="?", const=True, default=False,
+                        help="Deterministic eval policy")
     parser.add_argument(
         "--training_metrics_steps", type=float, default=1e6, help="Env steps between training metrics logs"
     )
@@ -156,38 +179,39 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
 
     # --- CRPO ---
     parser.add_argument("--crpo_eta", type=float, default=0.0,
-                        help="CRPO: tolerance added to safety_bound when deciding whether to optimize "
-                             "reward or cost for a training step")
+                        help="CRPO: tolerance added to safety_bound when deciding whether to optimize reward or cost for a training step")
 
     # --- SAC-Lag (off-policy) ---
     parser.add_argument("--lagrangian_lr", type=float, default=0.01,
                         help="SAC-Lag: Lagrange multiplier LR (per-episode scale, comparable to PPO-Lag lagrangian_coef_rate; normalized internally by episode_length)")
     parser.add_argument("--initial_lambda", type=float, default=0.0, help="SAC-Lag: initial Lagrange multiplier value")
-    parser.add_argument("--lambda_max", type=float, default=2.0, help="SAC-Lag: upper bound on Lagrange multiplier (prevents runaway)")
+    parser.add_argument("--lambda_max", type=float, default=2.0,
+                        help="SAC-Lag: upper bound on Lagrange multiplier (prevents runaway)")
     parser.add_argument("--tau", type=float, default=0.005, help="SAC-Lag: soft target network update coefficient")
-    parser.add_argument("--min_replay_size", type=int, default=0, help="SAC-Lag: minimum replay buffer size before training starts")
-    parser.add_argument("--max_replay_size", type=float, default=None, help="SAC-Lag: maximum replay buffer size before training starts")
-    parser.add_argument("--grad_updates_per_step", type=int, default=1, help="SAC-Lag: gradient updates per environment step")
+    parser.add_argument("--min_replay_size", type=int, default=0,
+                        help="SAC-Lag: minimum replay buffer size before training starts")
+    parser.add_argument("--max_replay_size", type=float, default=None,
+                        help="SAC-Lag: maximum replay buffer size before training starts")
+    parser.add_argument("--grad_updates_per_step", type=int, default=1,
+                        help="SAC-Lag: gradient updates per environment step")
 
     # --- WandB ---
-    parser.add_argument("--use_wandb", type=bool, default=True, help="Enable wandb logging")
+    parser.add_argument("--use_wandb", type=bool_type, nargs="?", const=True, default=True, help="Enable wandb logging")
     parser.add_argument("--wandb_project", type=str, default="crax", help="W&B project")
     parser.add_argument("--wandb_group", type=str, default=None, help="W&B group")
     parser.add_argument("--wandb_tags", type=str, nargs='+', help="JSON list or path of tags")
 
     # --- Vision (Pixel Observation) ---
-    parser.add_argument("--vision", action="store_true", help="Use egocentric pixel observations (GPU via pixelbrax)")
-    parser.add_argument(
-        "--vision_camera", type=str, default="vision",
-        help="Name of the MuJoCo camera to render from (must exist in the XML, default: 'vision')",
-    )
+    parser.add_argument("--vision", action="store_true", help="Use egocentric pixel observations (GPU via MJWarp)")
+    parser.add_argument("--vision_camera", type=str, default=None,
+                        help="Name of the MuJoCo camera to render pixel observations from. Default: 'vision' (egocentric), except "
+                             "'track' (external side/chase view) for humanoid/ant/cheetah/walker2d/spider morphologies, and 'fixedfar' for reacher.")
     parser.add_argument("--vision_height", type=int, default=64, help="Render height in pixels")
     parser.add_argument("--vision_width", type=int, default=64, help="Render width in pixels")
-    parser.add_argument(
-        "--vision_obs_mode", type=str, choices=["pixels", "pixels+state"], default="pixels",
-        help="'pixels' (pixels only) or 'pixels+state' (pixels + state vector)",
-    )
-    parser.add_argument("--vision_frame_stack", type=int, default=1, help="Number of frames to stack channel-wise")
+    parser.add_argument("--vision_obs_mode", type=str, choices=["pixels", "pixels+state"], default="pixels",
+                        help="'pixels' (pixels only) or 'pixels+state' (pixels + state vector)")
+    parser.add_argument("--vision_frame_stack", type=int, default=3,
+                        help="Number of frames to stack channel-wise (3 is standard for RGB dm_control-style pixel RL, e.g. DrQ/RAD)")
 
     # --- Video Recording ---
     parser.add_argument("--cameras", type=str, nargs="+", default=["fixedfar", "vision"], help="Camera names/ids")
@@ -196,9 +220,12 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--video_length", type=int, default=None, help="Number of frames in the video")
     parser.add_argument("--video_fps", type=int, default=100, help="Output video FPS")
     parser.add_argument("--video_frame_stride", type=int, default=1, help="Output video frame stride")
-    parser.add_argument(
-        "--num_video_episodes", type=int, default=5, help="Number of episodes to record per evaluation",
-    )
+    parser.add_argument("--num_video_episodes", type=int, default=5, help="Number of episodes to record per evaluation")
+    parser.add_argument("--video_every_steps", type=int, default=25_000_000,
+                        help="--vision only: log a short clip to wandb roughly every this many env "
+                             "steps, rendered directly from the policy's own GPU (MJWarp) pixel observations.")
+    parser.add_argument("--periodic_video_steps", type=int, default=300,
+                        help="--vision only: env steps per periodic clip.")
 
     return parser
 

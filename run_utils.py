@@ -30,6 +30,24 @@ from crax.training.agents.sac_pid import train as sac_pid
 # Global metrics buffer instance
 metrics_buffer = []
 
+# Pixel-observation training camera
+VISION_CAMERA_OVERRIDES = {
+    'humanoid': 'track',
+    'ant': 'track',
+    'cheetah': 'track',
+    'walker2d': 'track',
+    'spider': 'track',
+    'reacher': 'fixedfar',
+}
+
+
+def morphology_override(env_name, overrides):
+    """First substring match of `overrides`' keys found in `env_name`, else None."""
+    for key, value in overrides.items():
+        if key in env_name:
+            return value
+    return None
+
 
 def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool = False, verbose: bool = True) -> None:
     """
@@ -75,8 +93,16 @@ def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool 
         metrics_buffer.clear()
 
 
-def setup_gpu_environment():
-    """Setup GPU environment for MuJoCo and XLA."""
+def setup_gpu_environment(vision: bool = False):
+    """Setup GPU environment for MuJoCo and XLA.
+
+    Args:
+      vision: if True, caps JAX's GPU memory preallocation so MJWarp (the
+        pixel-obs renderer) has room to instantiate its own CUDA graphs/
+        buffers alongside JAX in the same process. JAX preallocates ~75-90%
+        of GPU memory by default. On small GPUs this starves MJWarp. Only
+        applied if the user hasn't already set XLA_PYTHON_CLIENT_MEM_FRACTION.
+    """
     # Configure MuJoCo to use the EGL rendering backend (requires GPU)
     os.environ['MUJOCO_GL'] = 'egl'
 
@@ -84,6 +110,14 @@ def setup_gpu_environment():
     xla_flags = os.environ.get('XLA_FLAGS', '')
     xla_flags += ' --xla_gpu_triton_gemm_any=True'
     os.environ['XLA_FLAGS'] = xla_flags
+
+    if vision and 'XLA_PYTHON_CLIENT_MEM_FRACTION' not in os.environ:
+        os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
+        print(
+            "Vision mode: capped XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 to leave "
+            "GPU headroom for MJWarp's renderer (override by setting the env "
+            "var yourself before running)."
+        )
 
     # Check installation
     try:
@@ -130,34 +164,50 @@ def filter_kwargs_for_fn(fn, cfg):
 def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
     """Create a vision-aware network factory for the given algorithm.
 
-    Safe RL algorithms (ppo_lag, ppo_pid, focops, p3o, crpo) need a cost_value_network
-    in addition to policy and value networks. This factory ensures the correct
-    network is created based on the algorithm.
+    On-policy safe RL algorithms (ppo_lag, ppo_pid, focops, p3o, crpo; plus
+    ppo_saute and plain ppo, which pass through to the same PPO trainer) need
+    a cost_value_network in addition to policy and value networks. Off-policy
+    safe RL algorithms (sac_lag, sac_pid) need CNN reward- and cost-Q-critics
+    instead, and plain sac needs a CNN reward-Q-critic only (no cost side).
+    This factory routes to the correct network builder based on the
+    algorithm.
 
     Args:
-        alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'focops').
-        **vision_net_kwargs: Extra kwargs passed to make_ppo_networks_vision
-            (e.g., normalise_channels, policy_obs_key, value_obs_key).
+        alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'sac_lag').
+        **vision_net_kwargs: Extra kwargs passed to the underlying
+            make_*_networks_vision factory (e.g., normalise_channels,
+            policy_obs_key, value_obs_key).
 
     Returns:
-        A network_factory callable compatible with the PPO training loop.
+        A network_factory callable compatible with the algorithm's training
+        loop.
     """
+    def _bind(builder, **default_kwargs):
+        """Wrap a make_*_networks_vision builder into a network_factory closure.
+
+        Precedence for a given kwarg: explicit call-site kwargs > factory-level
+        vision_net_kwargs > alg-specific default_kwargs.
+        """
+
+        def network_factory(observation_size, action_size, **kwargs):
+            merged = {**default_kwargs, **vision_net_kwargs, **kwargs}
+            return builder(observation_size=observation_size, action_size=action_size, **merged)
+
+        return network_factory
+
+    if alg_name == 'sac':
+        from crax.training.agents.sac.networks import make_sac_networks_vision
+        return _bind(make_sac_networks_vision)
+
+    if alg_name in {'sac_lag', 'sac_pid'}:
+        from crax.training.agents.sac_lag.networks import make_sac_lag_networks_vision
+        return _bind(make_sac_lag_networks_vision)
+
     from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
 
     safe_algs = {'ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'}
-    needs_cost_value = alg_name in safe_algs
-
-    def network_factory(obs_size, action_size, **kwargs):
-        merged = {**vision_net_kwargs, **kwargs}
-        if needs_cost_value and 'cost_value_hidden_layer_sizes' not in merged:
-            merged['cost_value_hidden_layer_sizes'] = (256,) * 5
-        return make_ppo_networks_vision(
-            observation_size=obs_size,
-            action_size=action_size,
-            **merged,
-        )
-
-    return network_factory
+    defaults = {'cost_value_hidden_layer_sizes': (256,) * 5} if alg_name in safe_algs else {}
+    return _bind(make_ppo_networks_vision, **defaults)
 
 
 def collect_rollout_metrics(env_name: str, make_inference_fn, params,
@@ -591,6 +641,179 @@ def record_episode_video(
             wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")})
 
         print("Saved video:", mp4_path)
+
+
+def make_periodic_vision_video_fn(
+        env,
+        every_steps: int,
+        steps: int = 300,
+        pixel_camera: str = 'vision',
+        extra_cameras: Optional[List[str]] = None,
+        high_res: bool = True,
+        frame_stack: int = 1,
+        width: int = 320,
+        height: int = 240,
+        fps: int = 30,
+        out_dir: str = "videos",
+        run_name: str = "run",
+        deterministic: bool = False,
+        log_to_wandb: bool = True,
+        seed: int = 0,
+):
+    """Builds a `policy_params_fn`-compatible callback that periodically
+    renders short clips and logs them to wandb during training.
+
+    The rollout always drives its actions off `env`'s real GPU-rendered
+    (MJWarp) pixel observations (the same ones the policy is actually
+    trained on). So `env` must stay wrapped with `GpuPixelObservationWrapper`
+    at the policy's native training resolution (e.g. via
+    `envs.get_environment(..., vision=True, vision_kwargs=...)`) with
+    `num_envs=1` and the same camera/height/width/obs_mode/frame_stack it was
+    trained with, or actions won't match training behavior.
+
+    That's independent from what resolution the video itself is saved at,
+    controlled by `high_res`:
+      - `high_res=True` (default): `pixel_camera`'s video is rendered at
+        `width`x`height` (e.g. 320x240, not the policy's tiny training
+        resolution, e.g. 64x64) via a CPU MuJoCo render pass over the
+        rollout's own `pipeline_state`s.
+      - `high_res=False`: `pixel_camera`'s video instead reads frames straight
+        off the low-res GPU pixel observations already computed to drive the
+        policy. We get zero-cost, but it's capped at the training resolution.
+
+    `extra_cameras`, if given, adds further videos from the *same* rollout for
+    parity with vector-obs training's multi-camera video (e.g. `--cameras
+    fixedfar vision`): these never feed the policy (only `pixel_camera`'s
+    GPU observations do) and are always rendered the `high_res=True` way,
+    regardless of the `high_res` setting for `pixel_camera` itself.
+
+    `ppo.train()` calls `policy_params_fn(step, make_policy, params)` once
+    per eval iteration (see crax/training/agents/ppo/train.py), so the
+    actual cadence is bounded below by the eval interval (`num_evals`) --
+    this can't fire more often than evals run, only skip evals until
+    `every_steps` has elapsed.
+
+    Args:
+        env: single-env (num_envs=1), vision-wrapped rollout environment.
+        every_steps: minimum env-step gap between clips. <=0 disables.
+        steps: env steps to render per clip (kept short; this runs many
+            times over a training run).
+        pixel_camera: the camera `env` is wrapped with. Drives the policy's
+            actual observations always. Also one of the logged clips (at
+            `width`x`height` if `high_res`, else the training resolution).
+        extra_cameras: additional camera names to log alongside
+            `pixel_camera`, cosmetic only (see above). None/[] skips the CPU
+            render pass entirely when `high_res=False` (same cost as before
+            this arg existed). With `high_res=True` the pass is already
+            happening for `pixel_camera` so extra cameras ride along nearly
+            free.
+        high_res: see above.
+        frame_stack: must match the env's frame_stack; only used when
+            `high_res=False`, to keep the most recent RGB frame per step (a
+            raw frame_stack>1 observation encodes stale history in its extra
+            channels, not a paintable image).
+        width, height: render size for `high_res=True` clips (`pixel_camera`
+            when enabled, and always for `extra_cameras`).
+        fps: output video fps.
+        out_dir: local directory for the mp4s (also uploaded to wandb).
+        run_name: filename prefix.
+        deterministic: whether to use the deterministic policy for the clip.
+        log_to_wandb: whether to wandb.log the clip (skipped if wandb.run
+            is None even when True).
+        seed: seed for the rollout RNG stream (advances across calls).
+    """
+    extra_cameras = list(extra_cameras or [])
+    cpu_cameras = list(extra_cameras) + ([pixel_camera] if high_res else [])
+    obs_key = f'pixels/{pixel_camera}'
+    os.makedirs(out_dir, exist_ok=True)
+
+    mj_model = None
+    cpu_renderer = None
+    if cpu_cameras:
+        mj_model = env.sys.mj_model
+        cpu_renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+    state = {'key': jax.random.PRNGKey(seed), 'last_bucket': -1, 'jit_rollout': None}
+
+    def _build_rollout(make_policy):
+        def rollout(params, key):
+            policy = make_policy(params, deterministic=deterministic)
+            reset_key, roll_key = jax.random.split(key)
+            init_state = env.reset(reset_key)
+
+            def step_body(carry, _):
+                carry_state, k = carry
+                k, sk = jax.random.split(k)
+                action, _ = policy(carry_state.obs, sk)
+                next_state = env.step(carry_state, action)
+                # pipeline_state is retained even when extra_cameras is empty
+                # (it's already computed as part of next_state -- free) so a
+                # later call can add extra_cameras without rebuilding the JIT.
+                return (next_state, k), (next_state.obs[obs_key], next_state.pipeline_state)
+
+            (_, _), (frames, pipeline_states) = jax.lax.scan(
+                step_body, (init_state, roll_key), xs=None, length=steps
+            )
+            return frames, pipeline_states  # (steps, num_envs=1, ...) each
+
+        return jax.jit(rollout)
+
+    def _cpu_render_frame(mj_model, single_pipeline_state, camera):
+        d = mujoco.MjData(mj_model)
+        d.qpos[:] = np.asarray(single_pipeline_state.qpos)
+        d.qvel[:] = np.asarray(single_pipeline_state.qvel)
+        if mj_model.nmocap > 0:
+            d.mocap_pos[:] = np.asarray(single_pipeline_state.mocap_pos)
+            d.mocap_quat[:] = np.asarray(single_pipeline_state.mocap_quat)
+        mujoco.mj_forward(mj_model, d)
+        cpu_renderer.update_scene(d, camera=camera)
+        return cpu_renderer.render().copy()
+
+    def video_fn(step: int, make_policy, params, force: bool = False):
+        if every_steps <= 0 and not force:
+            return
+        bucket = step // every_steps if every_steps > 0 else 0
+        if not force and bucket <= state['last_bucket']:
+            return
+        state['last_bucket'] = bucket
+
+        if state['jit_rollout'] is None:
+            # Built lazily (once) on first call and reused for every later
+            # call -- `make_policy` is the same object every time ppo.train()
+            # invokes this, so this is a one-time JIT compile, not per-clip.
+            state['jit_rollout'] = _build_rollout(make_policy)
+
+        state['key'], call_key = jax.random.split(state['key'])
+        frames, pipeline_states = jax.device_get(state['jit_rollout'](params, call_key))
+
+        clips = {}
+        if not high_res:
+            # Zero-cost path: read straight off the GPU pixel obs that already
+            # drove the policy, at the training resolution.
+            pixel_frames = np.asarray(frames)[:, 0]  # drop num_envs=1 axis -> (T, H, W, C)
+            if frame_stack > 1:
+                pixel_frames = pixel_frames[..., -3:]  # most recent RGB frame only
+            clips[pixel_camera] = pixel_frames
+
+        for camera in cpu_cameras:
+            clips[camera] = np.stack([
+                _cpu_render_frame(
+                    mj_model,
+                    jax.tree_util.tree_map(lambda x, t=t: x[t, 0], pipeline_states),
+                    camera,
+                )
+                for t in range(steps)
+            ])
+
+        for camera, camera_frames in clips.items():
+            mp4_path = os.path.join(out_dir, f"{run_name}_step{step}_{camera}.mp4")
+            iio.imwrite(mp4_path, camera_frames, fps=fps)
+            print(f"[periodic vision video] step {step}: saved {mp4_path}")
+
+            if log_to_wandb and wandb.run is not None:
+                wandb.log({f"video/{camera}": wandb.Video(mp4_path, fps=fps, format="mp4")}, step=step)
+
+    return video_fn
 
 
 def record_episode_video_simple(

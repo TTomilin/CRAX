@@ -6,7 +6,7 @@
         <motor ctrllimited="true" ctrlrange="-.4 .4"/>
     </default>
     <!-- Removed RK4 integrator for brax. -->
-    <option iterations="8" timestep="0.003"/>
+    <option iterations="8" timestep="0.003" ls_iterations="6"/>
     <custom>
         <!-- brax custom params -->
         <numeric data="2500" name="constraint_limit_stiffness"/>
@@ -43,7 +43,7 @@
             <camera name="vision" pos="0 0 .15" xyaxes="0 -1 0 .4 0 1" fovy="90"/>
             <camera name="vision_back" pos="0 0 .15" xyaxes="0 1 0 0 0 1" fovy="90"/>
 
-            <camera name="track" mode="trackcom" pos="0 -4 0" xyaxes="1 0 0 0 0 1"/>
+            <camera name="track" mode="trackcom" pos="0 -3 0" xyaxes="1 0 0 0 0 1"/>
             <joint armature="0" damping="0" limited="false" name="root" pos="0 0 0" stiffness="0" type="free"/>
             <geom fromto="0 -.07 0 0 .07 0" name="torso1" size="0.07" type="capsule"/>
             <geom name="head" pos="0 0 .19" size=".09" type="sphere" user="258"/>
