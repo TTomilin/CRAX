@@ -96,7 +96,7 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
     "button": {
         # Level 1: Hazards and gremlins, constrained buttons
         1: {
-            "placement_extents": (-1.5, -1.5, 1.5, 1.5),
+            "placement_extents": (-2.0, -2.0, 2.0, 2.0),
             "buttons_constrained": True,
             "hazard_specs": [
                 {"type": "cylinder", "count": 4, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
@@ -106,7 +106,7 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         },
         # Level 2: More hazards and gremlins
         2: {
-            "placement_extents": (-1.8, -1.8, 1.8, 1.8),
+            "placement_extents": (-2.5, -2.5, 2.5, 2.5),
             "buttons_constrained": True,
             "hazard_specs": [
                 {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
@@ -114,9 +114,9 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
                  "fixed": False},
             ],
         },
-        # Level 3: Even more hazards and gremlins in a smaller space
+        # Level 3: More hazards and larger orbits; reserve enough area for keepouts
         3: {
-            "placement_extents": (-1.2, -1.2, 1.2, 1.2),
+            "placement_extents": (-3.0, -3.0, 3.0, 3.0),
             "buttons_constrained": True,
             "hazard_specs": [
                 {"type": "cylinder", "count": 12, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},

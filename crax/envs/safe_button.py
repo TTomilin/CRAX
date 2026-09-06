@@ -12,6 +12,7 @@ Usage:
     env = crax.envs.get_environment("safe_button_point")
 """
 
+import math
 import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
@@ -25,7 +26,7 @@ from crax.envs.base import PipelineEnv, State
 from crax.envs.env_utils import (
     create_hazard_manager_from_specs,
     safe_norm,
-    place_objects,
+    sample_candidate_positions,
     base_xml_file_path,
     add_walls_to_specs,
     compute_gremlin_positions,
@@ -33,6 +34,7 @@ from crax.envs.env_utils import (
 from crax.envs.hazards import _type_defaults_from_registry, compute_hazard_costs
 from crax.envs.builder import XMLBuilder
 from crax.io import mjcf
+from crax.mjx.pipeline import _reformat_contact
 
 
 class SafeButton(PipelineEnv, ABC):
@@ -110,10 +112,10 @@ class SafeButton(PipelineEnv, ABC):
             # Button settings
             button_count: int = 4,
             button_size: float = 0.1,
-            button_height: float = 0.1,
+            button_height: Optional[float] = None,
             buttons_constrained: bool = False,
             resampling_delay: int = 10,
-            continue_goal: bool = False,
+            continue_goal: bool = True,
             # Lidar settings
             lidar_bins: int = 16,
             lidar_max_dist: float = 3.0,
@@ -132,12 +134,23 @@ class SafeButton(PipelineEnv, ABC):
             **kwargs,
     ):
         self._debug = debug
+        if button_count < 1 or button_size <= 0:
+            raise ValueError("At least one positive-size button is required")
+        button_height = button_size if button_height is None else button_height
+        if button_height < button_size:
+            raise ValueError("button_height is the center height and must be >= button_size")
+        if max_placement_attempts < 1 or max_layout_attempts < 1:
+            raise ValueError("placement and layout attempt limits must be positive")
+        if placement_margin < 0 or resampling_delay < 0:
+            raise ValueError("placement_margin and resampling_delay must be nonnegative")
 
         # Use agent-specific defaults if not provided
         if healthy_z_range is None:
             healthy_z_range = self.default_healthy_z_range
         if agent_keepout is None:
             agent_keepout = self.default_agent_keepout
+        if agent_keepout <= 0:
+            raise ValueError("agent_keepout must be positive")
 
         # Build default hazard specs if none provided
         if hazard_specs is None:
@@ -153,6 +166,8 @@ class SafeButton(PipelineEnv, ABC):
             t = spec.get("type")
             base = dict(type_defaults.get(t, {}))
             base.update(spec)
+            if t != "outer_wall" and not (base.get("positions") or base.get("centers")):
+                base["positions"] = [(0.0, 0.0, base["height"])] * base.get("count", 0)
             expanded_specs.append(base)
         hazard_specs = expanded_specs
 
@@ -182,7 +197,7 @@ class SafeButton(PipelineEnv, ABC):
         self._continue_goal = continue_goal
         self._button_keepout = button_size + 0.1  # Keepout radius for buttons
         self._marker_size = max(0.03, self._button_size * 0.5)
-        self._marker_z = self._button_size + self._marker_size
+        self._marker_z = self._button_height + self._button_size + self._marker_size
 
         # Per-hazard keepouts
         self._hazard_keepouts = jp.array(
@@ -208,6 +223,25 @@ class SafeButton(PipelineEnv, ABC):
         self._hazard_is_rect = jp.array(is_rect, dtype=jp.bool_) if len(hazards) > 0 else jp.zeros((0,), dtype=jp.bool_)
         self._hazard_half_extents = jp.stack(half_ext) if len(hazards) > 0 else jp.zeros((0, 2))
         self._hazard_radii = jp.array(radii) if len(hazards) > 0 else jp.zeros((0,))
+
+        self._movable_hazard_indices = jp.array(
+            [i for i, h in enumerate(hazards) if not h.fixed], dtype=jp.int32
+        )
+        self._fixed_hazard_indices = jp.array(
+            [i for i, h in enumerate(hazards) if h.fixed], dtype=jp.int32
+        )
+        self._layout_keepouts = jp.concatenate([
+            jp.full((button_count,), self._button_keepout),
+            self._hazard_keepouts[self._movable_hazard_indices],
+        ])
+        # Place large orbit disks first, then restore the original object order.
+        self._layout_order = jp.argsort(-self._layout_keepouts, stable=True)
+        min_x, min_y, max_x, max_y = placement_extents
+        width, depth = max_x - min_x, max_y - min_y
+        if (width <= 0 or depth <= 0
+                or 2 * float(jp.max(self._layout_keepouts)) > min(width, depth)
+                or math.pi * float(jp.sum(self._layout_keepouts ** 2)) > width * depth):
+            raise ValueError("Objects cannot fit within the placement extents; enlarge the layout")
 
         # Generate XML with buttons and hazards
         xml_path = self._generate_button_xml()
@@ -353,7 +387,7 @@ class SafeButton(PipelineEnv, ABC):
         # Generate button bodies XML (sphere to avoid cylinder-box collisions in MJX)
         button_bodies = []
         for i in range(self._button_count):
-            z = self._button_size
+            z = self._button_height
             button_bodies.append(f"""
         <body name="button{i}" pos="0 0 {z}" mocap="true">
             <geom type="sphere" name="button{i}" size="{self._button_size}"
@@ -388,6 +422,74 @@ class SafeButton(PipelineEnv, ABC):
 
         return temp_path
 
+    def _fixed_clearances(self, xy, keepout, fixed_positions):
+        """Clearance to fixed rectangles or circular (including orbit) keepouts."""
+        indices = self._fixed_hazard_indices
+        delta = jp.abs(xy[..., None, :] - fixed_positions[:, :2])
+        q = delta - self._hazard_half_extents[indices]
+        rect_distance = jp.linalg.norm(jp.maximum(q, 0.0), axis=-1)
+        rect_distance += jp.minimum(jp.max(q, axis=-1), 0.0)
+        circle_distance = jp.linalg.norm(delta, axis=-1) - self._hazard_radii[indices]
+        return jp.where(self._hazard_is_rect[indices], rect_distance, circle_distance) - keepout - self._placement_margin
+
+    def _sample_layout(self, rng, agent_xy, fixed_positions):
+        """Sample a validated layout with bounded, whole-layout retries."""
+        keepouts = self._layout_keepouts[self._layout_order]
+        count = keepouts.shape[0]
+
+        def attempt(carry):
+            rng, attempts, _, _ = carry
+
+            def place_one(carry, i):
+                key, positions, valid = carry
+                key, sample_key = jax.random.split(key)
+                radius = keepouts[i]
+                candidates = sample_candidate_positions(
+                    sample_key, self._max_placement_attempts, radius, self._placement_extents
+                )[:, :2]
+                distances = jp.linalg.norm(candidates[:, None, :] - positions[None, :, :], axis=-1)
+                slack = distances - radius - keepouts[None, :] - self._placement_margin
+                slack = jp.min(jp.where(jp.arange(count) < i, slack, jp.inf), axis=-1)
+                agent_slack = jp.linalg.norm(candidates - agent_xy, axis=-1) - radius - self._agent_keepout - self._placement_margin
+                slack = jp.minimum(slack, agent_slack)
+                if self._num_fixed_hazards:
+                    slack = jp.minimum(slack, jp.min(self._fixed_clearances(candidates, radius, fixed_positions), axis=-1))
+                best = jp.argmax(slack)
+                positions = positions.at[i].set(candidates[best])
+                return (key, positions, valid & (slack[best] >= 0)), None
+
+            (rng, positions, valid), _ = jax.lax.scan(
+                place_one, (rng, jp.zeros((count, 2)), jp.array(True)), jp.arange(count)
+            )
+            return rng, attempts + 1, valid, positions
+
+        rng, attempts, valid, positions = jax.lax.while_loop(
+            lambda carry: (carry[1] < self._max_layout_attempts) & ~carry[2],
+            attempt,
+            (rng, jp.array(0), jp.array(False), jp.zeros((count, 2))),
+        )
+        if self._num_fixed_hazards:
+            valid &= jp.all(self._fixed_clearances(agent_xy, self._agent_keepout, fixed_positions) >= 0)
+
+        def check_layout(ok):
+            if not bool(ok):
+                raise ValueError("Unable to sample a valid SafeButton layout within max_layout_attempts")
+
+        # The callback receives the predicate too: vmap may execute both branches.
+        jax.lax.cond(valid, lambda _: None,
+                     lambda ok: jax.debug.callback(check_layout, ok), valid)
+        ordered_positions = jp.zeros_like(positions).at[self._layout_order].set(positions)
+        return rng, ordered_positions, attempts
+
+    def _forward(self, data):
+        """Refresh physics and the CRAX copies after changing mocap positions."""
+        data = mjx.forward(self.sys, data)
+        physics_data = getattr(data, "_impl", data)
+        return data.replace(
+            contact=_reformat_contact(self.sys, physics_data.contact),
+            x=data.x.replace(pos=data.xpos[1:], rot=data.xquat[1:]),
+        )
+
     def reset(self, rng: jp.ndarray) -> State:
         """Reset the environment with button and hazard placement."""
         rng, rng1, rng2, rng_layout, rng_button = jax.random.split(rng, 5)
@@ -412,46 +514,14 @@ class SafeButton(PipelineEnv, ABC):
         data = self.pipeline_init(qpos, qvel)
         agent_pos = data.xpos[self._agent_body]
 
-        # Build layout: agent, buttons, then hazards
-        num_candidates = self._max_placement_attempts
-        max_entries = 1 + self._button_count + self._num_movable_hazards
-        positions_xy = jp.zeros((max_entries, 2))
-        keepouts = jp.zeros((max_entries,))
-
-        # Seed with agent
-        positions_xy = positions_xy.at[0].set(agent_pos[:2])
-        keepouts = keepouts.at[0].set(self._agent_keepout)
-        count = jp.array(1, dtype=jp.int32)
-
-        # Place buttons
-        button_keepouts = jp.full((self._button_count,), self._button_keepout, dtype=jp.float32)
-        (rng_layout, positions_xy, keepouts, count, button_positions) = place_objects(
-            rng_key=rng_layout,
-            positions_xy=positions_xy,
-            keepouts_array=keepouts,
-            placed_count=count,
-            per_item_keepouts=button_keepouts,
-            num_items=self._button_count,
-            num_candidates=num_candidates,
-            placement_extents=self._placement_extents,
-            placement_margin=self._placement_margin,
+        fixed_ids = self._hazard_mocap_ids_arr[self._fixed_hazard_indices]
+        rng_layout, layout_xy, layout_attempts = self._sample_layout(
+            rng_layout, agent_pos[:2], data.mocap_pos[fixed_ids]
         )
-
-        # Place hazards
-        if self._num_movable_hazards > 0:
-            (rng_layout, positions_xy, keepouts, count, hazard_positions) = place_objects(
-                rng_key=rng_layout,
-                positions_xy=positions_xy,
-                keepouts_array=keepouts,
-                placed_count=count,
-                per_item_keepouts=self._hazard_keepouts[:self._num_movable_hazards],
-                num_items=self._num_movable_hazards,
-                num_candidates=num_candidates,
-                placement_extents=self._placement_extents,
-                placement_margin=self._placement_margin,
-            )
-        else:
-            hazard_positions = jp.zeros((0, 3))
+        button_positions = jp.concatenate([
+            layout_xy[:self._button_count],
+            jp.full((self._button_count, 1), self._button_height),
+        ], axis=1)
 
         # Set button and hazard positions in mocap
         button_ids = jp.array(self._button_mocap_ids, dtype=jp.int32)
@@ -459,8 +529,8 @@ class SafeButton(PipelineEnv, ABC):
         mpos = mpos.at[button_ids].set(button_positions)
 
         if self._num_movable_hazards > 0:
-            hazard_ids = self._hazard_mocap_ids_arr[:self._num_movable_hazards]
-            mpos = mpos.at[hazard_ids].set(hazard_positions)
+            hazard_ids = self._hazard_mocap_ids_arr[self._movable_hazard_indices]
+            mpos = mpos.at[hazard_ids, :2].set(layout_xy[self._button_count:])
 
         data = data.replace(mocap_pos=mpos)
 
@@ -477,6 +547,12 @@ class SafeButton(PipelineEnv, ABC):
 
         # Store gremlin center positions (for motion)
         gremlin_center_positions = all_hazard_positions[self._gremlin_indices] if self._num_gremlins > 0 else jp.zeros((0, 3))
+        if self._num_gremlins > 0:
+            gremlin_positions = compute_gremlin_positions(
+                gremlin_center_positions, self._gremlin_travel_radii, 0, self.dt
+            )
+            all_hazard_positions = all_hazard_positions.at[self._gremlin_indices].set(gremlin_positions)
+            data = data.replace(mocap_pos=data.mocap_pos.at[self._hazard_mocap_ids_arr].set(all_hazard_positions))
 
         # Update goal marker position
         marker_pos = button_positions[active_button_idx]
@@ -484,6 +560,7 @@ class SafeButton(PipelineEnv, ABC):
         mpos = data.mocap_pos
         mpos = mpos.at[self._goal_marker_mocap_id].set(marker_pos)
         data = data.replace(mocap_pos=mpos)
+        data = self._forward(data)
 
         info = {
             "button_positions": button_positions,
@@ -498,6 +575,7 @@ class SafeButton(PipelineEnv, ABC):
             "done_goal": jp.array(False),
             "done_nan": jp.array(False),
             "done_unhealthy": jp.array(False),
+            "layout_attempts": layout_attempts,
         }
 
         obs = self._get_obs(data, info)
@@ -509,10 +587,8 @@ class SafeButton(PipelineEnv, ABC):
     def step(self, state: State, action: jp.ndarray) -> State:
         """Execute one step in the environment."""
         data0 = state.pipeline_state
-        data = self.pipeline_step(data0, action)
 
         # Get positions
-        agent_pos = data.xpos[self._agent_body]
         button_positions = state.info['button_positions']
         hazard_positions = state.info['hazard_positions']
         gremlin_center_positions = state.info['gremlin_center_positions']
@@ -526,20 +602,24 @@ class SafeButton(PipelineEnv, ABC):
             gremlin_positions = compute_gremlin_positions(
                 gremlin_center_positions,
                 self._gremlin_travel_radii,
-                step_count,
+                step_count + 1,
                 self.dt
             )
             gremlin_mocap_ids = self._hazard_mocap_ids_arr[self._gremlin_indices]
-            mpos = data.mocap_pos
+            mpos = data0.mocap_pos
             mpos = mpos.at[gremlin_mocap_ids].set(gremlin_positions)
-            data = data.replace(mocap_pos=mpos)
+            data0 = data0.replace(mocap_pos=mpos)
             hazard_positions = hazard_positions.at[self._gremlin_indices].set(gremlin_positions)
 
+        data = self.pipeline_step(data0, action)
+        agent_pos = data.xpos[self._agent_body]
+
         # Check button contacts (JAX-compatible)
-        ids1 = getattr(data.contact, "geom1", None)
-        ids2 = getattr(data.contact, "geom2", None)
-        contact_dist = getattr(data.contact, "dist", None)
-        ncon = getattr(data, "ncon", None)
+        physics_data = getattr(data, "_impl", data)
+        ids1 = getattr(physics_data.contact, "geom1", None)
+        ids2 = getattr(physics_data.contact, "geom2", None)
+        contact_dist = getattr(physics_data.contact, "dist", None)
+        ncon = getattr(physics_data, "ncon", None)
 
         goal_achieved = jp.array(False)
         wrong_button_pressed = jp.array(False)
@@ -595,7 +675,7 @@ class SafeButton(PipelineEnv, ABC):
         # Costs
         ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
         hazard_cost = self._calculate_safety_cost(data, hazard_positions)
-        wrong_button_cost = self._wrong_button_cost * wrong_button_pressed.astype(jp.float32) * self._buttons_constrained
+        wrong_button_cost = self._calculate_wrong_button_cost(wrong_button_pressed, button_timer)
         cost = hazard_cost + wrong_button_cost
 
         # Handle goal achievement and optional resampling
@@ -684,24 +764,34 @@ class SafeButton(PipelineEnv, ABC):
 
         return State(data, obs, reward, done.astype(jp.float32), metrics, new_info)
 
-    def _calculate_safety_cost(self, data: mjx.Data, hazard_positions: jp.ndarray) -> jp.ndarray:
-        """Calculate safety cost from hazards (proximity-only).
+    def _calculate_wrong_button_cost(
+            self, wrong_button_pressed: jp.ndarray, button_timer: jp.ndarray
+    ) -> jp.ndarray:
+        """Calculate wrong-button cost while button constraints are active."""
+        constraints_active = jp.logical_and(
+            jp.array(self._buttons_constrained),
+            button_timer == 0,
+        )
+        return (
+            self._wrong_button_cost
+            * wrong_button_pressed.astype(jp.float32)
+            * constraints_active.astype(jp.float32)
+        )
 
-        MJX does not correctly update geom_xpos for mocap box bodies, so
-        contact distances are stale. We use proximity cost instead, computed
-        directly from hazard_positions maintained in mocap_pos.
-        """
+    def _calculate_safety_cost(self, data: mjx.Data, hazard_positions: jp.ndarray) -> jp.ndarray:
+        """Use physical contacts for collidable hazards, proximity otherwise."""
+        physics_data = getattr(data, "_impl", data)
         return compute_hazard_costs(
             hazards=self._hazard_manager.hazards,
             hazard_positions=hazard_positions,
             agent_xy=data.xpos[self._agent_body][:2],
             agent_geom_ids=self._agent_geom_ids,
-            proximity_cost_scaler=self._collision_cost,
+            proximity_cost_scaler=self._proximity_cost_scaler,
             collision_cost=self._collision_cost,
-            contact_geom1=None,  # force proximity path: MJX geom_xpos is stale for mocap boxes
-            contact_geom2=None,
-            contact_dist=None,
-            ncon=None,
+            contact_geom1=physics_data.contact.geom1,
+            contact_geom2=physics_data.contact.geom2,
+            contact_dist=physics_data.contact.dist,
+            ncon=physics_data.ncon,
         )
 
     def _get_obs(self, data: mjx.Data, info: Dict) -> jp.ndarray:
@@ -875,7 +965,7 @@ class SafeButtonPoint(SafeButton):
 
     @property
     def default_agent_keepout(self) -> float:
-        return 0.1
+        return 0.16  # Includes the pointarrow box at the front of the agent.
 
     @property
     def required_sensors(self) -> List[str]:

@@ -264,7 +264,7 @@ class GremlinHazard(BaseHazard):
     
     Gremlins move in circular paths with radius `travel` around their
     initial placement center. They have contact-based cost and use
-    a keepout radius that includes the full orbit (travel + size).
+    a keepout radius that includes the full orbit and the box corners.
     """
 
     def __init__(self, hazard_id: int, position: tuple = (0.0, 0.0, 0.1), size: float = 0.1, 
@@ -317,12 +317,12 @@ class GremlinHazard(BaseHazard):
         return rho * volume
 
     def get_keepout_radius(self) -> float:
-        # Keepout must include the full orbit: center + travel radius + size
-        return float(self.size + self.travel)
+        # Include the box corners throughout the full orbit.
+        return float(jp.sqrt(2.0) * self.size + self.travel)
 
     def get_keepout_shape(self):
         # Circular keepout encompassing the orbit
-        return "circle", jp.array([float(self.size + self.travel)])
+        return "circle", jp.array([self.get_keepout_radius()])
 
 
 class HazardManager:
