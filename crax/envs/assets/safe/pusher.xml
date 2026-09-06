@@ -1,6 +1,6 @@
 <mujoco model="arm3d">
   <compiler inertiafromgeom="true" angle="radian" coordinate="local"/>
-  <option timestep="0.01" gravity="0 0 0" iterations="20" integrator="Euler" />
+  <option timestep="0.01" gravity="0 0 0" iterations="20" ls_iterations="6" integrator="Euler"/>
 
   <default>
     <joint armature='0.04' damping="1" limited="true"/>

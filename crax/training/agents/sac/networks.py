@@ -14,7 +14,7 @@
 
 """SAC networks."""
 
-from typing import Sequence, Tuple
+from typing import Mapping, Sequence, Tuple
 
 from crax.training import distribution
 from crax.training import networks
@@ -84,6 +84,49 @@ def make_sac_networks(
       hidden_layer_sizes=hidden_layer_sizes,
       activation=activation,
       layer_norm=q_network_layer_norm,
+  )
+  return SACNetworks(
+      policy_network=policy_network,
+      q_network=q_network,
+      parametric_action_distribution=parametric_action_distribution,
+  )
+
+
+def make_sac_networks_vision(
+    observation_size: Mapping[str, Tuple[int, ...]],
+    action_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    hidden_layer_sizes: Sequence[int] = (256, 256),
+    activation: networks.ActivationFn = linen.relu,
+    policy_network_layer_norm: bool = False,
+    q_network_layer_norm: bool = False,
+    normalise_channels: bool = False,
+    policy_obs_key: str = '',
+    value_obs_key: str = '',
+) -> SACNetworks:
+  """Make vision SAC networks (CNN policy + CNN Q-critic, each own encoder)."""
+  parametric_action_distribution = distribution.NormalTanhDistribution(
+      event_size=action_size
+  )
+  policy_network = networks.make_policy_network_vision(
+      observation_size=observation_size,
+      output_size=parametric_action_distribution.param_size,
+      preprocess_observations_fn=preprocess_observations_fn,
+      hidden_layer_sizes=hidden_layer_sizes,
+      activation=activation,
+      layer_norm=policy_network_layer_norm,
+      state_obs_key=policy_obs_key,
+      normalise_channels=normalise_channels,
+  )
+  q_network = networks.make_q_network_vision(
+      observation_size=observation_size,
+      action_size=action_size,
+      preprocess_observations_fn=preprocess_observations_fn,
+      hidden_layer_sizes=hidden_layer_sizes,
+      activation=activation,
+      layer_norm=q_network_layer_norm,
+      state_obs_key=value_obs_key,
+      normalise_channels=normalise_channels,
   )
   return SACNetworks(
       policy_network=policy_network,

@@ -950,8 +950,8 @@ def build_args() -> argparse.ArgumentParser:
                             "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
                             "safe_velocity_humanoid"])
     p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops", "crpo"])
+    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--single_level", type=int, default=None,
                    help="Plot results for a single level only (algos on x-axis). "

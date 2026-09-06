@@ -1,6 +1,6 @@
 <mujoco model="ant">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
-  <option timestep="0.01" iterations="4" />
+  <option timestep="0.01" iterations="4" ls_iterations="6"/>
   <custom>
     <!-- brax custom params -->
     <numeric data="0.0 0.0 0.55 1.0 0.0 0.0 0.0 0.0 1.0 0.0 -1.0 0.0 -1.0 0.0 1.0" name="init_qpos"/>

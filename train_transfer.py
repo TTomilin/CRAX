@@ -7,7 +7,7 @@ This script demonstrates how to:
 3. Compare how well each algorithm adapts the unsafe policy to satisfy safety constraints
 
 Example usage:
-    python examples/safety_transfer.py --env safe_ant --unsafe_steps 2000000 --safe_steps 2000000
+    python train_transfer.py --env_name safe_velocity_ant --unsafe_steps 2000000 --safe_steps 2000000
 """
 
 import functools
@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from crax.training import transfer
-from configs.training_config import build_base_parser
+from configs.training_config import bool_type, build_base_parser
 from run_utils import (
     setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn,
     make_vision_network_factory,
@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--safe_steps', type=float, default=1e8, help='Steps for safe fine-tuning per algorithm')
     parser.add_argument('--algorithms', type=str, nargs='+', default=['ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'],
                         help='Safe algorithms to test')
-    parser.add_argument('--use_checkpoint_transfer', type=bool, default=True,
+    parser.add_argument('--use_checkpoint_transfer', type=bool_type, nargs='?', const=True, default=True,
                         help='If True, save unsafe model to checkpoint and load via restore_checkpoint_path. '
                              'If False, forward params directly (legacy mode).')
     parser.add_argument('--no_checkpoint_transfer', dest='use_checkpoint_transfer', action='store_false',

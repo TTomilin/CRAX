@@ -15,18 +15,24 @@ CRAX is a high-performance benchmark for **Constrained Reinforcement Learning (S
 
 ## Safe RL Algorithms
 
-CRAX includes efficient JAX implementations of:
+CRAX includes efficient JAX implementations of the following, selected with the
+`--alg` flag:
 
-| Algorithm | Description | Reference |
-|-----------|-------------|-----------|
-| **PPO-Lagrange** | PPO with Lagrangian relaxation for constraints | [Ray et al., 2019](https://cdn.openai.com/safexp-short.pdf) |
-| **PPO-PID** | PPO with PID-controlled Lagrange multiplier | [Stooke et al., 2020](https://arxiv.org/abs/2007.03964) |
-| **FOCOPS** | First Order Constrained Optimization in Policy Space | [Zhang et al., 2020](https://arxiv.org/abs/2002.06506) |
-| **P3O** | Penalized Proximal Policy Optimization | [Zhang et al., 2022](https://arxiv.org/abs/2205.11814) |
-| **PPO-Saute** | State Augmentation for Safe RL | [Sootla et al., 2022](https://arxiv.org/abs/2202.06558) |
-| **CRPO** | Constrained Rectified Policy Optimization | [Xu et al., 2021](https://arxiv.org/abs/2011.05869) |
+| Algorithm | Flag | Description | Reference |
+|-----------|------|-------------|-----------|
+| **PPO** | `ppo` | Vanilla PPO (unconstrained on-policy baseline) | [Schulman et al., 2017](https://arxiv.org/abs/1707.06347) |
+| **PPO-Cost** | `ppo_cost` | PPO with a cost penalty folded into the reward | |
+| **PPO-Lagrange** | `ppo_lag` | PPO with Lagrangian relaxation for constraints | [Ray et al., 2019](https://cdn.openai.com/safexp-short.pdf) |
+| **PPO-PID** | `ppo_pid` | PPO with PID-controlled Lagrange multiplier | [Stooke et al., 2020](https://arxiv.org/abs/2007.03964) |
+| **PPO-Saute** | `ppo_saute` | State Augmentation for Safe RL | [Sootla et al., 2022](https://arxiv.org/abs/2202.06558) |
+| **FOCOPS** | `focops` | First Order Constrained Optimization in Policy Space | [Zhang et al., 2020](https://arxiv.org/abs/2002.06506) |
+| **P3O** | `p3o` | Penalized Proximal Policy Optimization | [Zhang et al., 2022](https://arxiv.org/abs/2205.11814) |
+| **CRPO** | `crpo` | Constrained Rectified Policy Optimization | [Xu et al., 2021](https://arxiv.org/abs/2011.05869) |
+| **SAC** | `sac` | Soft Actor-Critic (unconstrained off-policy baseline) | [Haarnoja et al., 2018](https://arxiv.org/abs/1801.01290) |
+| **SAC-Lagrange** | `sac_lag` | SAC with Lagrangian relaxation for constraints | |
+| **SAC-PID** | `sac_pid` | SAC with PID-controlled Lagrange multiplier | |
 
-All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods.
+All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods. The registry lives in `get_algorithm_train_fn` in `run_utils.py`; each algorithm adds its own CLI section in `configs/training_config.py` (`--safety_bound`, `--pid_kp`, `--nu_lr`, `--tau`, ...), and irrelevant arguments are filtered out per algorithm by `filter_kwargs_for_fn`.
 
 ## Environments
 
@@ -61,7 +67,7 @@ Every environment offers three difficulty levels that progressively increase con
 ## Installation
 
 ```bash
-git clone https://github.com/your-repo/CRAX.git
+git clone https://github.com/TTomilin/CRAX.git
 cd CRAX
 ```
 
@@ -86,6 +92,10 @@ For GPU support (CUDA 12), install the `cuda` extra instead, which pulls in `jax
 ```bash
 pip install -e ".[cuda]"
 ```
+
+See [SETUP.md](SETUP.md) for pinned installs, GPU/headless configuration, wandb
+and troubleshooting, and [docs/VISION_TRAINING.md](docs/VISION_TRAINING.md) for
+training from pixel observations.
 
 ## Quick Start
 
@@ -126,7 +136,7 @@ python train_transfer.py --env_name safe_velocity_ant --alg ppo_lag
 
 ```
 CRAX/
-├── brax/
+├── crax/
 │   ├── envs/                    # Environment definitions
 │   │   ├── safe_goal.py         # Goal navigation suite
 │   │   ├── safe_circle.py       # Circular orbit suite
@@ -137,30 +147,38 @@ CRAX/
 │   │   ├── safe_height.py       # Height constraint suite
 │   │   ├── safe_pathway.py      # Hazard corridor suite
 │   │   ├── safe_reacher.py      # Reacher with obstacles
-│   │   ├── safe_spider.py       # Spider leg-lifting
 │   │   ├── builder.py           # Modular XML scene builder
 │   │   ├── difficulty.py        # Difficulty level configurations
 │   │   ├── hazards.py           # Hazard generation utilities
-│   │   └── goals.py             # Goal sampling utilities
+│   │   ├── goals.py             # Goal sampling utilities
+│   │   └── wrappers/            # Env wrappers (incl. pixel observations)
 │   └── training/
+│       ├── curriculum.py        # Curriculum training loop
+│       ├── transfer.py          # Transfer learning loop
 │       └── agents/
 │           ├── ppo/             # Base PPO with extensibility hooks
 │           ├── ppo_lag/         # PPO-Lagrange
 │           ├── ppo_pid/         # PPO with PID controller
+│           ├── ppo_saute/       # Saute wrapper
 │           ├── focops/          # FOCOPS
 │           ├── p3o/             # P3O
-│           ├── ppo_saute/       # Saute wrapper
-│           └── crpo/            # CRPO
-├── configs/                     # Training configurations
+│           ├── crpo/            # CRPO
+│           ├── sac/             # SAC
+│           ├── sac_lag/         # SAC-Lagrange
+│           └── sac_pid/         # SAC-PID
+├── configs/training_config.py   # Shared CLI argument definitions
+├── docs/VISION_TRAINING.md      # Pixel-observation training guide
 ├── train_env.py                 # Single environment training
 ├── train_curriculum.py          # Progressive difficulty training
 ├── train_transfer.py            # Safety transfer learning
-└── scripts/                     # Utility & visualization scripts
+├── run_utils.py                 # Shared training helpers
+├── scripts/                     # Utility & visualization scripts
+└── tests/                       # Pytest suite
 ```
 
 ## Architecture
 
-CRAX uses a modular architecture where constrained RL algorithms are thin wrappers around a base PPO trainer:
+CRAX uses a modular architecture where constrained RL algorithms are wrappers around a base RL algorithm, e.g.:
 
 ```
 ppo/train.py          # Base trainer with hooks (loss_fn, post_step_fn, init_aux_state_fn)
@@ -175,23 +193,27 @@ ppo/train.py          # Base trainer with hooks (loss_fn, post_step_fn, init_aux
 
 This design minimizes code duplication and makes it easy to add new algorithms.
 
-[//]: # (## Acknowledgements)
+## Acknowledgements
 
-[//]: # ()
-[//]: # (CRAX is built on top of [Brax]&#40;https://github.com/google/brax&#41;, a differentiable physics engine by Google. We thank the Brax team for their excellent foundation.)
+CRAX builds on [Brax](https://github.com/google/brax), Google's JAX-based
+physics and RL library, and on [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html)
+and [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp), which power
+the accelerated simulation and the GPU pixel renderer. We thank the Brax and
+MuJoCo teams for these foundations.
 
-[//]: # ()
-[//]: # (If you use CRAX in your research, please cite:)
+Our navigation suite tasks are close reimplementations from
+[Safety Gym](https://openai.com/index/safety-gym/) and
+[Safety-Gymnasium](https://github.com/PKU-Alignment/safety-gymnasium).
 
-[//]: # ()
-[//]: # (```bibtex)
+## Citation
 
-[//]: # (@software{crax2025,)
+If you use CRAX in your research, please cite:
 
-[//]: # (  title = {CRAX: Constrained Reinforcement Learning Accelerated with JAX},)
-
-[//]: # (  year = {2025},)
-
-[//]: # (})
-
-[//]: # (```)
+```bibtex
+@article{tomilin2026crax,
+  title         = {CRAX: Fast Safe Reinforcement Learning Benchmarking},
+  author        = {Tristan Tomilin and Mourad Boustani and Mickey Beurskens and Thiago D. Sim{\~a}o},
+  journal       = {arXiv preprint arXiv:2606.20376},
+  year          = {2026}
+}
+```

@@ -10,7 +10,7 @@ from crax.training.agents.ppo import networks as ppo_networks
 from crax.training.agents.ppo.losses import compute_gae
 
 # Re-export for backward compatibility
-from crax.training.agents.ppo.losses import PPONetworkParams, compute_ppo_loss
+from crax.training.agents.ppo.losses import PPONetworkParams, compute_ppo_loss, with_shared_latent
 
 __all__ = ["PPONetworkParams", "compute_gae", "compute_ppo_loss", "compute_ppo_lagrange_loss"]
 
@@ -59,12 +59,14 @@ def compute_ppo_lagrange_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits = policy_apply(normalizer_params, params.policy, data.observation)
+    obs = with_shared_latent(ppo_network, params, normalizer_params, data.observation)
+    policy_logits = policy_apply(normalizer_params, params.policy, obs)
 
-    baseline = value_apply(normalizer_params, params.value, data.observation)
-    cost_baseline = cost_value_apply(normalizer_params, params.cost_value, data.observation)
+    baseline = value_apply(normalizer_params, params.value, obs)
+    cost_baseline = cost_value_apply(normalizer_params, params.cost_value, obs)
 
     terminal_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    terminal_obs = with_shared_latent(ppo_network, params, normalizer_params, terminal_obs)
     bootstrap_value = value_apply(normalizer_params, params.value, terminal_obs)
     bootstrap_cost_value = cost_value_apply(normalizer_params, params.cost_value, terminal_obs)
 

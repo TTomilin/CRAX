@@ -207,7 +207,7 @@ _ENV_TO_TASK: dict[str, str] = {
     "safe_height_humanoid": "height",
     "safe_lift_ant": "lift_ant",
     "safe_lift_spider": "lift_spider",
-    "safe_reach_reacher": "reach",
+    "safe_reacher": "reach",
 }
 
 

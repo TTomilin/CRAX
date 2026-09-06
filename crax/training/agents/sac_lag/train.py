@@ -78,9 +78,44 @@ def _unpmap(v):
     return jax.tree_util.tree_map(lambda x: x[0], v)
 
 
+def _random_translate_pixels(obs: Dict[str, jax.Array], key: PRNGKey) -> Dict[str, jax.Array]:
+    """DrQ-style random crop-pad shift on pixel obs, independent per sample.
+
+    Unlike ppo.train's version of this (which shares one shift across its
+    on-policy unroll_length axis), a replay-sampled batch has no temporal
+    structure to share a shift across, so every sample gets its own.
+    """
+
+    def rt_view(img: jax.Array, padding: int, key: PRNGKey) -> jax.Array:  # HxWxC
+        crop_from = jax.random.randint(key, (2,), 0, 2 * padding + 1)
+        crop_from = jnp.concatenate([crop_from, jnp.zeros((1,), dtype=jnp.int32)])
+        padded = jnp.pad(
+            img, ((padding, padding), (padding, padding), (0, 0)), mode='edge'
+        )
+        return jax.lax.dynamic_slice(padded, crop_from, img.shape)
+
+    out = {}
+    for k, v in obs.items():
+        if k.startswith('pixels/'):
+            key, key_shift = jax.random.split(key)
+            keys = jax.random.split(key_shift, v.shape[0])
+            out[k] = jax.vmap(lambda img, kk: rt_view(img, 4, kk))(v, keys)
+    return {**obs, **out}
+
+
+def _remove_pixels(obs):
+    """Drops 'pixels/*' keys -- those are normalized internally (/255) by
+    the vision CNN encoder, not via running statistics. No-op for flat
+    (non-dict) state observations. Mirrors crax.training.agents.ppo.train.
+    """
+    if not isinstance(obs, dict):
+        return obs
+    return {k: v for k, v in obs.items() if not k.startswith('pixels/')}
+
+
 def _init_training_state(
     key: PRNGKey,
-    obs_size: int,
+    obs_size: Any,
     local_devices_to_use: int,
     sac_network: sac_lag_networks.SACLagNetworks,
     alpha_optimizer: optax.GradientTransformation,
@@ -104,9 +139,13 @@ def _init_training_state(
     qc_params = sac_network.qc_network.init(key_qc)
     qc_optimizer_state = qc_optimizer.init(qc_params)
 
-    normalizer_params = running_statistics.init_state(
-        specs.Array((obs_size,), jnp.dtype('float32'))
-    )
+    if isinstance(obs_size, dict):
+        obs_spec = _remove_pixels(
+            {k: specs.Array(v, jnp.dtype('float32')) for k, v in obs_size.items()}
+        )
+    else:
+        obs_spec = specs.Array((obs_size,), jnp.dtype('float32'))
+    normalizer_params = running_statistics.init_state(obs_spec)
     lambda_lagr = jnp.asarray(initial_lambda, dtype=jnp.float32)
 
     training_state = TrainingState(
@@ -162,6 +201,12 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    # Vision (pixel-obs) training. Mirrors crax.training.agents.ppo.train:
+    # if given, applies GpuPixelObservationWrapper (MJWarp) to `environment`/
+    # `eval_env` AFTER `wrap_for_training`, and `network_factory` must build
+    # CNN-based networks (see sac_lag.networks.make_sac_lag_networks_vision).
+    vision_kwargs: Optional[Dict[str, Any]] = None,
+    augment_pixels: bool = False,
     # SAC-Lag specific
     safety_bound: float = 25.0,
     lagrangian_lr: float = 0.01,
@@ -200,6 +245,19 @@ def train(
       progress_fn: callback invoked at each eval checkpoint.
       eval_env: optional separate environment for evaluation.
       randomization_fn: optional domain-randomisation callback.
+      vision_kwargs: if given, adds MJWarp-rendered pixel observations to
+        `environment`/`eval_env` (see GpuPixelObservationWrapper) and the
+        replay buffer stores transitions as a dtype-preserving pytree
+        (`replay_buffers.PytreeUniformSamplingQueue`) instead of the
+        default ravel_pytree'd single-dtype buffer, so uint8 frames aren't
+        silently upcast to float32. `max_replay_size` still bounds it in
+        *transitions*, not bytes — with pixel obs each transition is much
+        bigger, so pass an explicit (much smaller) `max_replay_size`; the
+        default (num_timesteps) is sized for flat state vectors and will
+        try to allocate an enormous buffer for images.
+      augment_pixels: whether to randomly translate (DrQ-style) pixel obs
+        in each sampled training batch (same shift across a grad-update's
+        batch, applied to both `observation` and `next_observation`).
       safety_bound: episodic cumulative cost limit (constraint threshold d).
       lagrangian_lr: learning rate for the Lagrange multiplier. Normalized
         internally by episode_length so the effective per-episode update rate is
@@ -221,7 +279,21 @@ def train(
             'No training will happen because min_replay_size >= num_timesteps'
         )
     if max_replay_size is None:
-        max_replay_size = num_timesteps
+        if vision_kwargs is not None:
+            # num_timesteps (the flat-state default) sizes a buffer of raw
+            # pixel frames catastrophically -- e.g. 1e8 transitions x two
+            # 64x64x3 uint8 frames is ~2.5TB. Default to something that fits
+            # on a single accelerator instead; pass --max_replay_size to
+            # override.
+            max_replay_size = min(num_timesteps, 100_000)
+            logging.info(
+                'vision_kwargs set and max_replay_size not given -- '
+                'defaulting replay buffer to %d transitions (pass '
+                'max_replay_size explicitly to change this).',
+                max_replay_size,
+            )
+        else:
+            max_replay_size = num_timesteps
     num_timesteps = int(num_timesteps)
     max_replay_size = int(max_replay_size)
     min_replay_size = int(min_replay_size)
@@ -287,10 +359,13 @@ def train(
             action_repeat=action_repeat,
             randomization_fn=v_randomization_fn,
         )
+        if vision_kwargs is not None:
+            # Must wrap AFTER wrap_for_training (post-vmap/episode/autoreset)
+            # -- see GpuPixelObservationWrapper's module docstring.
+            from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+            env = GpuPixelObservationWrapper(env, num_envs=num_envs, **vision_kwargs)
 
     obs_size = env.observation_size
-    if isinstance(obs_size, Dict):
-        raise NotImplementedError('Dictionary observations not supported in SAC-Lag')
     action_size = env.action_size
 
     normalize_fn = lambda x, y: x
@@ -309,7 +384,19 @@ def train(
     q_optimizer = optax.adam(learning_rate=learning_rate)
     qc_optimizer = optax.adam(learning_rate=learning_rate)
 
-    dummy_obs = jnp.zeros((obs_size,))
+    if isinstance(obs_size, dict):
+        # uint8 for pixel keys (matches GpuPixelObservationWrapper's output
+        # dtype -- keeping it here, not float32, is the whole point of using
+        # PytreeUniformSamplingQueue below), float32 for everything else
+        # (e.g. 'state' in --vision_obs_mode pixels+state).
+        dummy_obs = {
+            key: jnp.zeros(
+                shape, jnp.uint8 if key.startswith('pixels/') else jnp.float32
+            )
+            for key, shape in obs_size.items()
+        }
+    else:
+        dummy_obs = jnp.zeros((obs_size,))
     dummy_action = jnp.zeros((action_size,))
     dummy_transition = Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
         observation=dummy_obs,
@@ -322,7 +409,12 @@ def train(
             'policy_extras': {},
         },
     )
-    replay_buffer = replay_buffers.UniformSamplingQueue(
+    replay_buffer_cls = (
+        replay_buffers.PytreeUniformSamplingQueue
+        if isinstance(obs_size, dict)
+        else replay_buffers.UniformSamplingQueue
+    )
+    replay_buffer = replay_buffer_cls(
         max_replay_size=max_replay_size // device_count,
         dummy_data_sample=dummy_transition,
         sample_batch_size=batch_size * grad_updates_per_step // device_count,
@@ -464,7 +556,7 @@ def train(
         )
         normalizer_params = running_statistics.update(
             normalizer_params,
-            transitions.observation,
+            _remove_pixels(transitions.observation),
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
         buffer_state = replay_buffer.insert(buffer_state, transitions)
@@ -490,6 +582,14 @@ def train(
             env_steps=new_env_steps,
         )
         buffer_state, transitions = replay_buffer.sample(buffer_state)
+        if augment_pixels:
+            training_key, key_aug_obs, key_aug_next = jax.random.split(training_key, 3)
+            transitions = transitions._replace(
+                observation=_random_translate_pixels(transitions.observation, key_aug_obs),
+                next_observation=_random_translate_pixels(
+                    transitions.next_observation, key_aug_next
+                ),
+            )
         transitions = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (grad_updates_per_step, -1) + x.shape[1:]),
             transitions,
@@ -627,6 +727,11 @@ def train(
             action_repeat=action_repeat,
             randomization_fn=v_randomization_fn,
         )
+        if vision_kwargs is not None:
+            from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+            eval_env = GpuPixelObservationWrapper(
+                eval_env, num_envs=num_eval_envs, **vision_kwargs
+            )
 
     evaluator = acting.Evaluator(
         eval_env,

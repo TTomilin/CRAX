@@ -1,7 +1,7 @@
 """Visualise egocentric GPU pixel observations vs CPU (MuJoCo) rendering.
 
 Records two videos from the same rollout:
-  1. GPU render  — egocentric obs from GpuPixelObservationWrapper (pixelbrax)
+  1. GPU render  — egocentric obs from GpuPixelObservationWrapper (MJWarp)
   2. CPU render  — same 'vision' camera via MuJoCo's built-in renderer
 
 A third side-by-side video concatenates them for easy comparison.
@@ -70,11 +70,18 @@ def main():
     # ------------------------------------------------------------------ #
     print(f"Creating '{args.env}' (GPU vision, camera='{args.camera}', "
           f"{args.width}x{args.height}) ...")
+    # get_environment(vision=True) now wraps GpuPixelObservationWrapper (MJWarp)
+    # around an internally-applied VmapWrapper — MJWarp's render context needs
+    # a static batch size, so 'num_envs' is required in vision_kwargs and the
+    # returned env is already batched (state.obs / state.pipeline_state carry
+    # a leading num_envs dim even for this single-rollout script).
+    num_envs = 1
     gpu_env = envs.get_environment(
         args.env,
         level=args.level,
         vision=True,
         vision_kwargs=dict(
+            num_envs=num_envs,
             camera=args.camera,
             height=args.height,
             width=args.width,
@@ -112,13 +119,17 @@ def main():
 
     print(f"Rolling out {args.num_steps} steps ...")
     for i in range(args.num_steps):
+        # state is batched (num_envs=1 leading dim) since GpuPixelObservationWrapper
+        # is applied over an internal VmapWrapper. Unbatch for single-env rendering.
+        single_pipeline_state = jax.tree_util.tree_map(lambda x: x[0], state.pipeline_state)
+
         # GPU egocentric frame
-        gpu_frames.append(np.asarray(state.obs[obs_key]))
+        gpu_frames.append(np.asarray(state.obs[obs_key])[0])
 
         # CPU frame from same pipeline_state
         try:
             cpu_frame = cpu_render_frame(
-                mj_model, cpu_renderer, state.pipeline_state, args.camera
+                mj_model, cpu_renderer, single_pipeline_state, args.camera
             )
             cpu_frames.append(cpu_frame)
         except Exception as e:
@@ -127,14 +138,14 @@ def main():
             if i == 0:
                 print(f"  [warning] CPU render failed: {e}")
 
-        if state.done:
+        if bool(state.done[0]):
             rng, reset_rng = jax.random.split(rng)
             state = jit_reset(reset_rng)
             num_resets += 1
             continue
 
         rng, act_rng = jax.random.split(rng)
-        action = jax.random.uniform(act_rng, (action_size,), minval=-1.0, maxval=1.0)
+        action = jax.random.uniform(act_rng, (1, action_size), minval=-1.0, maxval=1.0)
         state = jit_step(state, action)
 
         if (i + 1) % 50 == 0:
@@ -175,7 +186,7 @@ def main():
 
     print(f"\nDone. ({num_resets} episode resets, "
           f"frame size {gpu_frames[0].shape[1]}x{gpu_frames[0].shape[0]})")
-    print("GPU = pixelbrax (left),  CPU = MuJoCo renderer (right).")
+    print("GPU = MJWarp (left),  CPU = MuJoCo renderer (right).")
 
 
 if __name__ == "__main__":

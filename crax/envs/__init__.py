@@ -33,10 +33,10 @@ from crax.envs import reacher
 from crax.envs import safe_ant
 from crax.envs import safe_height
 from crax.envs import safe_lift
+from crax.envs import safe_pathway
 from crax.envs import safe_reacher
 from crax.envs import safe_spider
 from crax.envs import safe_velocity
-from crax.envs import safe_pathway
 from crax.envs import swimmer
 from crax.envs import walker2d
 from crax.envs.base import Env, PipelineEnv, State, Wrapper
@@ -48,6 +48,7 @@ from crax.envs.safe_circle import SafeCircle, SafeCirclePoint
 from crax.envs.safe_goal import SafeGoal, SafeGoalPoint
 from crax.envs.safe_height import SafeHeight, SafeHeightHumanoid
 from crax.envs.safe_lift import SafeLift, SafeLiftHumanoid
+from crax.envs.safe_pathway import SafePathway, SafePathwayWalker2D
 from crax.envs.safe_push import SafePush, SafePushPoint
 from crax.envs.safe_reacher import SafeReacher
 from crax.envs.safe_spider import SafeLiftSpider
@@ -60,7 +61,6 @@ from crax.envs.safe_velocity import (
     SafeVelocitySwimmer,
     SafeVelocityWalker2d,
 )
-from crax.envs.safe_pathway import SafePathway, SafePathwayWalker2D
 from crax.envs.wrappers import training
 
 _envs = {
@@ -149,28 +149,31 @@ class UnifiedEnvAdapter(Wrapper):
 
 
 def get_environment(
-    env_name: str,
-    level: Optional[int] = None,
-    vision: bool = False,
-    vision_kwargs: Optional[Dict[str, Any]] = None,
-    **kwargs,
+        env_name: str,
+        level: Optional[int] = None,
+        vision: bool = False,
+        vision_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs,
 ) -> Env:
     """Returns an environment from the environment registry.
 
     Args:
       env_name: environment name string.
       level: optional difficulty level (1, 2, 3).
-      vision: if True, wraps with GpuPixelObservationWrapper for GPU-rendered
-             egocentric pixel observations via pixelbrax.
+      vision: wrap with GpuPixelObservationWrapper for GPU-rendered
+             egocentric pixel observations via MJWarp. Requires
+             backend='mjx' (see **kwargs) and 'num_envs' in vision_kwargs
+             (MJWarp's render context needs a static batch size). The
+             returned env is vmapped internally to satisfy that. Callers
+             get back an already-batched env ready for .reset(rng)/.step().
       vision_kwargs: kwargs forwarded to GpuPixelObservationWrapper.
-             Supported keys: height, width, obs_mode, frame_stack,
-             camera_body_index, camera_offset, camera_target_offset,
-             camera_up, hfov, egocentric_rotate, geom_group_filter.
+             Required: num_envs. Supported: camera, height, width, obs_mode,
+             frame_stack, use_shadows.
       **kwargs: kwargs passed to the Env class constructor.
 
     Returns:
-      env: environment wrapped with UnifiedEnvAdapter (+ GpuPixelObservationWrapper
-           when vision=True).
+      env: environment wrapped with UnifiedEnvAdapter (+ VmapWrapper and
+           GpuPixelObservationWrapper when vision=True).
     """
     if env_name not in _envs:
         raise ValueError(f"Unknown environment: {env_name}. Available: {list(_envs.keys())}")
@@ -184,7 +187,17 @@ def get_environment(
 
     if vision:
         from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
-        env = GpuPixelObservationWrapper(env, **(vision_kwargs or {}))
+        from crax.envs.wrappers.training import VmapWrapper
+        vision_kwargs = dict(vision_kwargs or {})
+        num_envs = vision_kwargs.pop('num_envs', None)
+        if num_envs is None:
+            raise ValueError(
+                "vision_kwargs must include 'num_envs': MJWarp's render "
+                "context needs a static batch size, so the env is vmapped "
+                "internally here rather than by an outer VmapWrapper."
+            )
+        env = VmapWrapper(env, batch_size=num_envs)
+        env = GpuPixelObservationWrapper(env, num_envs=num_envs, **vision_kwargs)
 
     return env
 
@@ -226,16 +239,15 @@ def create(
       batch_size: the number of environments to batch together
       level: optional difficulty level (1, 2, 3). If provided, applies difficulty
              overrides for supported environments.
-      vision: if True, wraps with PixelObservationWrapper for pixel observations.
-      vision_kwargs: keyword arguments for PixelObservationWrapper.
+      vision: use MJWarp for pixel observations. Applied after Episode/Vmap/AutoReset
+      vision_kwargs: keyword arguments for GpuPixelObservationWrapper
       **kwargs: keyword arguments that get passed to the Env class constructor
 
     Returns:
       env: an environment with training wrappers applied
     """
-    # Get the base environment using get_environment
-    env = get_environment(env_name, level=level, vision=vision,
-                          vision_kwargs=vision_kwargs, **kwargs)
+    # Get the base environment
+    env = get_environment(env_name, level=level, vision=False, **kwargs)
 
     # Resolve episode length: prefer explicit, else environment default if available
     if episode_length is None:
@@ -246,5 +258,16 @@ def create(
         env = training.VmapWrapper(env, batch_size)
     if auto_reset:
         env = training.AutoResetWrapper(env)
+
+    if vision:
+        from crax.envs.wrappers.pixel_observation_gpu import GpuPixelObservationWrapper
+        vision_kwargs = dict(vision_kwargs or {})
+        num_envs = vision_kwargs.pop('num_envs', batch_size)
+        if num_envs is None:
+            raise ValueError(
+                "vision=True requires either batch_size or "
+                "vision_kwargs['num_envs'] (MJWarp needs a static batch size)."
+            )
+        env = GpuPixelObservationWrapper(env, num_envs=num_envs, **vision_kwargs)
 
     return env

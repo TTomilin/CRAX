@@ -16,6 +16,9 @@ class PPONetworks:
   value_network: networks.FeedForwardNetwork
   parametric_action_distribution: distribution.ParametricDistribution
   cost_value_network: Optional[networks.FeedForwardNetwork] = None
+  # Shared vision CNN backbone. None for state-based networks and for vision
+  # networks built with share_encoder=False.
+  encoder_network: Optional[networks.FeedForwardNetwork] = None
 
 
 def make_inference_fn(ppo_networks: PPONetworks):
@@ -25,13 +28,18 @@ def make_inference_fn(ppo_networks: PPONetworks):
       params: types.Params, deterministic: bool = False
   ) -> types.Policy:
     policy_network = ppo_networks.policy_network
+    encoder_network = ppo_networks.encoder_network
     parametric_action_distribution = ppo_networks.parametric_action_distribution
 
     def policy(
         observations: types.Observation, key_sample: PRNGKey
     ) -> Tuple[types.Action, types.Extra]:
-      param_subset = (params[0], params[1])  # normalizer and policy params
-      logits = policy_network.apply(*param_subset, observations)
+      normalizer_params, policy_params = params[0], params[1]
+      if encoder_network is not None:
+        shared_encoder_params = params[3]
+        latent = encoder_network.apply(normalizer_params, shared_encoder_params, observations)
+        observations = {**observations, networks.VISION_LATENT_KEY: latent}
+      logits = policy_network.apply(normalizer_params, policy_params, observations)
       if deterministic:
         return ppo_networks.parametric_action_distribution.mode(logits), {}
       raw_actions = parametric_action_distribution.sample_no_postprocessing(

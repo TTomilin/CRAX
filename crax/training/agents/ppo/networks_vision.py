@@ -7,6 +7,7 @@ from crax.training import networks
 from crax.training import types
 from crax.training.agents.ppo.networks import PPONetworks
 from flax import linen
+import jax
 import jax.numpy as jp
 
 
@@ -26,6 +27,7 @@ def make_ppo_networks_vision(
     normalise_channels: bool = False,
     policy_obs_key: str = "",
     value_obs_key: str = "",
+    share_encoder: bool = True,
 ) -> PPONetworks:
     """Make Vision PPO networks with preprocessor.
 
@@ -43,6 +45,11 @@ def make_ppo_networks_vision(
             to pixel inputs.
         policy_obs_key: Key for state observations in the policy network.
         value_obs_key: Key for state observations in the value network.
+        share_encoder: If True (default), the policy/value/cost-value heads
+            share a single CNN backbone (one CNN forward pass per timestep,
+            fed by the joint PPO loss so gradients from all heads flow into
+            it). If False, each head gets its own independently-trained CNN
+            (more params, one CNN forward per head).
 
     Returns:
         PPONetworks with policy, value, and optionally cost_value networks.
@@ -51,39 +58,89 @@ def make_ppo_networks_vision(
         event_size=action_size
     )
 
-    policy_network = networks.make_policy_network_vision(
-        observation_size=observation_size,
-        output_size=parametric_action_distribution.param_size,
-        preprocess_observations_fn=preprocess_observations_fn,
-        activation=activation,
-        hidden_layer_sizes=policy_hidden_layer_sizes,
-        state_obs_key=policy_obs_key,
-        normalise_channels=normalise_channels,
-    )
+    if share_encoder:
+        encoder_network = networks.make_vision_encoder_network(
+            observation_size=observation_size,
+            normalise_channels=normalise_channels,
+        )
+        # Shape-only: figure out the encoder's output width so the heads can
+        # size their first Dense layer. Values are discarded. Only used here
+        # to read `.shape[-1]`. Real init happens once in the training loop.
+        dummy_pixel_obs = {
+            key: jp.zeros((1,) + shape)
+            for key, shape in observation_size.items()
+            if key.startswith('pixels/')
+        }
+        dummy_encoder_params = encoder_network.init(jax.random.PRNGKey(0))
+        latent_size = encoder_network.apply(
+            None, dummy_encoder_params, dummy_pixel_obs
+        ).shape[-1]
 
-    value_network = networks.make_value_network_vision(
-        observation_size=observation_size,
-        preprocess_observations_fn=preprocess_observations_fn,
-        activation=activation,
-        hidden_layer_sizes=value_hidden_layer_sizes,
-        state_obs_key=value_obs_key,
-        normalise_channels=normalise_channels,
-    )
+        policy_network = networks.make_policy_head_network_vision(
+            output_size=parametric_action_distribution.param_size,
+            observation_size=observation_size,
+            latent_size=latent_size,
+            preprocess_observations_fn=preprocess_observations_fn,
+            activation=activation,
+            hidden_layer_sizes=policy_hidden_layer_sizes,
+            state_obs_key=policy_obs_key,
+        )
 
-    cost_value_network = None
-    if cost_value_hidden_layer_sizes is not None:
-        cost_value_network = networks.make_value_network_vision(
+        value_network = networks.make_value_head_network_vision(
+            observation_size=observation_size,
+            latent_size=latent_size,
+            preprocess_observations_fn=preprocess_observations_fn,
+            activation=activation,
+            hidden_layer_sizes=value_hidden_layer_sizes,
+            state_obs_key=value_obs_key,
+        )
+
+        cost_value_network = None
+        if cost_value_hidden_layer_sizes is not None:
+            cost_value_network = networks.make_value_head_network_vision(
+                observation_size=observation_size,
+                latent_size=latent_size,
+                preprocess_observations_fn=preprocess_observations_fn,
+                activation=activation,
+                hidden_layer_sizes=cost_value_hidden_layer_sizes,
+                state_obs_key=value_obs_key,
+            )
+    else:
+        encoder_network = None
+        policy_network = networks.make_policy_network_vision(
+            observation_size=observation_size,
+            output_size=parametric_action_distribution.param_size,
+            preprocess_observations_fn=preprocess_observations_fn,
+            activation=activation,
+            hidden_layer_sizes=policy_hidden_layer_sizes,
+            state_obs_key=policy_obs_key,
+            normalise_channels=normalise_channels,
+        )
+
+        value_network = networks.make_value_network_vision(
             observation_size=observation_size,
             preprocess_observations_fn=preprocess_observations_fn,
             activation=activation,
-            hidden_layer_sizes=cost_value_hidden_layer_sizes,
+            hidden_layer_sizes=value_hidden_layer_sizes,
             state_obs_key=value_obs_key,
             normalise_channels=normalise_channels,
         )
+
+        cost_value_network = None
+        if cost_value_hidden_layer_sizes is not None:
+            cost_value_network = networks.make_value_network_vision(
+                observation_size=observation_size,
+                preprocess_observations_fn=preprocess_observations_fn,
+                activation=activation,
+                hidden_layer_sizes=cost_value_hidden_layer_sizes,
+                state_obs_key=value_obs_key,
+                normalise_channels=normalise_channels,
+            )
 
     return PPONetworks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
         cost_value_network=cost_value_network,
+        encoder_network=encoder_network,
     )

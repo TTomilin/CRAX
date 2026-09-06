@@ -11,12 +11,18 @@ scalars):
    ~[0, 1], higher meaning the method reached good performance sooner. Final
    reward per run is the mean of the last `last_frac` fraction of the curve
    (same convention as seed_variance.py).
-2. Safety efficiency (cumulative constraint violation): area by which cost
-   exceeds the safety threshold, i.e. integral of max(cost - threshold, 0)
-   over steps, also normalized by steps spanned. Lower is better.
+2. Cumulative violation (CumViol): area by which cost exceeds the safety
+   threshold, i.e. integral of max(cost - threshold, 0) over steps, also
+   normalized by steps spanned. Lower is better. The raw value is in
+   task-specific cost units, so it is not comparable across tasks. To make it
+   comparable, it is also normalized by the same statistic computed for an
+   unconstrained reference algorithm (`--ref_algo`, default "ppo") on the same
+   task: CumViol_norm = CumViol / CumViol_ref. Controlled by `--viol_norm`
+   ("reference" by default, or "none" to keep only the raw value).
 
-Outputs a table (printed + saved as CSV) and a bar-chart grid (env rows x
-[reward efficiency, violation] columns), plus a saved PDF figure.
+Outputs a table (printed + saved as CSV) and a heatmap figure (algorithms x
+environments, one panel for reward efficiency and one for cumulative
+violation), saved as a PDF.
 """
 from __future__ import annotations
 
@@ -27,21 +33,19 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Patch
 
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
     set_mpl_style,
-    nice_grid,
-    BASELINES_COLORS, TRANSLATIONS,
+    TRANSLATIONS,
 )
 from results.plotting_results.seed_variance import ci95
 
-EfficiencyBySeed = Dict[
-    Tuple[str, str], Dict[int, Tuple[float, float]]]  # (env, algo) -> {seed: (reward_eff, violation_eff)}
-RawEfficiencyBySeed = Dict[Tuple[str, str], Dict[
-    int, Tuple[float, float, float]]]  # ... -> {seed: (reward_auc/span, violation_eff, final_reward)}
+# (env, algo) -> {seed: (reward_eff, viol_raw, viol_norm)}
+EfficiencyBySeed = Dict[Tuple[str, str], Dict[int, Tuple[float, float, float]]]
+# (env, algo) -> {seed: (reward_auc/span, viol_auc/span, final_reward)}
+RawEfficiencyBySeed = Dict[Tuple[str, str], Dict[int, Tuple[float, float, float]]]
 
 
 def per_seed_efficiency(
@@ -73,9 +77,9 @@ def per_seed_efficiency(
         return None
 
     reward_vals = reward.to_numpy(dtype=np.float64)
-    reward_auc = np.trapz(reward_vals, x=steps)
+    reward_auc = np.trapezoid(reward_vals, x=steps)
     violation = np.clip(cost.to_numpy(dtype=np.float64) - threshold, 0.0, None)
-    violation_auc = np.trapz(violation, x=steps)
+    violation_auc = np.trapezoid(violation, x=steps)
 
     n_tail = max(1, int(np.ceil(len(reward_vals) * last_frac)))
     final_reward = float(reward_vals[-n_tail:].mean())
@@ -85,11 +89,17 @@ def per_seed_efficiency(
 
 def load_efficiency(
         base: Path, envs: List[str], algos: List[str], level: int, seeds: List[int], threshold: float,
-        last_frac: float,
+        last_frac: float, ref_algo: str, viol_norm: str,
 ) -> EfficiencyBySeed:
+    # Always load the reference algo too (even if not requested in --algos), so its
+    # violation stat is available to normalize every other algo's CumViol per env.
+    algos_to_load = list(algos)
+    if ref_algo not in algos_to_load:
+        algos_to_load.append(ref_algo)
+
     raw: RawEfficiencyBySeed = {}
     for env in envs:
-        for algo in algos:
+        for algo in algos_to_load:
             per_seed: Dict[int, Tuple[float, float, float]] = {}
             for seed in seeds:
                 fp = base / env / f"level_{level}" / algo / f"seed_{seed}.parquet"
@@ -100,18 +110,34 @@ def load_efficiency(
                     print(f"Skipping (missing/unreadable): {fp}")
             raw[(env, algo)] = per_seed
 
+    # Reference violation per env: mean raw CumViol across the reference algo's seeds.
+    ref_viol: Dict[str, float] = {}
+    for env in envs:
+        ref_vals = [v[1] for v in raw.get((env, ref_algo), {}).values()]
+        ref_viol[env] = float(np.mean(ref_vals)) if ref_vals else float("nan")
+
     # Normalize reward efficiency by the max final reward achieved on each task (across
-    # all methods/seeds), so it reads as "fraction of best achievable, integrated over training".
+    # all requested methods/seeds), so it reads as "fraction of best achievable, integrated
+    # over training".
     out: EfficiencyBySeed = {}
     for env in envs:
         finals = [v[2] for algo in algos for v in raw.get((env, algo), {}).values()]
         max_final = max(finals) if finals else float("nan")
+
+        rv = ref_viol.get(env, float("nan"))
+        use_ref_norm = viol_norm == "reference" and np.isfinite(rv) and rv > 0
+        if viol_norm == "reference" and not use_ref_norm:
+            print(f"Warning: no usable reference violation for env={env!r} "
+                  f"(ref_algo={ref_algo!r}); leaving CumViol unnormalized for this env.")
+
         for algo in algos:
             per_seed = raw.get((env, algo), {})
-            if max_final and max_final > 0:
-                out[(env, algo)] = {s: (r / max_final, v) for s, (r, v, _) in per_seed.items()}
-            else:
-                out[(env, algo)] = {s: (float("nan"), v) for s, (r, v, _) in per_seed.items()}
+            entries: Dict[int, Tuple[float, float, float]] = {}
+            for s, (r, v, _) in per_seed.items():
+                r_out = r / max_final if max_final and max_final > 0 else float("nan")
+                v_norm = v / rv if use_ref_norm else v
+                entries[s] = (r_out, v, v_norm)
+            out[(env, algo)] = entries
     return out
 
 
@@ -120,7 +146,7 @@ def build_table(
 ) -> List[List]:
     """One row per (env, algo), plus an 'Overall' row per algo averaged across envs."""
     rows: List[List] = []
-    overall: Dict[str, List[Tuple[float, float]]] = {algo: [] for algo in algos}
+    overall: Dict[str, List[Tuple[float, float, float]]] = {algo: [] for algo in algos}
 
     for env in envs:
         for algo in algos:
@@ -129,21 +155,25 @@ def build_table(
                 continue
             reward_vals = np.array([v[0] for v in per_seed.values()])
             viol_vals = np.array([v[1] for v in per_seed.values()])
+            viol_norm_vals = np.array([v[2] for v in per_seed.values()])
             r_mean, _, r_ci = ci95(reward_vals, method=ci_method)
             v_mean, _, v_ci = ci95(viol_vals, method=ci_method)
+            vn_mean, _, vn_ci = ci95(viol_norm_vals, method=ci_method)
             rows.append([
                 TRANSLATIONS.get(env, env), TRANSLATIONS.get(algo, algo), len(per_seed),
-                r_mean, r_ci, v_mean, v_ci,
+                r_mean, r_ci, v_mean, v_ci, vn_mean, vn_ci,
             ])
-            overall[algo].append((r_mean, v_mean))
+            overall[algo].append((r_mean, v_mean, vn_mean))
 
     for algo in algos:
-        pairs = overall[algo]
-        if not pairs:
+        triples = overall[algo]
+        if not triples:
             continue
-        r_mean, _, r_ci = ci95(np.array([p[0] for p in pairs]), method=ci_method)
-        v_mean, _, v_ci = ci95(np.array([p[1] for p in pairs]), method=ci_method)
-        rows.append(["Overall", TRANSLATIONS.get(algo, algo), len(pairs), r_mean, r_ci, v_mean, v_ci])
+        r_mean, _, r_ci = ci95(np.array([t[0] for t in triples]), method=ci_method)
+        v_mean, _, v_ci = ci95(np.array([t[1] for t in triples]), method=ci_method)
+        vn_mean, _, vn_ci = ci95(np.array([t[2] for t in triples]), method=ci_method)
+        rows.append(["Overall", TRANSLATIONS.get(algo, algo), len(triples),
+                     r_mean, r_ci, v_mean, v_ci, vn_mean, vn_ci])
 
     return rows
 
@@ -164,77 +194,88 @@ def format_table(rows: List[List], headers: List[str]) -> str:
     return "\n".join(lines)
 
 
-def plot_efficiency(
+def plot_efficiency_heatmap(
         data: EfficiencyBySeed, envs: List[str], algos: List[str], ci_method: str,
-        max_cols: int, panel_w: float, panel_h: float, out_path: Path,
+        viol_norm: str, annotate_ci: bool, out_path: Path,
 ) -> None:
+    """Two heatmaps side by side: reward efficiency and cumulative violation, algos x envs."""
     set_mpl_style()
 
     n_env = len(envs)
-    nrows, ncols_env = nice_grid(n_env, max_cols=max_cols)
-    total_cols = ncols_env * 2
+    n_algo = len(algos)
 
-    fig, axs = plt.subplots(nrows, total_cols, figsize=(panel_w * total_cols, panel_h * nrows), squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.90, bottom=0.16, wspace=0.45, hspace=0.6)
+    reward_mean = np.full((n_algo, n_env), np.nan)
+    reward_ci = np.full((n_algo, n_env), np.nan)
+    viol_mean = np.full((n_algo, n_env), np.nan)
+    viol_ci = np.full((n_algo, n_env), np.nan)
 
-    def get_ax(env_i: int, col: int):
-        r = env_i // ncols_env
-        c = (env_i % ncols_env) * 2 + col
-        return axs[r, c]
-
-    legend_handles: Dict[str, Patch] = {}
-    x = np.arange(len(algos))
-    colors = [BASELINES_COLORS.get(a, "gray") for a in algos]
-
-    for env_i, env in enumerate(envs):
-        reward_means, reward_cis, viol_means, viol_cis = [], [], [], []
-        for algo in algos:
+    for i, algo in enumerate(algos):
+        for j, env in enumerate(envs):
             per_seed = data.get((env, algo), {})
-            if per_seed:
-                r_vals = np.array([v[0] for v in per_seed.values()])
-                v_vals = np.array([v[1] for v in per_seed.values()])
-                r_mean, _, r_ci = ci95(r_vals, method=ci_method)
-                v_mean, _, v_ci = ci95(v_vals, method=ci_method)
-            else:
-                r_mean = r_ci = v_mean = v_ci = float("nan")
-            reward_means.append(r_mean);
-            reward_cis.append(r_ci)
-            viol_means.append(v_mean);
-            viol_cis.append(v_ci)
+            if not per_seed:
+                continue
+            r_vals = np.array([v[0] for v in per_seed.values()])
+            v_vals = np.array([(v[2] if viol_norm == "reference" else v[1]) for v in per_seed.values()])
+            r_mean, _, r_ci = ci95(r_vals, method=ci_method)
+            v_mean, _, v_ci = ci95(v_vals, method=ci_method)
+            reward_mean[i, j] = r_mean
+            reward_ci[i, j] = r_ci
+            viol_mean[i, j] = v_mean
+            viol_ci[i, j] = v_ci
 
-        ax_r = get_ax(env_i, 0)
-        ax_r.bar(x, reward_means, yerr=reward_cis, color=colors, capsize=3)
-        ax_r.set_xticks(x)
-        ax_r.set_xticklabels([])
-        ax_r.set_ylabel("Reward eff. (frac. of best)")
-        ax_r.grid(True, axis="y", linestyle="--", alpha=0.4)
+    reward_masked = np.ma.masked_invalid(reward_mean)
+    viol_masked = np.ma.masked_invalid(viol_mean)
 
-        ax_v = get_ax(env_i, 1)
-        ax_v.bar(x, viol_means, yerr=viol_cis, color=colors, capsize=3)
-        ax_v.set_xticks(x)
-        ax_v.set_xticklabels([])
-        ax_v.set_ylabel("Violation eff. (AUC/step)")
-        ax_v.grid(True, axis="y", linestyle="--", alpha=0.4)
+    if viol_norm == "reference":
+        viol_vmax = 1.0
+    else:
+        finite_viol = viol_mean[np.isfinite(viol_mean)]
+        viol_vmax = float(np.percentile(finite_viol, 95)) if finite_viol.size else 1.0
 
-        for algo, color in zip(algos, colors):
-            if algo not in legend_handles:
-                legend_handles[algo] = Patch(color=color, label=algo)
+    panel_w = 0.75 * n_env + 1.6
+    panel_h = 0.45 * n_algo + 1.4
+    fig, (ax_r, ax_v) = plt.subplots(1, 2, figsize=(panel_w * 2, panel_h))
 
-        left_bbox = ax_r.get_position()
-        right_bbox = ax_v.get_position()
-        row_x = 0.5 * (left_bbox.x0 + right_bbox.x1)
-        row_y = max(left_bbox.y1, right_bbox.y1) + 0.015
-        fig.text(row_x, row_y, TRANSLATIONS.get(env, env), ha="center", va="bottom", fontsize=13)
+    env_labels = [TRANSLATIONS.get(e, e) for e in envs]
+    algo_labels = [TRANSLATIONS.get(a, a) for a in algos]
 
-    for env_i in range(n_env, nrows * ncols_env):
-        for col in range(2):
-            get_ax(env_i, col).axis("off")
+    cmap_r = plt.get_cmap("Greens").copy()
+    cmap_r.set_bad(color="lightgrey")
+    cmap_v = plt.get_cmap("Reds").copy()
+    cmap_v.set_bad(color="lightgrey")
 
-    if legend_handles:
-        handles = list(legend_handles.values())
-        labels = [TRANSLATIONS.get(a, a) for a in legend_handles.keys()]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0),
-                   ncol=min(len(labels), 10), fancybox=True, shadow=True)
+    im_r = ax_r.imshow(reward_masked, cmap=cmap_r, vmin=0, vmax=1, aspect="auto")
+    im_v = ax_v.imshow(viol_masked, cmap=cmap_v, vmin=0, vmax=viol_vmax, aspect="auto")
+
+    for ax, title in ((ax_r, r"Reward efficiency $\uparrow$"), (ax_v, r"Cumulative violation $\downarrow$")):
+        ax.set_xticks(np.arange(n_env))
+        ax.set_xticklabels(env_labels, rotation=30, ha="right")
+        ax.set_yticks(np.arange(n_algo))
+        ax.set_yticklabels(algo_labels)
+        ax.set_title(title)
+        ax.grid(False)
+
+    def annotate(ax, mean: np.ndarray, ci: np.ndarray, scale_max: float) -> None:
+        base_fs = 10
+        for i in range(n_algo):
+            for j in range(n_env):
+                m = mean[i, j]
+                if not np.isfinite(m):
+                    ax.text(j, i, "–", ha="center", va="center", fontsize=base_fs, color="dimgray")
+                    continue
+                frac = m / scale_max if scale_max else 0.0
+                color = "white" if frac > 0.6 else "black"
+                y_off = -0.15 if (annotate_ci and np.isfinite(ci[i, j])) else 0.0
+                ax.text(j, i + y_off, f"{m:.2f}", ha="center", va="center", fontsize=base_fs, color=color)
+                if annotate_ci and np.isfinite(ci[i, j]):
+                    ax.text(j, i + 0.28, f"±{ci[i, j]:.2f}", ha="center", va="center",
+                            fontsize=base_fs * 0.7, color=color)
+
+    annotate(ax_r, reward_mean, reward_ci, scale_max=1.0)
+    annotate(ax_v, viol_mean, viol_ci, scale_max=viol_vmax)
+
+    fig.colorbar(im_r, ax=ax_r, label="RewEff", fraction=0.046, pad=0.04)
+    fig.colorbar(im_v, ax=ax_v, label="CumViol", fraction=0.046, pad=0.04)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
@@ -244,12 +285,14 @@ def plot_efficiency(
 def main(args: argparse.Namespace) -> None:
     base = Path(__file__).parent.parent.resolve() / args.input
 
-    data = load_efficiency(base, args.envs, args.algos, args.level, args.seeds, args.threshold, args.last_frac)
+    data = load_efficiency(base, args.envs, args.algos, args.level, args.seeds, args.threshold, args.last_frac,
+                            args.ref_algo, args.viol_norm)
 
     rows = build_table(data, args.envs, args.algos, args.ci_method)
-    headers = ["Env", "Algo", "N", "RewardEff", "RewardEff_CI95", "ViolationEff", "ViolationEff_CI95"]
+    headers = ["Env", "Algo", "N", "RewardEff", "RewardEff_CI95",
+               "ViolationEff", "ViolationEff_CI95", "ViolationEff_Norm", "ViolationEff_Norm_CI95"]
     print(f"\nThreshold: {args.threshold}  |  final-perf window: last {args.last_frac:.0%} of steps  |  "
-          f"CI method: {args.ci_method}\n")
+          f"CI method: {args.ci_method}  |  viol_norm: {args.viol_norm} (ref_algo={args.ref_algo})\n")
     print(format_table(rows, headers))
 
     out_dir = Path(args.output_fig_dir)
@@ -259,7 +302,7 @@ def main(args: argparse.Namespace) -> None:
     print(f"\nSaved table: {csv_path}")
 
     fig_path = out_dir / f"{args.out_name}_level_{args.level}.pdf"
-    plot_efficiency(data, args.envs, args.algos, args.ci_method, args.max_cols, args.panel_w, args.panel_h, fig_path)
+    plot_efficiency_heatmap(data, args.envs, args.algos, args.ci_method, args.viol_norm, args.annotate_ci, fig_path)
     print(f"Saved figure: {fig_path}")
 
 
@@ -277,10 +320,14 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--threshold", type=float, default=25.0, help="Safety cost threshold.")
     p.add_argument("--last_frac", type=float, default=0.1,
                    help="Fraction of the tail of each run averaged for final reward (reward-eff normalizer).")
+    p.add_argument("--ref_algo", type=str, default="ppo",
+                   help="Unconstrained reference algo used to normalize CumViol across tasks.")
+    p.add_argument("--viol_norm", type=str, default="reference", choices=["none", "reference"],
+                   help="'reference' divides CumViol by the ref_algo's mean CumViol on the same env; "
+                        "'none' keeps only the raw (task-scale) value.")
     p.add_argument("--ci_method", type=str, default="t", choices=["normal", "t"])
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
-    p.add_argument("--panel_w", type=float, default=3.1)
-    p.add_argument("--panel_h", type=float, default=3.0)
+    p.add_argument("--annotate_ci", action="store_true", default=False,
+                   help="Add a second ±CI line under each heatmap cell's mean.")
     p.add_argument("--output_fig_dir", type=str, default="figures")
     p.add_argument("--out_name", type=str, default="sample_efficiency")
     return p

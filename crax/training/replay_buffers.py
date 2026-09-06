@@ -285,6 +285,114 @@ class UniformSamplingQueue(QueueBase[Sample], Generic[Sample]):
     return buffer_state.replace(key=key), self._unflatten_fn(batch)
 
 
+@flax.struct.dataclass
+class PytreeReplayBufferState:
+  """Like `ReplayBufferState`, but `data` stays a pytree of arrays instead
+  of one flattened array (see `PytreeUniformSamplingQueue`)."""
+
+  data: Sample
+  insert_position: jnp.ndarray
+  sample_position: jnp.ndarray
+  key: PRNGKey
+
+
+class PytreeUniformSamplingQueue(ReplayBuffer[PytreeReplayBufferState, Sample]):
+  """Uniform-sampling replay queue for transitions with heterogeneous-dtype
+  leaves (e.g. uint8 pixel observations alongside float32 reward/action).
+
+  `UniformSamplingQueue` stores each transition by flattening it with
+  `jax.flatten_util.ravel_pytree` into one array of a single common dtype.
+  That's fine for all-float32 state transitions, but `ravel_pytree` promotes
+  every leaf to the widest dtype in the pytree — so a uint8 image stored
+  alongside float32 scalars silently becomes float32, a 4x memory blowup on
+  the single largest thing in the buffer. This class instead keeps `data` as
+  a pytree mirroring `dummy_data_sample`, one array per leaf, each retaining
+  its own dtype (and thus its own per-element byte width) — everything else
+  (roll-on-insert, uniform-index sampling) matches `UniformSamplingQueue`.
+  """
+
+  def __init__(
+      self,
+      max_replay_size: int,
+      dummy_data_sample: Sample,
+      sample_batch_size: int,
+  ):
+    self._shape_dtype = jax.tree_util.tree_map(
+        lambda x: (jnp.shape(x), jnp.result_type(x)), dummy_data_sample
+    )
+    self._max_replay_size = max_replay_size
+    self._sample_batch_size = sample_batch_size
+    self._size = 0
+
+  def init(self, key: PRNGKey) -> PytreeReplayBufferState:
+    data = jax.tree_util.tree_map(
+        lambda sd: jnp.zeros((self._max_replay_size,) + sd[0], sd[1]),
+        self._shape_dtype,
+    )
+    return PytreeReplayBufferState(
+        data=data,
+        sample_position=jnp.zeros((), jnp.int32),
+        insert_position=jnp.zeros((), jnp.int32),
+        key=key,
+    )
+
+  def check_can_insert(self, buffer_state, samples, shards):
+    """Checks whether insert operation can be performed."""
+    assert isinstance(shards, int), 'This method should not be JITed.'
+    insert_size = jax.tree_util.tree_leaves(samples)[0].shape[0] // shards
+    if self._max_replay_size < insert_size:
+      raise ValueError(
+          'Trying to insert a batch of samples larger than the maximum replay'
+          f' size. num_samples: {insert_size}, max replay size'
+          f' {self._max_replay_size}'
+      )
+    self._size = min(self._max_replay_size, self._size + insert_size)
+
+  def insert_internal(
+      self, buffer_state: PytreeReplayBufferState, samples: Sample
+  ) -> PytreeReplayBufferState:
+    insert_len = jax.tree_util.tree_leaves(samples)[0].shape[0]
+    max_size = self._max_replay_size
+    position = buffer_state.insert_position
+    roll = jnp.minimum(0, max_size - position - insert_len)
+
+    def _update_leaf(data_leaf: jnp.ndarray, sample_leaf: jnp.ndarray) -> jnp.ndarray:
+      data_leaf = jax.lax.cond(
+          roll, lambda: jnp.roll(data_leaf, roll, axis=0), lambda: data_leaf
+      )
+      return jax.lax.dynamic_update_slice_in_dim(
+          data_leaf, sample_leaf, position + roll, axis=0
+      )
+
+    data = jax.tree_util.tree_map(_update_leaf, buffer_state.data, samples)
+    new_position = (position + roll + insert_len) % (max_size + 1)
+    sample_position = jnp.maximum(0, buffer_state.sample_position + roll)
+
+    return buffer_state.replace(
+        data=data,
+        insert_position=new_position,
+        sample_position=sample_position,
+    )
+
+  def sample_internal(
+      self, buffer_state: PytreeReplayBufferState
+  ) -> Tuple[PytreeReplayBufferState, Sample]:
+    key, sample_key = jax.random.split(buffer_state.key)
+    idx = jax.random.randint(
+        sample_key,
+        (self._sample_batch_size,),
+        minval=buffer_state.sample_position,
+        maxval=buffer_state.insert_position,
+    )
+    batch = jax.tree_util.tree_map(
+        lambda d: jnp.take(d, idx, axis=0, mode='wrap'), buffer_state.data
+    )
+    return buffer_state.replace(key=key), batch
+
+  def size(self, buffer_state: PytreeReplayBufferState) -> int:
+    return buffer_state.insert_position - buffer_state.sample_position  # pytype: disable=bad-return-type  # jax-ndarray
+
+
 class PmapWrapper(ReplayBuffer[State, Sample]):
   """Wrapper to distribute the buffer on multiple devices.
 
