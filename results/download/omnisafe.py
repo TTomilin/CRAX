@@ -20,6 +20,8 @@ from pathlib import Path
 import pandas as pd
 import wandb
 
+from results.common import add_max_age_arg, apply_max_age_filter
+
 STEP_KEY = "TotalEnvSteps"
 REWARD_KEY = "Metrics/EpRet"
 COST_KEY = "Metrics/EpCost"
@@ -31,6 +33,8 @@ def build_filters(args: argparse.Namespace) -> dict:
         f["config.seed"] = {"$in": args.seeds}
     if args.wandb_tags:
         f["tags"] = {"$in": args.wandb_tags}
+    # only runs created within the last `max_age_days` days
+    apply_max_age_filter(f, args)
     return f
 
 
@@ -91,6 +95,7 @@ def main(args: argparse.Namespace) -> None:
 def build_args() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Download OmniSafe ant-velocity (PPOLag) runs from WandB.")
     p.add_argument("--project", type=str, default="omnisafe", help="Name of the WandB project")
+    add_max_age_arg(p)
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], help="Seed(s) to download")
     p.add_argument("--run_name_contains", type=str, default="AntVelocity",
                    help="Only keep runs whose name contains this substring (client-side filter; "

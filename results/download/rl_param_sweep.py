@@ -12,7 +12,7 @@ import copy
 
 import wandb
 
-from results.common import RL_SWEEP_SPEC
+from results.common import RL_SWEEP_SPEC, add_max_age_arg
 from results.download.main_results import build_filters, store_data
 
 
@@ -57,8 +57,7 @@ def build_args() -> argparse.ArgumentParser:
     parser.add_argument("--metrics", type=str, nargs='+', default=['episodic/sum_reward', 'episodic/cost'],
                         help="Name of the metrics to download")
     parser.add_argument("--project", type=str, required=True, help="Name of the WandB project")
-    parser.add_argument("--max_age_days", type=float, default=1,
-                        help="Only download runs created at most this many days ago.")
+    add_max_age_arg(parser, default=1)
     parser.add_argument("--wandb_tags", type=str, nargs='+', default=[], help="WandB tags to filter runs")
     parser.add_argument("--overwrite", default=False, action='store_true', help="Overwrite existing files")
     parser.add_argument("--include_runs", type=str, nargs="+", default=[],

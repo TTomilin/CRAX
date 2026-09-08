@@ -20,7 +20,8 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
-from results.common import canonicalize_env_name, env_name_variants, get_metrics_for_env
+from results.common import (add_max_age_arg, apply_max_age_filter, canonicalize_env_name,
+                            env_name_variants, get_metrics_for_env)
 
 
 def main(args: argparse.Namespace) -> None:
@@ -52,6 +53,9 @@ def build_filters(args: argparse.Namespace) -> dict:
         f["config.env_name"] = {"$in": all_variants}
     if args.seeds:
         f["config.seed"] = {"$in": args.seeds}
+
+    # only runs created within the last `max_age_days` days
+    apply_max_age_filter(f, args)
 
     # Filter by tags (TRANSFER or CURRICULUM)
     if args.wandb_tags:
@@ -149,6 +153,7 @@ def build_args() -> argparse.ArgumentParser:
                         default=['episodic/sum_reward', 'episodic/cost'],
                         help="Metrics to download")
     parser.add_argument("--project", type=str, required=True, help="WandB project name")
+    add_max_age_arg(parser)
     parser.add_argument("--wandb_tags", type=str, nargs='+', default=['TRANSFER', 'CURRICULUM'],
                         help="WandB tags to filter runs (TRANSFER and/or CURRICULUM)")
     parser.add_argument("--overwrite", default=False, action='store_true',

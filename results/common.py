@@ -1,6 +1,8 @@
 """Common utilities for result processing scripts."""
 from __future__ import annotations
 
+import argparse
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
 import matplotlib.cm as cm
@@ -289,3 +291,22 @@ def align_and_stack(dfs: List[pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:
     steps = trimmed[0]["_step"].to_numpy(copy=True)
     vals = np.stack([d["value"].to_numpy(copy=True) for d in trimmed], axis=0)  # [R, T]
     return steps, vals
+
+
+def apply_max_age_filter(f: dict, args: argparse.Namespace) -> dict:
+    """Restrict `f` to runs created within the last `args.max_age_days` days.
+
+    No-op when the arg is absent or None, i.e. no age limit.
+    """
+    max_age_days = getattr(args, "max_age_days", None)
+    if max_age_days is not None:
+        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        f["createdAt"] = {"$gte": cutoff}
+    return f
+
+
+def add_max_age_arg(parser: argparse.ArgumentParser, default: float | None = None) -> None:
+    """Add the shared --max_age_days flag to a downloader's parser."""
+    parser.add_argument("--max_age_days", type=float, default=default,
+                        help="Only download runs created at most this many days ago "
+                             f"(default: {'no age limit' if default is None else default})")

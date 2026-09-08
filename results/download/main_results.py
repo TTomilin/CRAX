@@ -1,12 +1,11 @@
 import argparse
 import os
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import wandb
 from wandb.apis.public import Run
 
-from results.common import get_metrics_for_env
+from results.common import add_max_age_arg, apply_max_age_filter, get_metrics_for_env
 
 
 def main(args: argparse.Namespace) -> None:
@@ -33,10 +32,7 @@ def build_filters(args: argparse.Namespace) -> dict:
         f["config.seed"] = {"$in": args.seeds}
 
     # only runs created within the last `max_age_days` days
-    max_age_days = getattr(args, "max_age_days", None)
-    if max_age_days is not None:
-        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        f["createdAt"] = {"$gte": cutoff}
+    apply_max_age_filter(f, args)
 
     # tags live on the run, not in config
     if args.wandb_tags:
@@ -113,6 +109,7 @@ def common_dl_args() -> argparse.ArgumentParser:
     parser.add_argument("--metrics", type=str, nargs='+', default=['episodic/sum_reward', 'episodic/cost'],
                         help="Name of the metrics to download/plot")
     parser.add_argument("--project", type=str, required=True, help="Name of the WandB project")
+    add_max_age_arg(parser)
     parser.add_argument("--wandb_tags", type=str, nargs='+', default=[], help="WandB tags to filter runs")
     parser.add_argument("--overwrite", default=False, action='store_true', help="Overwrite existing files")
     parser.add_argument("--include_runs", type=str, nargs="+", default=[],
