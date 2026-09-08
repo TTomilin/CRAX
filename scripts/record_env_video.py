@@ -124,7 +124,7 @@ ENV_DEFAULTS = {
 
 def load_policy_from_checkpoint(model_path: str):
     """Load a policy from a checkpoint path."""
-    from crax.training.agents.ppo import checkpoint as ppo_checkpoint
+    from training.agents.ppo import checkpoint as ppo_checkpoint
 
     candidates = [model_path]
     if not os.path.isabs(model_path):
@@ -231,7 +231,7 @@ def main(args: argparse.Namespace) -> None:
 
     os.environ.setdefault("MUJOCO_GL", "egl")
 
-    from run_utils import record_episode_video_simple, record_episode_video
+    from training.run_utils import record_episode_video_simple, record_episode_video
 
     # Get environment defaults
     defaults = ENV_DEFAULTS.get(args.env, {})

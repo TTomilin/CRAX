@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import mujoco
 
 from crax import envs
-from run_utils import VISION_CAMERA_OVERRIDES, morphology_override, record_episode_video_simple
+from training.run_utils import VISION_CAMERA_OVERRIDES, morphology_override, record_episode_video_simple
 
 
 def _turn_policy(action_size, turn_rate):
@@ -108,7 +108,7 @@ def main():
     parser.add_argument('--downscale', type=int, nargs='?', const=64, default=None,
                          help="render at the agent's actual --vision observation resolution "
                               "instead of --width/--height (square, e.g. 64x64 to match "
-                              "configs/training_config.py's --vision_height/--vision_width "
+                              "training/config.py's --vision_height/--vision_width "
                               "defaults). Bare '--downscale' uses 64; '--downscale 84' uses 84.")
     parser.add_argument('--camera', type=str, default=None, help="camera name to check for every env")
     parser.add_argument('--level', type=int, default=1, help="difficulty level")

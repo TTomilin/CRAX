@@ -81,7 +81,7 @@ Related video flags (vision runs only):
 ### Default Camera
 
 If `--vision_camera` is not passed, it is picked from the environment name by
-substring match (`VISION_CAMERA_OVERRIDES` in `run_utils.py`):
+substring match (`VISION_CAMERA_OVERRIDES` in `training/run_utils.py`):
 
 | Substring in `--env_name` | Camera |
 |---------------------------|--------|
@@ -205,7 +205,7 @@ don't hand them the `vision=True` env built above:
 
 ```python
 from crax import envs
-from run_utils import make_vision_network_factory
+from training.run_utils import make_vision_network_factory
 
 env = envs.get_environment('safe_goal_point', level=1, backend='mjx')
 
@@ -220,7 +220,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from crax.training.agents.ppo_lag import train as ppo_lag
+from training.agents.ppo_lag import train as ppo_lag
 ppo_lag.train(
     environment=env,
     network_factory=network_factory,
@@ -242,7 +242,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from crax.training.agents.sac import train as sac
+from training.agents.sac import train as sac
 sac.train(
     environment=env,
     network_factory=network_factory,
@@ -259,7 +259,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from crax.training.agents.sac_lag import train as sac_lag
+from training.agents.sac_lag import train as sac_lag
 sac_lag.train(
     environment=env,
     network_factory=network_factory,

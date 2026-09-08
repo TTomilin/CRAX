@@ -8,3 +8,9 @@ with GPU-accelerated vision pipelines and safe/constrained reinforcement
 learning components.
 
 Copyright 2024 The Brax Authors.
+
+A file-by-file record of which sources come from Brax, which have been modified,
+and which are original to CRAX is maintained in PROVENANCE.md. Every file
+derived from Brax retains its original copyright header and, where it has been
+changed, carries a notice describing the modification, as required by section
+4(b) of the Apache License.

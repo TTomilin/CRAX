@@ -21,12 +21,21 @@ conda create -n crax python=3.11 && conda activate crax
 
 ## 2. Install CRAX
 
-**Option A: package + CUDA 12 extra (recommended)**
+The base install (`pip install -e .`) contains only the environment and
+simulation dependencies. Training dependencies live in the `train` extra; see
+the extras table in the [README](README.md#installation).
+
+**Option A: training + CUDA 12 (recommended)**
 ```bash
-pip install -e ".[cuda]"
+pip install -e ".[train,cuda]"
 ```
 
-**Option B: CPU-only**
+**Option B: CPU-only training**
+```bash
+pip install -e ".[train]"
+```
+
+**Option B2: environments only (no RL stack)**
 ```bash
 pip install -e .
 ```
@@ -48,7 +57,7 @@ environments that install dependencies separately from the package.
 
 ```bash
 python -c "from crax import envs; print(sorted(envs._envs))"
-python -c "from crax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
+python -c "from training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
 python -c "import jax; print(f'Devices: {jax.devices()}')"
 ```
 
@@ -85,7 +94,7 @@ python train_env.py --env_name safe_goal_point --alg ppo_lag --vision
 ```
 
 All three scripts share the same argument set, defined in
-`configs/training_config.py` (`build_base_parser`). Run with `--help` for the
+`training/config.py` (`build_base_parser`). Run with `--help` for the
 full list, including the per-algorithm sections (`--safety_bound`, `--pid_kp`,
 `--nu_lr`, `--tau`, ...).
 
@@ -143,7 +152,7 @@ headroom. Set the variable yourself before launching to override it.
 `setup_gpu_environment` sets `MUJOCO_GL=egl` at startup, which needs a GPU with
 EGL. On a machine without one, use software rendering:
 ```bash
-export MUJOCO_GL=osmesa   # also edit run_utils.setup_gpu_environment, which
+export MUJOCO_GL=osmesa   # also edit training.run_utils.setup_gpu_environment, which
                           # currently overwrites MUJOCO_GL unconditionally
 ```
 

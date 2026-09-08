@@ -34,7 +34,7 @@ setup_gpu_environment()
 
 import jax
 from crax import envs
-from crax.training.agents.ppo_lag import train as ppo_lag
+from training.agents.ppo_lag import train as ppo_lag
 
 print(f"JAX backend : {jax.default_backend()}")
 print(f"JAX devices : {jax.devices()}")

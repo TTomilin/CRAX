@@ -1,4 +1,5 @@
 # Copyright 2024 The Brax Authors.
+# Modifications Copyright 2026 CRAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# This file is derived from Brax 0.12.3 (envs/base.py) and has been modified
+# by the CRAX Authors: `PipelineEnv.__init__` accepts `physics`, `reward` and `cost` specification dicts, and
+# `Wrapper.render` forwards to the wrapped environment instead of resolving to
+# `Env.render` through the MRO.
 
 # pylint:disable=g-multiple-import
 """A brax environment for training and inference."""

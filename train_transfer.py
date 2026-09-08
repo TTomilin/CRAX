@@ -15,9 +15,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from crax.training import transfer
-from configs.training_config import bool_type, build_base_parser
-from run_utils import (
+from training import transfer
+from training.config import bool_type, build_base_parser
+from training.run_utils import (
     setup_gpu_environment, get_algorithm_train_fn, custom_progress_fn,
     make_vision_network_factory,
 )

@@ -383,7 +383,7 @@ class TestTrainingWrapperStack:
 class TestVisionNetworks:
     def test_make_ppo_networks_vision_with_cost_value(self):
         """Verify the vision network factory creates all 3 networks."""
-        from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+        from training.agents.ppo.networks_vision import make_ppo_networks_vision
 
         obs_size = {
             'pixels/vision': (64, 64, 3),
@@ -402,7 +402,7 @@ class TestVisionNetworks:
 
     def test_vision_network_forward_pass(self):
         """Verify the networks can do a forward pass with pixel obs."""
-        from crax.training.agents.ppo.networks_vision import make_ppo_networks_vision
+        from training.agents.ppo.networks_vision import make_ppo_networks_vision
 
         obs_size = {
             'pixels/vision': (64, 64, 3),
@@ -446,7 +446,7 @@ class TestVisionNetworks:
 
     def test_make_vision_network_factory(self):
         """Test the run_utils helper for safe RL algorithms."""
-        from run_utils import make_vision_network_factory
+        from training.run_utils import make_vision_network_factory
 
         factory = make_vision_network_factory(
             'ppo_lag', policy_obs_key='state', value_obs_key='state',
@@ -457,7 +457,7 @@ class TestVisionNetworks:
 
     def test_make_vision_network_factory_plain_ppo(self):
         """Plain PPO should not get a cost value network."""
-        from run_utils import make_vision_network_factory
+        from training.run_utils import make_vision_network_factory
 
         factory = make_vision_network_factory(
             'ppo', policy_obs_key='state', value_obs_key='state',

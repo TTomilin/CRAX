@@ -32,7 +32,7 @@ CRAX includes efficient JAX implementations of the following, selected with the
 | **SAC-Lagrange** | `sac_lag` | SAC with Lagrangian relaxation for constraints | |
 | **SAC-PID** | `sac_pid` | SAC with PID-controlled Lagrange multiplier | |
 
-All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods. The registry lives in `get_algorithm_train_fn` in `run_utils.py`; each algorithm adds its own CLI section in `configs/training_config.py` (`--safety_bound`, `--pid_kp`, `--nu_lr`, `--tau`, ...), and irrelevant arguments are filtered out per algorithm by `filter_kwargs_for_fn`.
+All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods. The registry lives in `get_algorithm_train_fn` in `training/run_utils.py`; each algorithm adds its own CLI section in `training/config.py` (`--safety_bound`, `--pid_kp`, `--nu_lr`, `--tau`, ...), and irrelevant arguments are filtered out per algorithm by `filter_kwargs_for_fn`.
 
 ## Environments
 
@@ -81,16 +81,35 @@ python3 -m venv .venv && source .venv/bin/activate
 conda create -n crax python=3.11 && conda activate crax
 ```
 
-Then install the package:
+Then install the package. The base install contains only what is needed to
+build, step and render environments — no RL dependencies:
 
 ```bash
 pip install -e .
 ```
 
-For GPU support (CUDA 12), install the `cuda` extra instead, which pulls in `jax[cuda12]`:
+To train agents, install the `train` extra, which adds the `training/` package's
+dependencies (optax, orbax, wandb):
 
 ```bash
-pip install -e ".[cuda]"
+pip install -e ".[train]"
+```
+
+Other extras:
+
+| Extra | Adds | For |
+|---|---|---|
+| `train` | optax, orbax-checkpoint, wandb, imageio, matplotlib | Running the RL algorithms in `training/` |
+| `analysis` | pandas, matplotlib, wandb | Downloading and plotting results (`results/`) |
+| `gym` | gym, dm_env | The Gym/dm_env wrappers in `crax.envs.wrappers` |
+| `torch` | torch | The PyTorch wrapper |
+| `cuda` | `jax[cuda12]` | GPU support on CUDA 12 |
+| `all` | train + analysis + gym | Everything except CUDA and torch |
+
+Extras combine, e.g. a GPU training install:
+
+```bash
+pip install -e ".[train,cuda]"
 ```
 
 See [SETUP.md](SETUP.md) for pinned installs, GPU/headless configuration, wandb
@@ -128,44 +147,57 @@ See [`examples/README.md`](examples/README.md) for the full list of examples.
 
 ## Project Structure
 
+The repository is split in two packages: `crax/` holds the simulation and the
+environments, `training/` holds the RL algorithms. `crax/` does not import
+`training/`, so environments can be used on their own with a much smaller
+dependency set (see [Installation](#installation)).
+
 ```
 CRAX/
-├── crax/
-│   ├── envs/                    # Environment definitions
-│   │   ├── safe_goal.py         # Goal navigation suite
-│   │   ├── safe_circle.py       # Circular orbit suite
-│   │   ├── safe_button.py       # Button pressing suite
-│   │   ├── safe_push.py         # Block pushing suite
-│   │   ├── safe_velocity.py     # Velocity constraint suite (6 agents)
-│   │   ├── safe_lift.py         # Leg-lifting suite
-│   │   ├── safe_height.py       # Height constraint suite
-│   │   ├── safe_pathway.py      # Hazard corridor suite
-│   │   ├── safe_reacher.py      # Reacher with obstacles
-│   │   ├── builder.py           # Modular XML scene builder
-│   │   ├── difficulty.py        # Difficulty level configurations
-│   │   ├── hazards.py           # Hazard generation utilities
-│   │   ├── goals.py             # Goal sampling utilities
-│   │   └── wrappers/            # Env wrappers (incl. pixel observations)
-│   └── training/
-│       ├── curriculum.py        # Curriculum training loop
-│       ├── transfer.py          # Transfer learning loop
-│       └── agents/
-│           ├── ppo/             # Base PPO with extensibility hooks
-│           ├── ppo_lag/         # PPO-Lagrange
-│           ├── ppo_pid/         # PPO with PID controller
-│           ├── ppo_saute/       # Saute wrapper
-│           ├── focops/          # FOCOPS
-│           ├── p3o/             # P3O
-│           ├── crpo/            # CRPO
-│           ├── sac/             # SAC
-│           ├── sac_lag/         # SAC-Lagrange
-│           └── sac_pid/         # SAC-PID
-├── configs/training_config.py   # Shared CLI argument definitions
+├── crax/                        # Environments + simulation (no RL deps)
+│   ├── base.py, math.py, ...    # Physics core (Brax/MJX pipelines)
+│   ├── generalized/, positional/, spring/, mjx/
+│   ├── io/                      # MJCF loading, image + HTML export
+│   └── envs/                    # Environment definitions
+│       ├── safe_goal.py         # Goal navigation suite
+│       ├── safe_circle.py       # Circular orbit suite
+│       ├── safe_button.py       # Button pressing suite
+│       ├── safe_push.py         # Block pushing suite
+│       ├── safe_velocity.py     # Velocity constraint suite (6 agents)
+│       ├── safe_lift.py         # Leg-lifting suite
+│       ├── safe_height.py       # Height constraint suite
+│       ├── safe_pathway.py      # Hazard corridor suite
+│       ├── safe_reacher.py      # Reacher with obstacles
+│       ├── builder.py           # Modular XML scene builder
+│       ├── difficulty.py        # Difficulty level configurations
+│       ├── hazards.py           # Hazard generation utilities
+│       ├── goals.py             # Goal sampling utilities
+│       └── wrappers/            # Env wrappers (incl. pixel observations)
+├── training/                    # RL algorithms and training infrastructure
+│   ├── agents/
+│   │   ├── ppo/                 # Base PPO with extensibility hooks
+│   │   ├── ppo_lag/             # PPO-Lagrange
+│   │   ├── ppo_pid/             # PPO with PID controller
+│   │   ├── ppo_saute/           # Saute wrapper
+│   │   ├── focops/              # FOCOPS
+│   │   ├── p3o/                 # P3O
+│   │   ├── crpo/                # CRPO
+│   │   ├── sac/                 # SAC
+│   │   ├── sac_lag/             # SAC-Lagrange
+│   │   └── sac_pid/             # SAC-PID
+│   ├── networks.py              # Policy/value network factories
+│   ├── acting.py                # Rollout and evaluation loops
+│   ├── curriculum.py            # Curriculum training loop
+│   ├── transfer.py              # Transfer learning loop
+│   ├── checkpoint.py            # Checkpoint save/load
+│   ├── config.py                # Shared CLI argument definitions
+│   └── run_utils.py             # Shared training helpers
 ├── docs/VISION_TRAINING.md      # Pixel-observation training guide
 ├── train_env.py                 # Single environment training
 ├── train_curriculum.py          # Progressive difficulty training
 ├── train_transfer.py            # Safety transfer learning
-├── run_utils.py                 # Shared training helpers
+├── results/                     # Result download + plotting pipeline
+├── examples/                    # Small self-contained usage examples
 ├── scripts/                     # Utility & visualization scripts
 └── tests/                       # Pytest suite
 ```
@@ -200,6 +232,12 @@ physics and RL library, and on [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/
 and [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp), which power
 the accelerated simulation and the GPU pixel renderer. We thank the Brax and
 MuJoCo teams for these foundations.
+
+CRAX is a fork of Brax, not a rewrite: roughly half the source tree is Brax code,
+either unchanged or modified. [PROVENANCE.md](PROVENANCE.md) records this file by
+file — which sources come from Brax, which we changed and how, and which are
+original to CRAX. It is generated by `scripts/check_provenance.py`, which diffs
+the tree against the upstream Brax release.
 
 Our navigation suite tasks are close reimplementations from
 [Safety Gym](https://openai.com/index/safety-gym/) and

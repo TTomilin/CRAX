@@ -1,4 +1,5 @@
 # Copyright 2024 The Brax Authors.
+# Modifications Copyright 2026 CRAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# This file is derived from Brax 0.12.3 (envs/wrappers/gym.py) and has been modified
+# by the CRAX Authors: `render` takes explicit `width`/`height`, and the vector wrapper renders every
+# sub-environment rather than only the first.
 
 """Wrappers to convert brax envs to gym envs."""
 

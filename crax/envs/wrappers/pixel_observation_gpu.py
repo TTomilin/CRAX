@@ -17,7 +17,7 @@ way `crax.envs.training.wrap`'s `VmapWrapper` works) fails: the underlying
 FFI call shape-checks against the unbatched per-example shape before vmap's
 batching rule ever applies. So this wrapper must be applied to an ALREADY
 VECTORIZED env, i.e. *after* `VmapWrapper` / `crax.envs.training.wrap`,
-not before. `crax.training.agents.ppo.train._maybe_wrap_env` does this:
+not before. `training.agents.ppo.train._maybe_wrap_env` does this:
 `wrap_for_training(env, ...)` runs first, then this wrapper is applied to
 the result, using the same `num_envs` (or `num_eval_envs`) already known
 at that point to size the render context.

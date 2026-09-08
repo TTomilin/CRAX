@@ -12,8 +12,8 @@ import numpy as np
 
 import wandb
 from crax import envs
-from configs.training_config import build_base_parser
-from run_utils import (
+from training.config import build_base_parser
+from training.run_utils import (
     collect_rollout_metrics, record_episode_video, setup_gpu_environment,
     get_algorithm_train_fn, filter_kwargs_for_fn, custom_progress_fn,
     make_vision_network_factory, morphology_override, VISION_CAMERA_OVERRIDES,

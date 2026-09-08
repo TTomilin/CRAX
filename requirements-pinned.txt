@@ -1,6 +1,5 @@
 absl-py==2.3.1
 etils==1.13.0
-flask-cors==6.0.0
 flax==0.10.6
 imageio==2.37.0
 jax==0.6.0
@@ -19,7 +18,4 @@ warp-lang==1.16.0
 numpy==2.2.6
 optax==0.2.4
 orbax-checkpoint==0.11.13
-scipy==1.15.3
-tensorboardX==2.6.2.2
-trimesh==4.6.9
 wandb==0.19.11

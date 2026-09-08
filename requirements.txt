@@ -1,21 +1,25 @@
-# Safe-Brax Requirements
+# CRAX Requirements
 # Python >= 3.10
+#
+# This file lists the full stack (environments + training + analysis).
+# If you only need the environments, use `pip install -e .`. The remaining
+# blocks correspond to the [train], [analysis] and [gym] extras in
+# pyproject.toml.
 
-# Core JAX stack
+# --- Environments and simulation (core install) ---
 jax==0.6.0
 jaxlib==0.6.0
 jax-cuda12-plugin==0.6.0  # For GPU support on CUDA 12.x
 jax-cuda12-pjrt==0.6.0
 
-# Brax core dependencies
 absl-py>=2.3.0
 etils>=1.13.0
 flax>=0.10.0
 jaxopt>=0.8.0
 ml_collections>=1.1.0
 numpy>=2.2.0
-optax>=0.2.0
-orbax-checkpoint
+Pillow
+typing-extensions
 
 # MuJoCo (physics engine) - IMPORTANT: Keep these versions synchronized!
 mujoco==3.11.0
@@ -23,31 +27,21 @@ mujoco-mjx==3.11.0
 mujoco-warp==3.11.0
 warp-lang==1.16.0
 
-# Training and logging
+# --- Training ([train] extra) ---
+optax>=0.2.0
+orbax-checkpoint
 wandb>=0.19.0
-tensorboardX
-
-# Visualization and plotting
-matplotlib>=3.10.0
 imageio>=2.37.0
-Pillow
+matplotlib>=3.10.0
 
-# Web server (for visualization)
-flask>=3.1.0
-flask-cors>=6.0.0
-jinja2
-
-# Utilities
-scipy
-trimesh
-typing-extensions
+# --- Result download and plotting ([analysis] extra) ---
 pandas
 
-# Optional: Gym compatibility
+# --- Third-party env API wrappers ([gym] extra) ---
 gym>=0.26.0
+dm_env
 
-# Development tools (optional)
+# --- Development tools (optional) ---
 pytest
 ipython
 jupyter
-
