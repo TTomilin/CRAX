@@ -97,40 +97,34 @@ See [SETUP.md](SETUP.md) for pinned installs, GPU/headless configuration, wandb
 and troubleshooting, and [docs/VISION_TRAINING.md](docs/VISION_TRAINING.md) for
 training from pixel observations.
 
-## Quick Start
+## Start Here
 
-### Training an agent
-
-```python
-from crax import envs
-from crax.training.agents.ppo_lag import train as ppo_lag_train
-
-# Create environment
-env = envs.get_environment('safe_goal_point', level=1)
-
-# Train with PPO-Lagrange
-make_policy, params, metrics, _ = ppo_lag_train.train(
-    environment=env,
-    num_timesteps=10_000_000,
-    episode_length=1000,
-    num_envs=2048,
-    safety_bound=25.0,  # Maximum allowed cost per episode
-    lagrangian_coef_rate=0.01,
-)
-```
-
-### Using the CLI
+The quickest way to see CRAX working is
+[`examples/01_run_episode.py`](examples/01_run_episode.py).
 
 ```bash
-# Single environment training
-python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1
-
-# Curriculum training (progressive difficulty)
-python train_curriculum.py --env_name safe_goal_point --alg ppo_lag
-
-# Safety transfer (pre-train with PPO, then fine-tune with safe algorithms)
-python train_transfer.py --env_name safe_velocity_ant --alg ppo_lag
+python examples/01_run_episode.py --env_name safe_goal_point --level 1
 ```
+
+The core loop is just a few lines:
+
+```python
+import jax
+from crax import envs
+
+env = envs.get_environment('safe_goal_point', level=1)
+reset_fn, step_fn = jax.jit(env.reset), jax.jit(env.step)
+
+rng = jax.random.PRNGKey(0)
+state = reset_fn(rng)
+for _ in range(300):
+    rng, action_rng = jax.random.split(rng)
+    action = jax.random.uniform(action_rng, (env.action_size,), minval=-1.0, maxval=1.0)
+    state = step_fn(state, action)
+    reward, cost = float(state.reward), float(state.info['cost'])  # safety cost per step
+```
+
+See [`examples/README.md`](examples/README.md) for the full list of examples.
 
 ## Project Structure
 
@@ -192,6 +186,12 @@ ppo/train.py          # Base trainer with hooks (loss_fn, post_step_fn, init_aux
 ```
 
 This design minimizes code duplication and makes it easy to add new algorithms.
+
+## Contributing
+
+Planned work is tracked in [ROADMAP.md](ROADMAP.md). Contributions are welcome. 
+The roadmap flags which items are self-contained enough to pick up directly. 
+For anything substantial, please open an issue first so we can avoid duplicated work.
 
 ## Acknowledgements
 
