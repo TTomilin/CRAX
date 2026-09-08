@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -208,6 +208,37 @@ def nice_grid(n: int, max_cols: int = 3) -> Tuple[int, int]:
     return best[1], best[2]
 
 
+# `ppo_cost` trains on `reward - cost_weight * cost` (RewardMinusCostWrapper), so
+# its logged episode return is the shaped return and the true reward has to be
+# reconstructed for plotting.
+PPO_COST_SHAPED_REWARD_ALGO = "ppo_cost"
+
+# Envs whose ppo_cost runs log the unshaped reward and therefore need no reconstruction.
+PPO_COST_NO_RECONSTRUCTION: Set[str] = {
+    "safe_goal_point",
+    "safe_reacher",
+    "safe_lift_spider",
+    "safe_push_point",
+}
+
+
+def _reconstructs_ppo_cost_reward(
+        df: pd.DataFrame, algo: str, env_name: Optional[str],
+        reward_col: Optional[str], shaped_reward_col: Optional[str], cost_col: Optional[str],
+) -> bool:
+    """Whether cost has to be added back to recover ppo_cost's true reward."""
+    if algo != PPO_COST_SHAPED_REWARD_ALGO:
+        return False
+    # Only the sum-of-state.reward column is shaped; component metrics are not.
+    if reward_col is None or reward_col != shaped_reward_col:
+        return False
+    if cost_col is None or cost_col not in df.columns:
+        return False
+    env = canonicalize_env_name(env_name) if env_name else None
+    return not (env in PPO_COST_NO_RECONSTRUCTION
+                or (env_name or "") in PPO_COST_NO_RECONSTRUCTION)
+
+
 def get_series(
         df: pd.DataFrame,
         algo: str,
@@ -217,33 +248,30 @@ def get_series(
 ) -> Optional[pd.Series]:
     """Return a numeric pandas Series for the requested metric, with corrections.
 
-    Special handling for 'ppo_cost': during training the logged reward already has
-    the cost subtracted (reward_logged = true_reward - cost). For plotting we want
-    the true original reward, so we add the cost back when metric == 'reward'.
+    Special handling for 'ppo_cost': it trains on `reward - cost`, so the logged
+    episode return (`episodic/sum_reward`) is the shaped one and the cost is added
+    back to recover the true reward. Envs that log a per-component reward metric
+    (REWARD_METRIC_MAP) are left alone. Those metrics are read from
+    `state.metrics` and were never shaped.
 
     If required columns are missing, returns None.
     """
     cols = metric_cols or DEFAULT_METRIC_COLS
-    
+
     default_reward_col = cols.get("reward")
     cost_col = cols.get("cost")
-    
+
     reward_col_name = default_reward_col
     if env_name:
         reward_col_name = REWARD_METRIC_MAP.get(env_name, default_reward_col)
+    if reward_col_name not in df.columns and default_reward_col in df.columns:
+        reward_col_name = default_reward_col
 
     if metric == "reward":
-        if algo == "ppo_cost" and env_name not in ["safe_goal_point", "safe_reacher", "safe_spider", "safe_block_push"]:
-            # Need both reward and cost columns to reconstruct original reward
-            if reward_col_name not in df.columns or cost_col not in df.columns:
-                 if default_reward_col not in df.columns or cost_col not in df.columns:
-                    return None
-                 else:
-                    reward_col_name = default_reward_col
-            ser = df[reward_col_name].astype(np.float32) + df[cost_col].astype(np.float32)
-            return ser
-        else:
-            col = reward_col_name
+        col = reward_col_name
+        if _reconstructs_ppo_cost_reward(
+                df, algo, env_name, col, default_reward_col, cost_col):
+            return df[col].astype(np.float32) + df[cost_col].astype(np.float32)
     elif metric == "cost":
         col = cost_col
     else:

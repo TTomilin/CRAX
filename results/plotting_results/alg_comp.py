@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -136,7 +136,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
             # safety threshold line (red dashed) with legend entry, no text on plot
             if metric == "cost" and not args.no_threshold:
-                thr_line = ax.axhline(25.0, linestyle="--", color="red", linewidth=1.8)
+                thr_line = ax.axhline(args.threshold, linestyle="--", color="red", linewidth=1.8)
                 if "Threshold" not in legend_handles:
                     legend_handles["Threshold"] = thr_line
 
@@ -191,6 +191,8 @@ def main(args: argparse.Namespace) -> None:
 def build_args() -> argparse.ArgumentParser:
     p = cli.plot_parser(
         "Plot CRAX training curves per environment and algorithm.",
+        omit=("ci_method", "last_frac"),
+        stats=True,
         out_name="baselines",
         algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"],
         panel_h=3.0,
