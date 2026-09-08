@@ -6,14 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, \
-    DEFAULT_REWARD_METRIC, TRANSLATIONS
+    DEFAULT_METRIC_COLS as METRIC_COLS, DEFAULT_REWARD_METRIC, TRANSLATIONS
 
-# Map short metric names -> Parquet column names
-METRIC_COLS = {
-    "reward": "episodic/sum_reward",
-    "cost": "episodic/cost",
-}
 
 # Per-env x-axis limits (env steps)
 ENV_X_MAX: Dict[str, int] = {
@@ -264,91 +260,23 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Plot CRAX results for different safety bounds."
+    p = cli.plot_parser(
+        "Plot CRAX results for different safety bounds.",
+        omit=("algos",),
+        out_name="safety_bounds",
+        envs=["safe_goal_point", "safe_reacher", "safe_block_push", "safe_point_circle"],
+        panel_w=2.6,
+        panel_h=1.8,
     )
-    p.add_argument(
-        "--input",
-        type=str,
-        default="data",
-        help="Base directory with <env>/<algo>/<bound>/seed_*.parquet",
-    )
-    p.add_argument(
-        "--envs",
-        type=str,
-        nargs="+",
-        default=["safe_goal_point", "safe_reacher", "safe_block_push", "safe_point_circle"],
-    )
-    p.add_argument(
-        "--algo",
-        type=str,
-        default="ppo_lag",
-        help="Algorithm subfolder to use",
-    )
-    p.add_argument(
-        "--bounds",
-        type=int,
-        nargs="+",
-        default=[15, 25, 35],
-        help="Safety bound subfolders under the algo",
-    )
-    p.add_argument(
-        "--level",
-        type=int,
-        default=1,
-        help="Difficulty level",
-    )
-    p.add_argument(
-        "--seeds",
-        type=int,
-        nargs="+",
-        default=[*range(1, 11)],
-    )
-    p.add_argument(
-        "--metrics",
-        type=str,
-        nargs="+",
-        default=["reward", "cost"],
-        choices=list(METRIC_COLS.keys()),
-    )
-    p.add_argument(
-        "--x_max",
-        type=float,
-        default=5e8,
-        help="Max x-axis limit (environment steps).",
-    )
-    p.add_argument(
-        "--total_iterations",
-        type=float,
-        default=None,
-        help="If set, x-axis rescaled to this many env steps.",
-    )
-    p.add_argument(
-        "--no_bound_lines",
-        action="store_true",
-        help="Disable horizontal dashed lines at each bound in cost plots.",
-    )
-    p.add_argument(
-        "--grid",
-        action="store_true",
-        help="Turn on grid.",
-    )
-
-    p.add_argument("--smoothing_window", type=int, default=1, help="Moving average window size for smoothing.")
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
-    p.add_argument("--panel_w", type=float, default=2.6, help="Width per metric subplot.")
-    p.add_argument("--panel_h", type=float, default=1.8, help="Height per env row.")
-
-    p.add_argument(
-        "--output_fig_dir",
-        type=str,
-        default="figures",
-    )
-    p.add_argument(
-        "--out_name",
-        type=str,
-        default="safety_bounds",
-    )
+    p.add_argument("--algo", type=str, default="ppo_lag", help="Algorithm subfolder to use")
+    p.add_argument("--bounds", type=int, nargs="+", default=[15, 25, 35],
+                   help="Safety bound subfolders under the algo")
+    p.add_argument("--x_max", type=float, default=5e8,
+                   help="Max x-axis limit (environment steps).")
+    p.add_argument("--total_iterations", type=float, default=None,
+                   help="If set, x-axis rescaled to this many env steps.")
+    p.add_argument("--no_bound_lines", action="store_true",
+                   help="Disable horizontal dashed lines at each bound in cost plots.")
     return p
 
 

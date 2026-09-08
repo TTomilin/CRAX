@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
@@ -301,25 +302,15 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Compare CI/variance of final performance across seed-set sizes.")
-    p.add_argument("--input", type=str, default="data")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                            "safe_velocity_humanoid"])
-    p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
-    p.add_argument("--level", type=int, default=1)
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
+    p = cli.plot_parser(
+        "Compare CI/variance of final performance across seed-set sizes.",
+        omit=("seeds", "layout", "threshold"),
+        stats=True,
+        out_name="seed_variance",
+        algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"],
+    )
     p.add_argument("--seeds_small", type=int, nargs="+", default=[1, 2, 3])
-    p.add_argument("--seeds_large", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    p.add_argument("--last_frac", type=float, default=0.1,
-                   help="Fraction of the tail of each run averaged to obtain the per-seed final performance.")
-    p.add_argument("--ci_method", type=str, default="t", choices=["normal", "t"],
-                   help="'normal' (default): 1.96 * population std / sqrt(n). 't': Student's t(n-1) * sample "
-                        "std / sqrt(n), more accurate at small n.")
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="seed_variance")
+    p.add_argument("--seeds_large", type=int, nargs="+", default=[*range(1, 11)])
     return p
 
 

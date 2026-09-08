@@ -55,12 +55,12 @@ environments log their reward under a different key, resolved by
 | `transfer_curriculum.py` | Runs tagged `TRANSFER` (unsafe PPO pre-training + safe fine-tuning) and `CURRICULUM` (levels 1→2→3, `global_step` cumulative across stages). |
 | `omnisafe.py` | OmniSafe + Safety-Gymnasium baseline runs, written as CSV with `(step, reward, cost, seed)`. |
 
-Shared flags: `--project` (required), `--envs`, `--algos`, `--levels`,
-`--seeds`, `--metrics`, `--wandb_tags`, `--output`, `--overwrite`, and
-`--max_age_days` (restrict to runs created within the last N days; supported by
-every downloader, off by default except in the sweep scripts, which default to 1).
-Only `state: finished` runs are fetched, and existing files are skipped unless
-`--overwrite` is passed.
+Shared flags come from `cli.download_parser` (see [Shared CLI](#shared-cli)):
+`--project` (required), `--envs`, `--algos`, `--levels`, `--seeds`, `--metrics`,
+`--wandb_tags`, `--include_runs`, `--output`, `--overwrite`, and `--max_age_days`
+(restrict to runs created within the last N days; off by default except in the
+sweep scripts, which default to 1). Only `state: finished` runs are fetched, and
+existing files are skipped unless `--overwrite` is passed.
 
 ```bash
 # Baselines for one env, all levels, into results/data/
@@ -87,12 +87,15 @@ python -m results.download.safety_param_sweep --project my-crax-project --output
 | `crax_vs_sg.py` | CRAX vs. OmniSafe + Safety-Gymnasium training curves on ant-velocity (PPOLag), mean ± 95% CI. |
 | `throughput_comparison.py` | Throughput (SPS) and scaling efficiency vs. Safety-Gymnasium, from `data/performance/`. |
 
-Common flags: `--input` (data root, default `data`), `--envs`, `--algos`,
-`--seeds`, `--level`, `--metrics {reward,cost}`, `--output_fig_dir` (default
-`figures`, relative to the working directory), `--out_name`. Figures inherit a
-single style from `common.py` (`set_mpl_style`, `BASELINES_COLORS`,
-`TRANSLATIONS`), so panels stay consistent across the paper.
-`crax_vs_sg.py` is the exception: its `--crax-input` / `--omnisafe-input` are
+Common flags come from `cli.plot_parser` (see [Shared CLI](#shared-cli)):
+`--input` (data root, default `data`), `--envs`, `--algos`, `--seeds`, `--level`,
+`--metrics {reward,cost}`, `--output_fig_dir` (default `figures`, relative to the
+working directory), `--out_name`, plus the layout flags `--grid`, `--max_cols`,
+`--panel_w`, `--panel_h`, `--smoothing_window` and, where a script reports final
+numbers, `--ci_method`, `--last_frac` and `--threshold`. Figures inherit a single
+style from `common.py` (`set_mpl_style`, `BASELINES_COLORS`, `TRANSLATIONS`), so
+panels stay consistent across the paper.
+`crax_vs_sg.py` is the exception: its `--crax_input` / `--omnisafe_input` are
 resolved relative to the working directory, hence their `results/data` defaults.
 
 ```bash
@@ -111,6 +114,37 @@ python -m results.plotting_results.throughput_comparison
 
 `throughput_comparison.py` consumes benchmark CSVs produced by
 `scripts/benchmark_crax_simulation.py` and `scripts/benchmark_safety_gymnasium.py`.
+
+## Shared CLI
+
+`cli.py` defines the arguments that the download and plotting scripts have in
+common — the run selection (`--envs`, `--algos`, `--seeds`, `--levels`/`--level`),
+the WandB query flags, the figure output and layout flags, and the aggregation
+flags — as reusable parent parsers. A script builds its parser from one of two
+factories and spells out only what is its own:
+
+```python
+from results import cli
+
+def build_args() -> argparse.ArgumentParser:
+    p = cli.plot_parser(
+        "Plot CRAX results for different safety bounds.",
+        omit=("algos",),                       # this script takes a single --algo
+        out_name="safety_bounds",
+        envs=["safe_goal_point", "safe_reacher"],   # override a shared default
+        panel_h=1.8,
+    )
+    p.add_argument("--algo", type=str, default="ppo_lag")
+    p.add_argument("--bounds", type=int, nargs="+", default=[15, 25, 35])
+    return p
+```
+
+Keyword arguments override the default of an argument the shared parsers already
+define; an unknown name raises rather than being silently ignored. `omit` drops a
+shared argument for a script that needs its own version of it (`"layout"` is
+shorthand for all the grid/panel-size flags). Defaults live in one place —
+`cli.DEFAULT_ENVS`, `DEFAULT_ALGOS`, `DEFAULT_SEEDS`, `DEFAULT_LEVELS`,
+`DEFAULT_SAFE_ALGOS`, `DEFAULT_SAFETY_THRESHOLD`.
 
 ## Metric conventions
 

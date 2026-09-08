@@ -12,6 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from results import cli
 from results.common import RL_SWEEP_SPEC
 from results.plotting_results.safety_param_sweep import build_table, discover_values, load_sweep_data, plot_sweep
 from results.plotting_results.seed_variance import format_table
@@ -53,19 +54,16 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Analyze the Stage 1 core PPO/MJX hyperparameter sweep.")
-    p.add_argument("--input", type=str, default="data")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_goal_point", "safe_reacher", "safe_push_point"])
+    p = cli.plot_parser(
+        "Analyze the Stage 1 core PPO/MJX hyperparameter sweep.",
+        omit=("algos", "metrics", "layout", "out_name", "threshold"),
+        stats=True,
+        envs=cli.DEFAULT_PLOT_ENVS,
+        ci_method="normal",
+    )
     p.add_argument("--algos", type=str, nargs="+", default=None,
                    choices=list(RL_SWEEP_SPEC.keys()),
-                   help="Which methods to analyze (default: all methods in STAGE1_SWEEP_SPEC)")
-    p.add_argument("--level", type=int, default=1)
-    p.add_argument("--seeds", type=int, nargs="+", default=[*range(1, 6)])
-    p.add_argument("--last_frac", type=float, default=0.1,
-                   help="Fraction of the tail of each run averaged for final performance.")
-    p.add_argument("--ci_method", type=str, default="normal", choices=["normal", "t"])
-    p.add_argument("--output_fig_dir", type=str, default="figures")
+                   help="Which methods to analyze (default: all methods in RL_SWEEP_SPEC)")
     return p
 
 

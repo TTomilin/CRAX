@@ -303,10 +303,3 @@ def apply_max_age_filter(f: dict, args: argparse.Namespace) -> dict:
         cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         f["createdAt"] = {"$gte": cutoff}
     return f
-
-
-def add_max_age_arg(parser: argparse.ArgumentParser, default: float | None = None) -> None:
-    """Add the shared --max_age_days flag to a downloader's parser."""
-    parser.add_argument("--max_age_days", type=float, default=default,
-                        help="Only download runs created at most this many days ago "
-                             f"(default: {'no age limit' if default is None else default})")

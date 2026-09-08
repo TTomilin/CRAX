@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, TRANSLATIONS
 from results.plotting_results.seed_variance import (
     build_table, missing_seed_report, format_table, build_trend, plot_results,
@@ -129,26 +130,19 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Compare CI/variance of final performance across seed-set sizes, "
-                                            "for curriculum and transfer training.")
-    p.add_argument("--input", type=str, default="data")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_point_goal", "safe_reacher", "safe_walker", "safe_height"],
-                   help="Env identifiers as they appear under results/data/{curriculum,transfer}/.")
+    p = cli.plot_parser(
+        "Compare CI/variance of final performance across seed-set sizes, "
+        "for curriculum and transfer training.",
+        omit=("seeds", "layout", "threshold"),
+        stats=True,
+        out_name="seed_variance_curriculum_transfer",
+        envs=["safe_point_goal", "safe_reacher", "safe_walker", "safe_height"],
+        algos=cli.DEFAULT_SAFE_ALGOS,
+        level=3,
+    )
     p.add_argument("--modes", type=str, nargs="+", default=list(MODES), choices=list(MODES))
-    p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo_lag", "ppo_pid", "p3o", "focops"])
-    p.add_argument("--level", type=int, default=3, help="Target difficulty level (transfer data is stored per-level).")
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
     p.add_argument("--seeds_small", type=int, nargs="+", default=[*range(1, 6)])
     p.add_argument("--seeds_large", type=int, nargs="+", default=[*range(1, 21)])
-    p.add_argument("--last_frac", type=float, default=0.1,
-                   help="Fraction of the tail of each run averaged to obtain the per-seed final performance.")
-    p.add_argument("--ci_method", type=str, default="t", choices=["normal", "t"],
-                   help="'normal' (default): 1.96 * population std / sqrt(n). 't': Student's t(n-1) * sample "
-                        "std / sqrt(n), more accurate at small n.")
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="seed_variance_curriculum_transfer")
     return p
 
 

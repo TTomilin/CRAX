@@ -20,7 +20,8 @@ from pathlib import Path
 import pandas as pd
 import wandb
 
-from results.common import add_max_age_arg, apply_max_age_filter
+from results import cli
+from results.common import apply_max_age_filter
 
 STEP_KEY = "TotalEnvSteps"
 REWARD_KEY = "Metrics/EpRet"
@@ -93,17 +94,16 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Download OmniSafe ant-velocity (PPOLag) runs from WandB.")
-    p.add_argument("--project", type=str, default="omnisafe", help="Name of the WandB project")
-    add_max_age_arg(p)
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], help="Seed(s) to download")
+    p = cli.download_parser(
+        "Download OmniSafe ant-velocity (PPOLag) runs from WandB.",
+        level_arg=None,
+        project_default="omnisafe",
+        omit=("envs", "algos", "metrics", "include_runs"),
+        output="results/data/omnisafe_ant_velocity",
+    )
     p.add_argument("--run_name_contains", type=str, default="AntVelocity",
                    help="Only keep runs whose name contains this substring (client-side filter; "
                         "set to '' to disable). Guards against pulling unrelated runs from the project.")
-    p.add_argument("--wandb_tags", type=str, nargs="+", default=[], help="WandB tags to filter runs")
-    p.add_argument("--output", type=str, default="results/data/omnisafe_ant_velocity",
-                   help="Local output directory for seed_{seed}.csv files")
-    p.add_argument("--overwrite", default=False, action="store_true", help="Overwrite existing files")
     return p
 
 

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
@@ -188,29 +189,16 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Plot Safe-Brax Parquet results.")
-    p.add_argument("--input", type=str, default="data",
-                   help="Base directory with <env>/<level>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                            "safe_velocity_humanoid"])
-    p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--level", type=int, default=1)
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
+    p = cli.plot_parser(
+        "Plot CRAX training curves per environment and algorithm.",
+        out_name="baselines",
+        algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"],
+        panel_h=3.0,
+    )
     p.add_argument("--x_max", type=int, default=5e8)
     p.add_argument("--total_iterations", type=float, default=None,
                    help="If set, x-axis is rescaled to this many env steps.")
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines.")
-    p.add_argument("--grid", action="store_true")
-    p.add_argument("--smoothing_window", type=int, default=1, help="Moving average window size for smoothing.")
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
-    p.add_argument("--panel_w", type=float, default=3.1, help="Width per metric subplot.")
-    p.add_argument("--panel_h", type=float, default=3.0, help="Height per env row.")
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="baselines")
     return p
 
 

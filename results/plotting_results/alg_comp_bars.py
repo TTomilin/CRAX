@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
@@ -899,7 +900,7 @@ def print_latex_table(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         envs=args.envs,
         levels=args.levels,
         algos=args.algos,
-        safety_threshold=args.safety_threshold,
+        safety_threshold=args.threshold,
     )
 
     # Generate detailed appendix table (split across rows)
@@ -908,7 +909,7 @@ def print_latex_table(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         envs=args.envs,
         levels=args.levels,
         algos=args.algos,
-        safety_threshold=args.safety_threshold,
+        safety_threshold=args.threshold,
         envs_per_row=args.envs_per_row,
     )
 
@@ -942,84 +943,32 @@ def print_latex_table(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Plot final results as grouped bars across levels.")
-    p.add_argument("--input", type=str, default="data",
-                   help="Base directory with <env>/level_<k>/<algo>/seed_*.parquet")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                            "safe_velocity_humanoid"])
-    p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops", "crpo"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3])
+    p = cli.plot_parser(
+        "Plot final results as grouped bars across levels.",
+        level_arg="list",
+        omit=("ci_method", "last_frac", "smoothing_window"),
+        stats=True,
+        out_name="baselines",
+        algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops", "crpo"],
+    )
     p.add_argument("--single_level", type=int, default=None,
-                   help="Plot results for a single level only (algos on x-axis). "
-                        "Overrides --levels. Default: None (disabled). "
-                        "Use e.g. --single_level 1 for level 1.")
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"], choices=list(METRIC_COLS.keys()))
-
+                   help="If set, plot only this level instead of grouping across levels.")
     p.add_argument("--final_mode", type=str, default="mean_last_k", choices=["last", "mean_last_k"],
-                   help="How to define 'final' value per seed.")
+                   help="How to reduce each run to a final value.")
     p.add_argument("--last_k", type=int, default=10, help="Used when final_mode=mean_last_k.")
-
     p.add_argument("--no_threshold", action="store_true", help="Hide safety threshold lines (cost only).")
-    p.add_argument("--grid", action="store_true")
-
-    # Truncation options for handling outliers
     p.add_argument("--truncate_outliers", action="store_true", default=True,
-                   help="Truncate bars that exceed the threshold by a large factor (default: True).")
+                   help="Clip extreme bars so the rest of the panel stays readable.")
     p.add_argument("--no_truncate", dest="truncate_outliers", action="store_false",
-                   help="Disable truncation of outlier bars.")
+                   help="Do not clip extreme bars.")
     p.add_argument("--truncate_factor", type=float, default=2.5,
-                   help="Truncate cost bars exceeding threshold * factor (default: 2.5).")
-
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
-    p.add_argument("--panel_w", type=float, default=3.1, help="Width per env column.")
-    p.add_argument("--panel_h", type=float, default=2.3, help="Height per metric row per env row.")
-
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="baselines")
-
-    # LaTeX table options
+                   help="Clip bars beyond this multiple of the panel's median bar height.")
+    p.add_argument("--envs_per_row", type=int, default=2)
     p.add_argument("--latex", action="store_true", help="Generate and print LaTeX tables (summary + appendix).")
     p.add_argument("--output_latex", type=str, default=None,
-                   help="Optional base path to save LaTeX tables (e.g., tables/results.tex). "
-                        "Creates _summary.tex and _appendix.tex files.")
-    p.add_argument("--safety_threshold", type=float, default=25.0,
-                   help="Cost threshold for marking results as safe (green) in LaTeX table.")
-    p.add_argument("--envs_per_row", type=int, default=2,
-                   help="Max environments per major row in appendix table (default: 2).")
+                   help="Write the LaTeX tables to this path instead of stdout.")
     p.add_argument("--no_plot", action="store_true", help="Skip plotting, only generate LaTeX table.")
     return p
-
-
-def main(args: argparse.Namespace) -> None:
-    if args.single_level is not None:
-        args.levels = [args.single_level]
-
-    base = Path(__file__).parent.parent.resolve() / args.input
-    df = load_final_values(
-        base=base,
-        envs=args.envs,
-        levels=args.levels,
-        algos=args.algos,
-        seeds=args.seeds,
-        metrics=args.metrics,
-        final_mode=args.final_mode,
-        last_k=args.last_k,
-    )
-    if df.empty:
-        raise SystemExit("No data loaded. Check paths/envs/levels/algos/seeds.")
-    stats = summarize(df)
-
-    # Generate LaTeX table if requested
-    if args.latex or args.output_latex:
-        print_latex_table(stats, args)
-
-    # Plot unless --no_plot is set
-    if not args.no_plot:
-        plot_final_bars(stats, args)
 
 
 if __name__ == "__main__":

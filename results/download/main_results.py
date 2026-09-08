@@ -5,7 +5,8 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
-from results.common import add_max_age_arg, apply_max_age_filter, get_metrics_for_env
+from results import cli
+from results.common import apply_max_age_filter, get_metrics_for_env
 
 
 def main(args: argparse.Namespace) -> None:
@@ -67,7 +68,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
         extra_attribute = f"{attribute_key}_{attribute_val}"
 
     # Construct folder path for each configuration
-    root_dir = Path(__file__).parent.resolve()
+    root_dir = Path(__file__).parent.parent.resolve()
     folder_path = root_dir / args.output / env / f"level_{level}" / algo / extra_attribute
     os.makedirs(folder_path, exist_ok=True)  # Ensure the directory exists
 
@@ -91,29 +92,10 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
 
 def common_dl_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                        help="Seed(s) of the run(s) to download")
-    parser.add_argument("--algos", type=str, nargs='+',
-                        default=["ppo", "ppo_cost", "ppo_lag", "ppo_saute", "ppo_pid", "p3o", "focops", "sac_lag",
-                                 "sac_pid"],
-                        help="Algorithms to download/plot")
-    parser.add_argument("--envs", type=str, nargs='+',
-                        default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                                 "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                                 "safe_velocity_humanoid"],
-                        help="Environments to download/plot")
-    parser.add_argument("--levels", type=int, nargs='+', default=[1, 2, 3], help="Levels to download/plot")
-    parser.add_argument("--output", type=str, default='data', help="Base output directory to store the data")
-    parser.add_argument("--extra_attribute", type=str, default=None, help="Config attribute to store data by")
-    parser.add_argument("--metrics", type=str, nargs='+', default=['episodic/sum_reward', 'episodic/cost'],
-                        help="Name of the metrics to download/plot")
-    parser.add_argument("--project", type=str, required=True, help="Name of the WandB project")
-    add_max_age_arg(parser)
-    parser.add_argument("--wandb_tags", type=str, nargs='+', default=[], help="WandB tags to filter runs")
-    parser.add_argument("--overwrite", default=False, action='store_true', help="Overwrite existing files")
-    parser.add_argument("--include_runs", type=str, nargs="+", default=[],
-                        help="List of runs that shouldn't be filtered out")
+    """Parser shared by the download scripts that reuse `build_filters`/`store_data`."""
+    parser = cli.download_parser("Download benchmark results from WandB.")
+    parser.add_argument("--extra_attribute", type=str, default=None,
+                        help="Config attribute to store data by")
     return parser
 
 

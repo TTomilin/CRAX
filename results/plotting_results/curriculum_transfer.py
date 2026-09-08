@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
@@ -530,13 +531,13 @@ def main(args: argparse.Namespace) -> None:
             print(f"\nLoading {env} / {algo}")
 
             normal_data = load_normal_runs(
-                base, env, args.target_level, algo, args.seeds, args.metrics
+                base, env, args.level, algo, args.seeds, args.metrics
             )
             curriculum_data = load_curriculum_runs(
                 base, env, algo, args.seeds, args.metrics, args.total_steps
             )
             transfer_data = load_transfer_runs(
-                base, env, args.target_level, algo, args.seeds, args.metrics,
+                base, env, args.level, algo, args.seeds, args.metrics,
                 unsafe_steps, args.total_steps
             )
 
@@ -559,53 +560,27 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Compare normal, curriculum, and transfer training")
-
-    # Data paths
-    p.add_argument("--input", type=str, default="data",
-                   help="Base data directory")
-    p.add_argument(
-        "--envs", type=str, nargs="+",
-        default=["safe_goal_point", "safe_reacher", "safe_walker", "safe_height"],
-        help="Environments to compare"
+    p = cli.plot_parser(
+        "Compare normal, curriculum, and transfer training",
+        omit=("smoothing_window",),
+        out_name="curriculum_transfer",
+        envs=["safe_goal_point", "safe_reacher", "safe_walker", "safe_height"],
+        algos=cli.DEFAULT_SAFE_ALGOS,
+        level=3,
+        panel_h=2.5,
     )
-    p.add_argument(
-        "--algos", type=str, nargs="+",
-        default=["ppo_lag", "ppo_pid", "p3o", "focops"],
-        help="Algorithms to compare (rows in the plot grid)"
-    )
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--target_level", type=int, default=3,
-                   help="Target difficulty level (for normal and transfer)")
-    p.add_argument("--metrics", type=str, nargs="+", default=["reward", "cost"],
-                   choices=list(METRIC_COLS.keys()))
-
-    # Training budget
     p.add_argument("--total_steps", type=int, default=int(3e8),
-                   help="Total training budget (default: 300M)")
+                   help="Total environment steps of a full training run.")
     p.add_argument("--transfer_unsafe_fraction", type=float, default=0.5,
-                   help="Fraction of budget for transfer unsafe phase")
-
-    # Plot settings
+                   help="Fraction of the budget the transfer runs spend in the unsafe phase.")
     p.add_argument("--plot_curves", action="store_true", default=True,
-                   help="Generate training curve plots")
+                   help="Plot the training curves.")
     p.add_argument("--plot_final", action="store_true", default=True,
-                   help="Generate final comparison bar plots")
+                   help="Plot the final-performance comparison.")
     p.add_argument("--no_threshold", action="store_true",
-                   help="Hide safety threshold lines")
-    p.add_argument("--grid", action="store_true")
+                   help="Hide safety threshold lines.")
     p.add_argument("--last_k", type=int, default=10,
-                   help="Number of final values to average for final comparison")
-
-    # Figure sizing
-    p.add_argument("--panel_w", type=float, default=3.1)
-    p.add_argument("--panel_h", type=float, default=2.5)
-    p.add_argument("--max_cols", type=int, default=2, help="Max env columns in grid.")
-
-    # Output
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="curriculum_transfer")
-
+                   help="Number of final points averaged for the final-performance plot.")
     return p
 
 

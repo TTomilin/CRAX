@@ -63,6 +63,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, set_mpl_style
 from results.plotting_results.seed_variance import ci95, format_table
 
@@ -322,24 +323,23 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="CRAX vs OmniSafe/Safety-Gymnasium training-performance comparison (ant velocity).")
-    p.add_argument("--crax-input", type=str, default="results/data",
-                   help="Base dir of CRAX's downloaded parquet data (results/download.py --output default).")
-    p.add_argument("--omnisafe-input", type=str, default="results/data/omnisafe_ant_velocity",
-                   help="Dir of OmniSafe's downloaded CSVs (results/download_omnisafe_ant_velocity.py --output default).")
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                   help="Seeds to include in the comparison.")
-    p.add_argument("--level", type=int, default=1)
-    p.add_argument("--threshold", type=float, default=25.0,
-                   help="Safety cost threshold (matches --safety_bound / cost_limit).")
-    p.add_argument("--num-points", type=int, default=200, help="Number of points on the shared interpolation grid.")
-    p.add_argument("--ci-method", type=str, default="t", choices=["normal", "t"])
-    p.add_argument("--output-fig-dir", type=str, default="figures")
-    p.add_argument("--out-name", type=str, default="omnisafe_vs_crax_ant_velocity")
-    p.add_argument("--table-interval", type=float, default=200_000,
+    p = cli.plot_parser(
+        "CRAX vs OmniSafe/Safety-Gymnasium training-performance comparison (ant velocity).",
+        omit=("envs", "algos", "metrics", "input", "layout", "last_frac"),
+        stats=True,
+        out_name="omnisafe_vs_crax_ant_velocity",
+    )
+    p.add_argument("--crax_input", type=str, default="results/data",
+                   help="Base dir of CRAX's downloaded parquet data "
+                        "(results/download/main_results.py --output default).")
+    p.add_argument("--omnisafe_input", type=str, default="results/data/omnisafe_ant_velocity",
+                   help="Dir of OmniSafe's downloaded CSVs "
+                        "(results/download/omnisafe.py --output default).")
+    p.add_argument("--num_points", type=int, default=200,
+                   help="Number of points on the shared interpolation grid.")
+    p.add_argument("--table_interval", type=float, default=200_000,
                    help="Step spacing between periodic comparison-table checkpoints.")
-    p.add_argument("--table-rows", type=int, default=10,
+    p.add_argument("--table_rows", type=int, default=10,
                    help="Number of checkpoint rows in the periodic comparison table.")
     return p
 

@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from results import cli
 from results.common import (
     DEFAULT_METRIC_COLS as METRIC_COLS,
     get_series,
@@ -307,29 +308,20 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Reward-AUC and cumulative-constraint-violation efficiency metrics.")
-    p.add_argument("--input", type=str, default="data")
-    p.add_argument("--envs", type=str, nargs="+",
-                   default=["safe_reacher", "safe_goal_point", "safe_push_point", "safe_lift_spider",
-                            "safe_circle_point", "safe_height_humanoid", "safe_pathway_walker2d",
-                            "safe_velocity_humanoid"])
-    p.add_argument("--algos", type=str, nargs="+",
-                   default=["ppo_lag", "ppo_pid", "p3o", "focops"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--level", type=int, default=1)
-    p.add_argument("--threshold", type=float, default=25.0, help="Safety cost threshold.")
-    p.add_argument("--last_frac", type=float, default=0.1,
-                   help="Fraction of the tail of each run averaged for final reward (reward-eff normalizer).")
+    p = cli.plot_parser(
+        "Reward-AUC and cumulative-constraint-violation efficiency metrics.",
+        omit=("metrics", "layout"),
+        stats=True,
+        out_name="sample_efficiency",
+        algos=cli.DEFAULT_SAFE_ALGOS,
+    )
     p.add_argument("--ref_algo", type=str, default="ppo",
                    help="Unconstrained reference algo used to normalize CumViol across tasks.")
     p.add_argument("--viol_norm", type=str, default="reference", choices=["none", "reference"],
                    help="'reference' divides CumViol by the ref_algo's mean CumViol on the same env; "
                         "'none' keeps only the raw (task-scale) value.")
-    p.add_argument("--ci_method", type=str, default="t", choices=["normal", "t"])
     p.add_argument("--annotate_ci", action="store_true", default=False,
                    help="Add a second ±CI line under each heatmap cell's mean.")
-    p.add_argument("--output_fig_dir", type=str, default="figures")
-    p.add_argument("--out_name", type=str, default="sample_efficiency")
     return p
 
 

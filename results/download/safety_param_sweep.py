@@ -12,7 +12,8 @@ import copy
 
 import wandb
 
-from results.common import SAFETY_SWEEP_SPEC, add_max_age_arg
+from results import cli
+from results.common import SAFETY_SWEEP_SPEC
 from results.download.main_results import build_filters, store_data
 
 
@@ -43,25 +44,16 @@ def main(args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download hyperparameter sweep results from WandB.")
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3],
-                        help="Seed(s) of the run(s) to download")
+    parser = cli.download_parser(
+        "Download hyperparameter sweep results from WandB.",
+        omit=("algos",),
+        envs=cli.DEFAULT_PLOT_ENVS,
+        levels=[1],
+        max_age_days=1,
+    )
     parser.add_argument("--algos", type=str, nargs='+', default=None,
                         choices=list(SAFETY_SWEEP_SPEC.keys()),
-                        help="Which methods to download (default: all methods in HPARAM_SWEEP_SPEC)")
-    parser.add_argument("--envs", type=str, nargs='+',
-                        default=["safe_goal_point", "safe_reacher", "safe_push_point"],
-                        help="Environments to download")
-    parser.add_argument("--levels", type=int, nargs='+', default=[1], help="Levels to download")
-    parser.add_argument("--output", type=str, default='data', help="Base output directory to store the data")
-    parser.add_argument("--metrics", type=str, nargs='+', default=['episodic/sum_reward', 'episodic/cost'],
-                        help="Name of the metrics to download")
-    parser.add_argument("--project", type=str, required=True, help="Name of the WandB project")
-    add_max_age_arg(parser, default=1)
-    parser.add_argument("--wandb_tags", type=str, nargs='+', default=[], help="WandB tags to filter runs")
-    parser.add_argument("--overwrite", default=False, action='store_true', help="Overwrite existing files")
-    parser.add_argument("--include_runs", type=str, nargs="+", default=[],
-                        help="List of runs that shouldn't be filtered out")
+                        help="Which methods to download (default: all methods in SAFETY_SWEEP_SPEC)")
     return parser
 
 

@@ -20,7 +20,8 @@ from pathlib import Path
 import wandb
 from wandb.apis.public import Run
 
-from results.common import (add_max_age_arg, apply_max_age_filter, canonicalize_env_name,
+from results import cli
+from results.common import (apply_max_age_filter, canonicalize_env_name,
                             env_name_variants, get_metrics_for_env)
 
 
@@ -141,25 +142,13 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
 
 def build_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download transfer/curriculum results from wandb")
-    parser.add_argument("--seeds", type=int, nargs='+', default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                        help="Seed(s) of the run(s) to download")
-    parser.add_argument("--algos", type=str, nargs='+',
-                        default=["ppo", "ppo_lag", "ppo_pid", "focops", "p3o"],
-                        help="Algorithms to download")
-    parser.add_argument("--envs", type=str, nargs='+', help="Environments to download")
-    parser.add_argument("--output", type=str, default='data', help="Base output directory")
-    parser.add_argument("--metrics", type=str, nargs='+',
-                        default=['episodic/sum_reward', 'episodic/cost'],
-                        help="Metrics to download")
-    parser.add_argument("--project", type=str, required=True, help="WandB project name")
-    add_max_age_arg(parser)
-    parser.add_argument("--wandb_tags", type=str, nargs='+', default=['TRANSFER', 'CURRICULUM'],
-                        help="WandB tags to filter runs (TRANSFER and/or CURRICULUM)")
-    parser.add_argument("--overwrite", default=False, action='store_true',
-                        help="Overwrite existing files")
-    parser.add_argument("--include_runs", type=str, nargs="+", default=[],
-                        help="Include specific runs by display name")
+    parser = cli.download_parser(
+        "Download transfer/curriculum results from wandb",
+        level_arg=None,
+        algos=["ppo", "ppo_lag", "ppo_pid", "focops", "p3o"],
+        envs=None,
+        wandb_tags=["TRANSFER", "CURRICULUM"],
+    )
     parser.add_argument("--include_unsafe_phase", default=True, action='store_true',
                         help="Download unsafe PPO phase for transfer runs (default: True)")
     parser.add_argument("--no_unsafe_phase", dest='include_unsafe_phase', action='store_false',
