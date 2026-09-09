@@ -35,7 +35,7 @@ ENV_DEFAULTS = {
         "env_class": "SafeReacher",
         "env_module": "crax.envs.safe_reacher",
     },
-    "safe_walker": {
+    "safe_pathway_walker2d": {
         "steps": 1000,
         "episodes": 1,
         "fps": 100,
@@ -44,7 +44,7 @@ ENV_DEFAULTS = {
         "cameras": ["fixedfar"],
         "env_kwargs": {"cost": {"scaler": 0.1}, "reward": {"scaler": 0.01}},
     },
-    "safe_height": {
+    "safe_height_humanoid": {
         "steps": 300,
         "episodes": 1,
         "fps": 50,
@@ -52,7 +52,6 @@ ENV_DEFAULTS = {
         "extra_metrics": [],
         "cameras": ["track"],
     },
-    # New naming convention: safe_[task]_[agent]
     "safe_goal_point": {
         "steps": 300,
         "episodes": 1,
@@ -198,7 +197,7 @@ Environment-specific defaults are applied automatically. Override with flags.
 Examples:
   %(prog)s --env safe_ant
   %(prog)s --env safe_goal_point --level 2 --steps 500
-  %(prog)s --env safe_walker --model checkpoint_name
+  %(prog)s --env safe_pathway_walker2d --model checkpoint_name
   %(prog)s --env safe_velocity --agent halfcheetah --level 3
 """)
     p.add_argument("--env", type=str, required=True, help="Environment name")

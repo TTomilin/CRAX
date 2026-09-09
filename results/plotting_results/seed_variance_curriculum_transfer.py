@@ -136,7 +136,7 @@ def build_args() -> argparse.ArgumentParser:
         omit=("seeds", "layout", "threshold"),
         stats=True,
         out_name="seed_variance_curriculum_transfer",
-        envs=["safe_point_goal", "safe_reacher", "safe_walker", "safe_height"],
+        envs=["safe_goal_point", "safe_reacher", "safe_pathway_walker2d", "safe_height_humanoid"],
         algos=cli.DEFAULT_SAFE_ALGOS,
         level=3,
     )

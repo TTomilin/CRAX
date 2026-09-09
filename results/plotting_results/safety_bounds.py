@@ -11,15 +11,6 @@ from results.common import align_and_stack, set_mpl_style, nice_grid, moving_ave
     DEFAULT_METRIC_COLS as METRIC_COLS, DEFAULT_REWARD_METRIC, TRANSLATIONS
 
 
-# Per-env x-axis limits (env steps)
-ENV_X_MAX: Dict[str, int] = {
-    "safe_goal_point": 1_000_000_00,
-    "safe_reacher": 5_000_000_00,
-    "safe_block_push": 5_000_000_00,
-    "safe_point_circle": 5_000_000_00,
-}
-
-
 def _bound_value(bound) -> float:
     """Extract numeric value from a bound identifier.
 
@@ -201,10 +192,8 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                                     useOffset=False)  # Use plain style for non-scientific, no offset
             ax.yaxis.get_major_formatter().set_useOffset(False)  # Ensure no offset is used for formatting
 
-            # Per-env x max takes priority, then CLI x_max, then data-driven max
-            x_max = ENV_X_MAX.get(env, None)
-            if x_max is None:
-                x_max = args.x_max if args.x_max is not None else x_max_for_axis
+            # CLI x_max takes priority, then the data-driven max
+            x_max = args.x_max if args.x_max is not None else x_max_for_axis
             ax.set_xlim(0.0, x_max)
 
             if args.grid:
@@ -264,7 +253,7 @@ def build_args() -> argparse.ArgumentParser:
         "Plot CRAX results for different safety bounds.",
         omit=("algos",),
         out_name="safety_bounds",
-        envs=["safe_goal_point", "safe_reacher", "safe_block_push", "safe_point_circle"],
+        envs=["safe_goal_point", "safe_reacher", "safe_push_point", "safe_circle_point"],
         panel_w=2.6,
         panel_h=1.8,
     )

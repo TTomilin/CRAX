@@ -32,16 +32,23 @@ TRANSLATIONS = {
     "sac": "SAC",
     "sac_lag": "SACLag",
     "sac_pid": "SACPID",
-    # Environments
-    "safe_goal_point": "Safe Goal",
-    "safe_reacher": "Safe Reacher",
-    "safe_pathway_walker2d": "Safe Pathway",
-    "safe_velocity_humanoid": "Safe Velocity",
-    "safe_velocity_ant": "Safe Velocity Ant",
-    "safe_lift_spider": "Safe Spider",
-    "safe_push_point": "Safe Push",
-    "safe_circle_point": "Safe Circle",
-    "safe_height_humanoid": "Safe Height",
+    # Environments: "<Agent> <Task>".
+    "safe_goal_point": "Point Goal",
+    "safe_push_point": "Point Push",
+    "safe_circle_point": "Point Circle",
+    "safe_button_point": "Point Button",
+    "safe_reacher": "Reacher Reach",
+    "safe_lift_spider": "Spider Lift",
+    "safe_lift_ant": "Ant Lift",
+    "safe_lift_humanoid": "Humanoid Lift",
+    "safe_pathway_walker2d": "Walker Pathway",
+    "safe_height_humanoid": "Humanoid Height",
+    "safe_velocity_ant": "Ant Velocity",
+    "safe_velocity_humanoid": "Humanoid Velocity",
+    "safe_velocity_halfcheetah": "HalfCheetah Velocity",
+    "safe_velocity_hopper": "Hopper Velocity",
+    "safe_velocity_swimmer": "Swimmer Velocity",
+    "safe_velocity_walker2d": "Walker Velocity",
     # Hyperparameter sweep names
     "lagrangian_coef_rate": "Lagrangian LR",
     "pid_kp": "PID Kp",
@@ -101,36 +108,24 @@ BASELINES_COLORS: Dict[str, str] = {
     "crpo": "#B8860B",  # darkgoldenrod: tab10 is exhausted by the other 10 baselines, needs distinct 11th hue
 }
 
-# Renamed mid-project (old short name -> current registry name in brax/envs/__init__.py),
-# but curriculum/transfer wandb runs logged config.env_name as whatever was passed at the
-# time, so older seeds (1-5) are tagged with the old name and newer seeds (6+) with the
-# new one for the *same* environment. Canonicalize to the old short name (what's already
-# on disk under results/data/{curriculum,transfer}/) so both land in one folder and can be
-# combined for CI/seed-count analysis.
-# TODO remove the legacy
-CANONICAL_ENV_ALIASES: Dict[str, str] = {
-    "safe_goal_point": "safe_point_goal",
-    "safe_pathway_walker2d": "safe_walker",
-    "safe_height_humanoid": "safe_height",
+# Environments were renamed mid-project
+WANDB_ENV_NAME_ALIASES: Dict[str, List[str]] = {
+    "safe_goal_point": ["safe_point_goal"],
+    "safe_pathway_walker2d": ["safe_walker"],
+    "safe_height_humanoid": ["safe_height"],
+    "safe_push_point": ["safe_block_push"],
+    "safe_circle_point": ["safe_point_circle"],
+    "safe_lift_spider": ["safe_spider"],
 }
 
 
-def canonicalize_env_name(env_name: str) -> str:
-    """Map a possibly-renamed env_name to its canonical (old short-name) form."""
-    return CANONICAL_ENV_ALIASES.get(env_name, env_name)
-
-
-_REVERSE_ENV_ALIASES: Dict[str, str] = {v: k for k, v in CANONICAL_ENV_ALIASES.items()}
-
-
 def env_name_variants(env_name: str) -> List[str]:
-    """All known name variants (old + new) for the given env, e.g. for wandb
-    server-side filters that must match runs logged under either naming era."""
-    canonical = canonicalize_env_name(env_name)
-    variants = {env_name, canonical}
-    if canonical in _REVERSE_ENV_ALIASES:
-        variants.add(_REVERSE_ENV_ALIASES[canonical])
-    return sorted(variants)
+    """Every name an env's runs may be logged under in wandb, for server-side filters.
+
+    Returns the given name plus any historical aliases. Local paths and figure labels
+    always use the registry name.
+    """
+    return sorted({env_name, *WANDB_ENV_NAME_ALIASES.get(env_name, [])})
 
 
 # Default mapping matching most scripts in this repo
@@ -147,11 +142,6 @@ REWARD_METRIC_MAP = {
     'safe_velocity_ant': 'episodic/forward_reward',
     'safe_lift_spider': 'episodic/reward_forward',
     'safe_height_humanoid': 'episodic/forward_reward',
-    # Short aliases used by the curriculum/transfer experiment runs (training/train_curriculum.py /
-    # training/train_transfer.py --env_name), logged under the same underlying walker2d/humanoid envs.
-    # TODO remove the legacy
-    'safe_walker': 'episodic/reward_forward',
-    'safe_height': 'episodic/forward_reward',
 }
 DEFAULT_REWARD_METRIC = 'episodic/sum_reward'
 
@@ -235,9 +225,7 @@ def _reconstructs_ppo_cost_reward(
         return False
     if cost_col is None or cost_col not in df.columns:
         return False
-    env = canonicalize_env_name(env_name) if env_name else None
-    return not (env in PPO_COST_NO_RECONSTRUCTION
-                or (env_name or "") in PPO_COST_NO_RECONSTRUCTION)
+    return (env_name or "") not in PPO_COST_NO_RECONSTRUCTION
 
 
 # Above this many algorithms a single-row legend gets too wide for the figure,

@@ -39,7 +39,7 @@ METHOD_HATCHES = {
 SAFETY_THRESHOLDS: Dict[str, float] = {
     "safe_goal_point": 25.0,
     "safe_reacher": 25.0,
-    "safe_walker": 25.0,
+    "safe_pathway_walker2d": 25.0,
 }
 
 
@@ -564,7 +564,7 @@ def build_args() -> argparse.ArgumentParser:
         "Compare normal, curriculum, and transfer training",
         omit=("smoothing_window",),
         out_name="curriculum_transfer",
-        envs=["safe_goal_point", "safe_reacher", "safe_walker", "safe_height"],
+        envs=["safe_goal_point", "safe_reacher", "safe_pathway_walker2d", "safe_height_humanoid"],
         algos=cli.DEFAULT_SAFE_ALGOS,
         level=3,
         panel_h=2.5,

@@ -21,7 +21,7 @@ import wandb
 from wandb.apis.public import Run
 
 from results import cli
-from results.common import (apply_max_age_filter, canonicalize_env_name,
+from results.common import (WANDB_ENV_NAME_ALIASES, apply_max_age_filter,
                             env_name_variants, get_metrics_for_env)
 
 
@@ -80,9 +80,12 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
 
     metrics = get_metrics_for_env(env, args.metrics)
 
-    # Env names were renamed mid-project (e.g. safe_walker -> safe_pathway_walker2d);
-    # canonicalize so old- and new-named runs of the same env land in the same folder.
-    canonical_env = canonicalize_env_name(env)
+    # Runs logged under a historical env name (e.g. safe_walker) are stored under the
+    # current registry name (safe_pathway_walker2d), so both eras land in one folder.
+    canonical_env = next(
+        (name for name, aliases in WANDB_ENV_NAME_ALIASES.items() if env in aliases),
+        env,
+    )
 
     # Determine if this is a transfer or curriculum run
     is_transfer = 'TRANSFER' in tags

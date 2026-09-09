@@ -7,11 +7,6 @@ level (1, 2, 3) into environment-specific parameter overrides.
 It is intentionally lightweight and modular: add new env handlers or tweak
 mappings in a single place without touching training code or env classes.
 
-Naming Convention Support:
-- New style: safe_[task]_[agent] (e.g., safe_goal_point, safe_circle_point)
-- Old style: safe_[agent]_[task] or safe_[task] (e.g., safe_goal_point, safe_walker)
-
-Both naming conventions are supported for backward compatibility.
 """
 from __future__ import annotations
 
