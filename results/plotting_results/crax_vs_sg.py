@@ -64,7 +64,8 @@ import numpy as np
 import pandas as pd
 
 from results import cli
-from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, results_path, set_mpl_style
+from results.common import (DEFAULT_METRIC_COLS as METRIC_COLS, get_series, moving_average,
+                            results_path, set_mpl_style)
 from results.plotting_results.seed_variance import ci95, format_table
 
 CRAX_ENV = "safe_velocity_ant"
@@ -124,6 +125,30 @@ def load_omnisafe_curves(base: Path, seeds: List[int]) -> List[pd.DataFrame]:
             "cost": df["cost"].to_numpy(dtype=np.float64),
         }))
     return curves
+
+
+def smooth_curves(curves: List[pd.DataFrame], window_steps: float) -> List[pd.DataFrame]:
+    """Moving-average each seed's reward/cost over a window of `window_steps` env steps.
+
+    The window is given in environment steps, not samples, because the two
+    platforms log at different cadences (CRAX every ~10k steps, OmniSafe every
+    4k), so an equal sample window would smooth them by unequal amounts. Both
+    sides get the same treatment: OmniSafe's `Metrics/Ep*` is already a rolling
+    average over its logger's episode window, while CRAX logs a much noisier
+    per-interval average, which otherwise widens CRAX's band through per-point
+    measurement noise rather than seed disagreement.
+    """
+    if window_steps <= 0:
+        return curves
+    smoothed = []
+    for c in curves:
+        spacing = float(np.median(np.diff(c["step"].to_numpy()))) if len(c) > 1 else 0.0
+        window = max(1, int(round(window_steps / spacing))) if spacing > 0 else 1
+        d = c.copy()
+        d["reward"] = moving_average(c["reward"].to_numpy(), window)
+        d["cost"] = moving_average(c["cost"].to_numpy(), window)
+        smoothed.append(d)
+    return smoothed
 
 
 def interpolate_to_common_grid(curves: List[pd.DataFrame], num_points: int) -> Tuple[
@@ -305,6 +330,11 @@ def main(args: argparse.Namespace) -> None:
     if not omnisafe_curves:
         print(f"WARNING: no OmniSafe curves loaded from {omnisafe_base}")
 
+    # Smooth before interpolating, so the comparison table below reports the same
+    # series the figure shows.
+    crax_curves = smooth_curves(crax_curves, args.smoothing_steps)
+    omnisafe_curves = smooth_curves(omnisafe_curves, args.smoothing_steps)
+
     crax_grid, crax_reward, crax_cost = interpolate_to_common_grid(crax_curves, args.num_points)
     omnisafe_grid, omnisafe_reward, omnisafe_cost = interpolate_to_common_grid(omnisafe_curves, args.num_points)
 
@@ -339,6 +369,10 @@ def build_args() -> argparse.ArgumentParser:
                    default=f"{cli.DEFAULT_DATA_DIR}/omnisafe_ant_velocity",
                    help="Dir of OmniSafe's downloaded CSVs, relative to results/ "
                         "(results/download/omnisafe.py --output default).")
+    p.add_argument("--smoothing_steps", type=float, default=100_000,
+                   help="Moving-average window in environment steps, applied to both "
+                        "platforms (0 disables smoothing). Given in steps rather than "
+                        "samples because the two log at different cadences.")
     p.add_argument("--x_min", type=float, default=0,
                    help="Lower x-axis limit in environment steps (default: autoscale).")
     p.add_argument("--x_max", type=float, default=2e6,
