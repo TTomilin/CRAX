@@ -234,9 +234,10 @@ def plot_efficiency_heatmap(
         finite_viol = viol_mean[np.isfinite(viol_mean)]
         viol_vmax = float(np.percentile(finite_viol, 95)) if finite_viol.size else 1.0
 
-    panel_w = 0.75 * n_env + 1.6
-    panel_h = 0.45 * n_algo + 1.4
-    fig, (ax_r, ax_v) = plt.subplots(1, 2, figsize=(panel_w * 2, panel_h))
+    panel_w = 0.55 * n_env + 1.6
+    panel_h = 0.35 * n_algo + 1.4
+    fig, (ax_r, ax_v) = plt.subplots(1, 2, figsize=(panel_w * 2, panel_h),
+                                     gridspec_kw={"wspace": 0.35})
 
     env_labels = [TRANSLATIONS.get(e, e) for e in envs]
     algo_labels = [TRANSLATIONS.get(a, a) for a in algos]
@@ -276,8 +277,8 @@ def plot_efficiency_heatmap(
     annotate(ax_r, reward_mean, reward_ci, scale_max=1.0)
     annotate(ax_v, viol_mean, viol_ci, scale_max=viol_vmax)
 
-    fig.colorbar(im_r, ax=ax_r, label="RewEff", fraction=0.046, pad=0.04)
-    fig.colorbar(im_v, ax=ax_v, label="CumViol", fraction=0.046, pad=0.04)
+    fig.colorbar(im_r, ax=ax_r, fraction=0.046, pad=0.04)
+    fig.colorbar(im_v, ax=ax_v, fraction=0.046, pad=0.04)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
