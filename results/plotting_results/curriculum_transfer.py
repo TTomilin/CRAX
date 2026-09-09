@@ -1,8 +1,7 @@
 """Compare normal training, curriculum, and transfer training methods.
 
-This script generates:
-1. Training curves grid comparing all methods
-2. Final results on level 3 (bar plot comparison)
+By default this produces the final-results bar chart. Pass --plot_curves to also
+write one training-curve figure per environment.
 
 For curriculum and transfer, data from different stages/phases are connected.
 """
@@ -296,26 +295,34 @@ def plot_training_curves(
         env_title = env.replace("_", " ").title()
         fig.suptitle(f"{env_title} - Training Curves", fontsize=14, y=0.98)
 
-        # Two legends: algos (colors) and methods (linestyles)
+        # Two legends stacked below the axes: algos (colors), then methods
+        # (linestyles). Both are anchored by their top edge and the second one
+        # is offset by the measured height of the first, so they never overlap
+        # regardless of how many algorithms are drawn.
+        # savefig(bbox_inches="tight") expands the canvas to include them.
+        y_anchor = 0.02
         if algo_handles:
             algo_labels = [TRANSLATIONS.get(a, a.upper()) for a in algo_handles.keys()]
-            fig.legend(
+            algo_legend = fig.legend(
                 list(algo_handles.values()),
                 algo_labels,
-                loc="lower center",
-                bbox_to_anchor=(0.5, 0.06),
+                loc="upper center",
+                bbox_to_anchor=(0.5, y_anchor),
                 ncol=min(len(algo_labels), 6),
                 fancybox=True,
                 shadow=True,
                 title="Algo (color)",
             )
+            fig.canvas.draw()
+            bbox = algo_legend.get_window_extent().transformed(fig.transFigure.inverted())
+            y_anchor -= bbox.height + 0.03
         if method_handles:
             method_labels = [TRANSLATIONS.get(m, m.capitalize()) for m in method_handles.keys()]
             fig.legend(
                 list(method_handles.values()),
                 method_labels,
-                loc="lower center",
-                bbox_to_anchor=(0.5, -0.02),
+                loc="upper center",
+                bbox_to_anchor=(0.5, y_anchor),
                 ncol=len(method_labels),
                 fancybox=True,
                 shadow=True,
@@ -567,14 +574,15 @@ def build_args() -> argparse.ArgumentParser:
         envs=["safe_goal_point", "safe_reacher", "safe_pathway_walker2d", "safe_height_humanoid"],
         algos=cli.DEFAULT_SAFE_ALGOS,
         level=3,
-        panel_h=2.5,
+        panel_h=3,
     )
     p.add_argument("--total_steps", type=int, default=int(3e8),
                    help="Total environment steps of a full training run.")
     p.add_argument("--transfer_unsafe_fraction", type=float, default=0.5,
                    help="Fraction of the budget the transfer runs spend in the unsafe phase.")
-    p.add_argument("--plot_curves", action="store_true", default=True,
-                   help="Plot the training curves.")
+    p.add_argument("--plot_curves", action="store_true",
+                   help="Also plot and save the per-env training curves "
+                        "(off by default; only the bar chart is produced).")
     p.add_argument("--plot_final", action="store_true", default=True,
                    help="Plot the final-performance comparison.")
     p.add_argument("--no_threshold", action="store_true",
