@@ -2,7 +2,7 @@
 
 Each algo varies one core PPO optimization hyperparameter (learning_rate,
 entropy_cost, discounting, gae_lambda, clipping_epsilon) at a time, others
-left at train_env.py's default. Key the output folder by the swept hyperparameter
+left at training/train_env.py's default. Key the output folder by the swept hyperparameter
 name so it slots into the existing data/<env>/level_<level>/<algo>/... tree:
 
     data/<env>/level_<level>/<algo>/<hparam>_<value>/seed_<n>.parquet

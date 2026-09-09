@@ -76,6 +76,11 @@ all = [
     "crax[train,analysis,gym]",
 ]
 
+[project.scripts]
+crax-train = "training.train_env:main"
+crax-train-curriculum = "training.train_curriculum:main"
+crax-train-transfer = "training.train_transfer:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["crax", "training"]
 

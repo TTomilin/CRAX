@@ -69,7 +69,7 @@ Vision mode (`--vision`) needs a GPU, since MJWarp renders on CUDA.
 ## 4. First Training Run
 
 ```bash
-python train_env.py \
+python -m training.train_env \
   --env_name safe_goal_point \
   --alg ppo_lag \
   --difficulty 1 \
@@ -84,13 +84,13 @@ Other entry points:
 
 ```bash
 # Curriculum training (progressive difficulty)
-python train_curriculum.py --env_name safe_goal_point --alg ppo_lag
+python -m training.train_curriculum --env_name safe_goal_point --alg ppo_lag
 
 # Safety transfer (pre-train with PPO, then fine-tune with a safe algorithm)
-python train_transfer.py --env_name safe_velocity_ant --alg ppo_lag
+python -m training.train_transfer --env_name safe_velocity_ant --alg ppo_lag
 
 # Pixel observations, rendered on GPU via MJWarp
-python train_env.py --env_name safe_goal_point --alg ppo_lag --vision
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision
 ```
 
 All three scripts share the same argument set, defined in
@@ -114,10 +114,10 @@ wandb login
 
 ```bash
 # Disable wandb
-python train_env.py --env_name safe_goal_point --alg ppo_lag --use_wandb false
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --use_wandb false
 
 # Set project, group, and tags
-python train_env.py --env_name safe_goal_point --alg ppo_lag \
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag \
   --wandb_project crax-experiments \
   --wandb_group safe_goal_point \
   --wandb_tags tag1 tag2
@@ -137,7 +137,7 @@ Keep `mujoco`, `mujoco-mjx` and `mujoco-warp` on the same version (3.11.0).
 
 Reduce the number of parallel environments:
 ```bash
-python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1 \
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 \
   --num_envs 32 --num_eval_envs 32
 ```
 

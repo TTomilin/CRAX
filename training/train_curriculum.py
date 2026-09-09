@@ -75,7 +75,7 @@ def main():
             )
 
         if config.store_model:
-            root_dir = Path(__file__).parent.resolve()
+            root_dir = Path(__file__).parent.parent.resolve()  # repo root, not training/
             ckpt_root = root_dir / config.model_dir / run_name
             os.makedirs(ckpt_root, exist_ok=True)
             cfg["save_checkpoint_path"] = ckpt_root

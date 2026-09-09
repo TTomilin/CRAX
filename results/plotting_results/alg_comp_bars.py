@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
-from typing import Dict, List
+from collections import defaultdict
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +32,7 @@ def load_final_values(
       env, level, algo, metric, seed, value
     """
     rows = []
+    last_steps: Dict[Tuple[str, int, str, int], int] = {}
     for env in envs:
         for level in levels:
             for algo in algos:
@@ -46,6 +48,8 @@ def load_final_values(
                         continue
 
                     df = df.sort_values("_step", kind="mergesort")
+                    if len(df):
+                        last_steps[(env, level, algo, seed)] = int(df["_step"].iloc[-1])
 
                     for metric in metrics:
                         series = get_series(df, algo=algo, metric=metric, metric_cols=METRIC_COLS, env_name=env)
@@ -67,7 +71,35 @@ def load_final_values(
                             dict(env=env, level=level, algo=algo, metric=metric, seed=seed, value=v)
                         )
 
+    warn_short_runs(last_steps)
     return pd.DataFrame(rows)
+
+
+def warn_short_runs(last_steps: Dict[Tuple[str, int, str, int], int],
+                    min_coverage: float = 0.9) -> None:
+    """Reporting runs whose history ends well before the longest run beside it."""
+
+    by_panel: Dict[Tuple[str, int], Dict[Tuple[str, int], int]] = defaultdict(dict)
+    for (env, level, algo, seed), last_step in last_steps.items():
+        by_panel[(env, level)][(algo, seed)] = last_step
+
+    for (env, level), runs in sorted(by_panel.items()):
+        if not runs:
+            continue
+        budget = max(runs.values())
+        short = {
+            (algo, seed): step
+            for (algo, seed), step in runs.items()
+            if budget > 0 and step < min_coverage * budget
+        }
+        if not short:
+            continue
+        print(f"WARNING: {env} level {level}: runs ending early (longest run reaches "
+              f"{budget:,} steps):")
+        for (algo, seed), step in sorted(short.items(), key=lambda kv: kv[1]):
+            print(f"    {algo:10s} seed {seed:<3d} ends at {step:>13,} steps "
+                  f"({step / budget:5.1%} of the longest run)")
+        print("    Their bars report a different point in training than the others.")
 
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:

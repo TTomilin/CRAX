@@ -20,7 +20,7 @@ def main(args: argparse.Namespace) -> None:
 
 def build_filters(args: argparse.Namespace) -> dict:
     """Server-side filters for wandb.Api().runs()."""
-    f = {"state": "finished"}  # only completed runs
+    f = {"state": {"$in": list(args.states)}}
 
     # config.* filters
     if args.algos:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Training-performance benchmark: OmniSafe PPOLag on SafetyAntVelocity-v1.
 
-Companion to CRAX's `train_env.py --alg ppo_lag --env_name safe_velocity_ant`
+Companion to CRAX's `training/train_env.py --alg ppo_lag --env_name safe_velocity_ant`
 run. Produces one per-seed CSV of (step, reward, cost) so
 `results/plotting_results/omnisafe_vs_crax_ant_velocity.py` can overlay both
 platforms' training curves (reward-vs-steps, cost-vs-steps), matching the

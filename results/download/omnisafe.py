@@ -29,7 +29,7 @@ COST_KEY = "Metrics/EpCost"
 
 
 def build_filters(args: argparse.Namespace) -> dict:
-    f = {"state": "finished"}
+    f = {"state": {"$in": list(args.states)}}
     if args.seeds:
         f["config.seed"] = {"$in": args.seeds}
     if args.wandb_tags:

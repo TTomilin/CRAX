@@ -7,7 +7,8 @@ This script demonstrates how to:
 3. Compare how well each algorithm adapts the unsafe policy to satisfy safety constraints
 
 Example usage:
-    python train_transfer.py --env_name safe_velocity_ant --unsafe_steps 2000000 --safe_steps 2000000
+    python -m training.train_transfer --env_name safe_velocity_ant \
+        --unsafe_steps 2000000 --safe_steps 2000000
 """
 
 import functools
@@ -58,7 +59,7 @@ def main():
 
         # Optional checkpoint dir
         if args.store_model:
-            root_dir = Path(__file__).parent.resolve()
+            root_dir = Path(__file__).parent.parent.resolve()  # repo root, not training/
             ckpt_root = root_dir / args.model_dir / base_run_name
             os.makedirs(ckpt_root, exist_ok=True)
             cfg["save_checkpoint_path"] = ckpt_root

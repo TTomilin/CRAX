@@ -146,8 +146,8 @@ REWARD_METRIC_MAP = {
     'safe_velocity_ant': 'episodic/forward_reward',
     'safe_lift_spider': 'episodic/reward_forward',
     'safe_height_humanoid': 'episodic/forward_reward',
-    # Short aliases used by the curriculum/transfer experiment runs (train_curriculum.py /
-    # train_transfer.py --env_name), logged under the same underlying walker2d/humanoid envs.
+    # Short aliases used by the curriculum/transfer experiment runs (training/train_curriculum.py /
+    # training/train_transfer.py --env_name), logged under the same underlying walker2d/humanoid envs.
     # TODO remove the legacy
     'safe_walker': 'episodic/reward_forward',
     'safe_height': 'episodic/forward_reward',

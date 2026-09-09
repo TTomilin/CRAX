@@ -24,7 +24,7 @@ OmniSafe/Safety-Gymnasium's raw `Metrics/EpRet` does not apply. We use
 the same net reward logged *before* that scaling -- so both curves are on
 directly comparable scales without a manual /100 correction.
 
-Episode-length parity: `train_env.py --episode_length` now correctly overrides
+Episode-length parity: `training/train_env.py --episode_length` now correctly overrides
 the env's ctor default (previously silently clobbered), so `safe_velocity_ant`
 runs at the intended 1000-step episodes, matching OmniSafe's fixed 1000-step
 `SafetyAntVelocity-v1` episodes -- no manual reward/cost scaling needed here.

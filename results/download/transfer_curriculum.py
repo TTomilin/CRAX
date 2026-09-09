@@ -36,7 +36,7 @@ def main(args: argparse.Namespace) -> None:
 
 def build_filters(args: argparse.Namespace) -> dict:
     """Server-side filters for wandb.Api().runs()."""
-    f = {"state": "finished"}
+    f = {"state": {"$in": list(args.states)}}
 
     # Algorithm filtering - need to include 'ppo' for transfer unsafe phase
     algos_to_filter = list(args.algos) if args.algos else []

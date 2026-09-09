@@ -194,7 +194,7 @@ def build_args() -> argparse.ArgumentParser:
         omit=("ci_method", "last_frac"),
         stats=True,
         out_name="baselines",
-        algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops"],
+        algos=["ppo", "ppo_cost", "ppo_lag", "ppo_pid", "ppo_saute", "p3o", "focops", "crpo"],
         panel_h=3.0,
     )
     p.add_argument("--x_max", type=int, default=5e8)

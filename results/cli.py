@@ -48,6 +48,10 @@ DEFAULT_DOWNLOAD_METRICS: List[str] = ["episodic/sum_reward", "episodic/cost"]
 DEFAULT_PLOT_METRICS: List[str] = ["reward", "cost"]
 PLOT_METRIC_CHOICES: List[str] = list(DEFAULT_METRIC_COLS.keys())
 
+# Only completed runs by default: a crashed or killed run stops at whatever step it
+# died at, so its curves end early and its final values are not comparable.
+DEFAULT_RUN_STATES: List[str] = ["finished"]
+
 DEFAULT_SAFETY_THRESHOLD: float = 25.0
 DEFAULT_FIGURE_DIR: str = "figures"
 DEFAULT_DATA_DIR: str = "data"
@@ -120,6 +124,10 @@ def wandb_args(*, project_default: Optional[str] = None,
                        help="Name of the WandB project")
     p.add_argument("--wandb_tags", type=str, nargs="+", default=[],
                    help="WandB tags to filter runs")
+    p.add_argument("--states", type=str, nargs="+", default=list(DEFAULT_RUN_STATES),
+                   help="WandB run states to download. Defaults to finished runs only; "
+                        "pass e.g. 'finished crashed' to also pull runs that died before "
+                        "reaching the step budget (their histories are shorter)")
     if "include_runs" not in omit:
         p.add_argument("--include_runs", type=str, nargs="+", default=[],
                        help="Substrings of run names to include; runs not matching any are skipped")

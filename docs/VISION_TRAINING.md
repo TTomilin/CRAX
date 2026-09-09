@@ -8,20 +8,20 @@ Yes, it is as simple as adding `--vision`:
 
 ```bash
 # State-based training (default, unchanged)
-python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1
 
 # Vision-based training — just add --vision
-python train_env.py --env_name safe_goal_point --alg ppo_lag --difficulty 1 --vision
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 --vision
 ```
 
 This works with all training scripts:
 
 ```bash
 # Curriculum training with vision
-python train_curriculum.py --env_name safe_goal_point --alg ppo_lag --vision
+python -m training.train_curriculum --env_name safe_goal_point --alg ppo_lag --vision
 
 # Transfer learning with vision
-python train_transfer.py --env_name safe_goal_point --vision
+python -m training.train_transfer --env_name safe_goal_point --vision
 ```
 
 All on-policy algorithms — plain PPO and the safe RL variants PPO-Lag, PPO-PID, FOCOPS, P3O, PPO-Saute, CRPO — work with vision out of the box.
@@ -99,7 +99,7 @@ substring match (`VISION_CAMERA_OVERRIDES` in `training/run_utils.py`):
 Frame stacking provides temporal information (a single image has no velocity info):
 
 ```bash
-python train_env.py --env_name safe_goal_point --alg ppo_lag --vision --vision_frame_stack 3
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision --vision_frame_stack 3
 ```
 
 With `frame_stack=3`, the pixel observation has shape `(64, 64, 9)` — three RGB frames concatenated along the channel dimension. Frames are stacked in `state.info['_gpu_pixel_buffer']` and shifted each step.
@@ -124,11 +124,11 @@ SAC, SAC-Lag, and SAC-PID are off-policy: they keep a replay buffer of past tran
 
 ```bash
 # Off-policy safe RL
-python train_env.py --env_name safe_goal_point --alg sac_lag --difficulty 1 --vision \
+python -m training.train_env --env_name safe_goal_point --alg sac_lag --difficulty 1 --vision \
     --max_replay_size 50000
 
 # Off-policy, unconstrained
-python train_env.py --env_name safe_goal_point --alg sac --difficulty 1 --vision \
+python -m training.train_env --env_name safe_goal_point --alg sac --difficulty 1 --vision \
     --max_replay_size 50000
 ```
 
@@ -147,7 +147,7 @@ Levers, in rough order of impact:
 - Set `--video_every_steps 0` (or `--skip_video`) to drop periodic clip rendering.
 
 ```bash
-python train_env.py --env_name safe_goal_point --alg ppo_lag --vision \
+python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision \
     --num_envs 512 \
     --vision_height 64 --vision_width 64
 ```
