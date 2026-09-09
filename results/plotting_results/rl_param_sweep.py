@@ -8,18 +8,17 @@ Prints one table and saves one figure per (algo, hyperparameter).
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 from results import cli
-from results.common import RL_SWEEP_SPEC
+from results.common import RL_SWEEP_SPEC, results_path
 from results.plotting_results.safety_param_sweep import build_table, discover_values, load_sweep_data, plot_sweep
 from results.plotting_results.seed_variance import format_table
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
 
     algos = args.algos or list(RL_SWEEP_SPEC.keys())
     for algo in algos:
@@ -46,7 +45,7 @@ def main(args: argparse.Namespace) -> None:
             print(f"\n=== {algo} / sweep over {hparam} (values: {values}) ===")
             print(format_table(rows, headers))
 
-            out_path = Path(args.output_fig_dir) / f"stage1_sweep_{algo}_{hparam}.pdf"
+            out_path = results_path(args.output_fig_dir) / f"stage1_sweep_{algo}_{hparam}.pdf"
             plot_sweep(reward_data, cost_data, args.envs, values, algo, hparam, out_path,
                        method=args.ci_method)
             print(f"Saved figure: {out_path}")

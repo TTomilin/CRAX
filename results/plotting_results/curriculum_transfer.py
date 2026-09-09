@@ -22,6 +22,7 @@ from results.common import (
     set_mpl_style,
     nice_grid,
     BASELINES_COLORS, TRANSLATIONS,
+    results_path,
 )
 
 METHOD_LINESTYLES = {
@@ -218,7 +219,7 @@ def plot_training_curves(
     metrics = args.metrics
     methods = ["normal", "curriculum", "transfer"]
 
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for env in args.envs:
@@ -512,7 +513,7 @@ def plot_final_comparison(
             shadow=True,
         )
 
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{args.out_name}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
@@ -521,7 +522,7 @@ def plot_final_comparison(
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
     unsafe_steps = int(args.total_steps * args.transfer_unsafe_fraction)
 
     print(f"Total budget: {args.total_steps:,} steps")

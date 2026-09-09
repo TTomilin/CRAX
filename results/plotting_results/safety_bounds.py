@@ -8,7 +8,7 @@ import pandas as pd
 
 from results import cli
 from results.common import align_and_stack, set_mpl_style, nice_grid, moving_average, REWARD_METRIC_MAP, \
-    DEFAULT_METRIC_COLS as METRIC_COLS, DEFAULT_REWARD_METRIC, TRANSLATIONS
+    DEFAULT_METRIC_COLS as METRIC_COLS, DEFAULT_REWARD_METRIC, TRANSLATIONS, results_path
 
 
 def _bound_value(bound) -> float:
@@ -226,7 +226,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
             shadow=True,
         )
 
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / (
         args.out_name if args.out_name.endswith(".pdf") else f"{args.out_name}_level_{args.level}.pdf"
@@ -237,7 +237,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
 
     store: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for env in args.envs:

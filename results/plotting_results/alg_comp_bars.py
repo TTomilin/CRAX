@@ -16,6 +16,7 @@ from results.common import (
     legend_ncol,
     legend_rows,
     BASELINES_COLORS, TRANSLATIONS,
+    results_path,
 )
 
 
@@ -425,7 +426,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
             shadow=True,
         )
 
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Name single-level figures after the level they show, so that runs for
     # different levels do not overwrite each other.
@@ -1016,7 +1017,7 @@ def main(args: argparse.Namespace) -> None:
     if args.single_level is not None:
         args.levels = [args.single_level]
 
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
     df = load_final_values(
         base=base,
         envs=args.envs,

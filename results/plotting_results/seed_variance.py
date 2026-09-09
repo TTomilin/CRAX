@@ -21,6 +21,7 @@ from results.common import (
     get_series,
     set_mpl_style,
     TRANSLATIONS,
+    results_path,
 )
 
 # Two-tailed 95% Student-t critical values by degrees of freedom (n - 1).
@@ -259,7 +260,7 @@ def plot_results(
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
     seeds_large = sorted(args.seeds_large)
     seeds_small = sorted(args.seeds_small)
     all_seeds = sorted(set(seeds_small) | set(seeds_large))
@@ -296,7 +297,7 @@ def main(args: argparse.Namespace) -> None:
 
     trend = build_trend(final_values_by_metric, args.envs, args.algos, args.metrics, seeds_large,
                         method=args.ci_method)
-    out_path = Path(args.output_fig_dir) / f"{args.out_name}.pdf"
+    out_path = results_path(args.output_fig_dir) / f"{args.out_name}.pdf"
     plot_results(rows, trend, args.envs, seeds_small, seeds_large, out_path)
     print(f"Saved figure: {out_path}")
 

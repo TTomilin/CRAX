@@ -64,7 +64,7 @@ import numpy as np
 import pandas as pd
 
 from results import cli
-from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, set_mpl_style
+from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, results_path, set_mpl_style
 from results.plotting_results.seed_variance import ci95, format_table
 
 CRAX_ENV = "safe_velocity_ant"
@@ -246,15 +246,16 @@ def plot_comparison(
         crax_grid: np.ndarray, crax_reward: np.ndarray, crax_cost: np.ndarray,
         omnisafe_grid: np.ndarray, omnisafe_reward: np.ndarray, omnisafe_cost: np.ndarray,
         threshold: float, ci_method: str, out_path: Path,
+        x_min: float | None = None, x_max: float | None = None,
 ) -> None:
     set_mpl_style()
     fig, (ax_r, ax_c) = plt.subplots(1, 2, figsize=(11, 4.2))
 
-    colors = {"CRAX (Ours)": "#2E86AB", "OmniSafe + Safety-Gymnasium": "#E94F37"}
+    colors = {"CRAX": "#2E86AB", "Safety-Gymnasium + OmniSafe": "#E94F37"}
 
     for label, grid, reward, cost in (
-            ("CRAX (Ours)", crax_grid, crax_reward, crax_cost),
-            ("OmniSafe + Safety-Gymnasium", omnisafe_grid, omnisafe_reward, omnisafe_cost),
+            ("CRAX", crax_grid, crax_reward, crax_cost),
+            ("Safety-Gymnasium + OmniSafe", omnisafe_grid, omnisafe_reward, omnisafe_cost),
     ):
         if grid.size == 0:
             continue
@@ -269,18 +270,19 @@ def plot_comparison(
 
     ax_r.set_xlabel("Environment Steps")
     ax_r.set_ylabel("Episodic Reward")
-    ax_r.set_title("Reward vs. Training Steps")
     ax_r.grid(True, alpha=0.3)
     ax_r.legend(loc="lower right", fontsize=10)
 
-    ax_c.axhline(threshold, color="black", linestyle="--", alpha=0.6, label=f"Safety bound ({threshold:g})")
+    ax_c.axhline(threshold, color="black", linestyle="--", alpha=0.6, label=f"Safety bound")
     ax_c.set_xlabel("Environment Steps")
     ax_c.set_ylabel("Episodic Cost")
-    ax_c.set_title("Cost vs. Training Steps")
     ax_c.grid(True, alpha=0.3)
     ax_c.legend(loc="upper right", fontsize=10)
 
-    fig.suptitle("PPO-Lag: CRAX vs. OmniSafe/Safety-Gymnasium (Ant Velocity)")
+    # None leaves that end on matplotlib's autoscale.
+    for ax in (ax_r, ax_c):
+        ax.set_xlim(left=x_min, right=x_max)
+
     plt.tight_layout()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,8 +294,8 @@ def plot_comparison(
 
 
 def main(args: argparse.Namespace) -> None:
-    crax_base = Path(args.crax_input)
-    omnisafe_base = Path(args.omnisafe_input)
+    crax_base = results_path(args.crax_input)
+    omnisafe_base = results_path(args.omnisafe_input)
 
     crax_curves = load_crax_curves(crax_base, args.level, args.seeds)
     omnisafe_curves = load_omnisafe_curves(omnisafe_base, args.seeds)
@@ -306,11 +308,12 @@ def main(args: argparse.Namespace) -> None:
     crax_grid, crax_reward, crax_cost = interpolate_to_common_grid(crax_curves, args.num_points)
     omnisafe_grid, omnisafe_reward, omnisafe_cost = interpolate_to_common_grid(omnisafe_curves, args.num_points)
 
-    out_path = Path(args.output_fig_dir) / args.out_name
+    out_path = results_path(args.output_fig_dir, args.out_name)
     plot_comparison(
         crax_grid, crax_reward, crax_cost,
         omnisafe_grid, omnisafe_reward, omnisafe_cost,
         args.threshold, args.ci_method, out_path,
+        x_min=args.x_min, x_max=args.x_max,
     )
 
     display_rows, numeric_rows = build_periodic_table(
@@ -329,12 +332,17 @@ def build_args() -> argparse.ArgumentParser:
         stats=True,
         out_name="omnisafe_vs_crax_ant_velocity",
     )
-    p.add_argument("--crax_input", type=str, default="results/data",
-                   help="Base dir of CRAX's downloaded parquet data "
-                        "(results/download/main_results.py --output default).")
-    p.add_argument("--omnisafe_input", type=str, default="results/data/omnisafe_ant_velocity",
-                   help="Dir of OmniSafe's downloaded CSVs "
+    p.add_argument("--crax_input", type=str, default=cli.DEFAULT_DATA_DIR,
+                   help="Base dir of CRAX's downloaded parquet data, relative to "
+                        "results/ (results/download/main_results.py --output default).")
+    p.add_argument("--omnisafe_input", type=str,
+                   default=f"{cli.DEFAULT_DATA_DIR}/omnisafe_ant_velocity",
+                   help="Dir of OmniSafe's downloaded CSVs, relative to results/ "
                         "(results/download/omnisafe.py --output default).")
+    p.add_argument("--x_min", type=float, default=0,
+                   help="Lower x-axis limit in environment steps (default: autoscale).")
+    p.add_argument("--x_max", type=float, default=2e6,
+                   help="Upper x-axis limit in environment steps (default: autoscale).")
     p.add_argument("--num_points", type=int, default=200,
                    help="Number of points on the shared interpolation grid.")
     p.add_argument("--table_interval", type=float, default=200_000,

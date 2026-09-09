@@ -1,10 +1,10 @@
 """Plot performance comparison between CRAX and Safety-Gymnasium."""
 
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from results.common import results_path
 
 # Configure matplotlib
 plt.rcParams.update({
@@ -19,7 +19,7 @@ plt.rcParams.update({
 })
 
 # Data paths
-RESULTS_DIR = Path(__file__).parent.parent / "data" / "performance"
+RESULTS_DIR = results_path("data", "performance")
 
 # Load CRAX data from all sources and combine
 crax_main = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_044133" / "benchmark_results.csv")
@@ -32,7 +32,7 @@ crax_df = pd.concat([crax_extra, crax_main, crax_large], ignore_index=True).drop
 safety_gym_df = pd.read_csv(RESULTS_DIR / "safety_gym_benchmark_results_20260129_054930" / "benchmark_results.csv")
 
 # Output directory
-OUTPUT_DIR = Path(__file__).parent.parent / "figures"
+OUTPUT_DIR = results_path("figures")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 

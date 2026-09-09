@@ -4,12 +4,26 @@ from __future__ import annotations
 import argparse
 import math
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# results/, i.e. the parent of the data and figures directories the download and
+# plotting scripts read from and write to.
+RESULTS_DIR: Path = Path(__file__).parent.resolve()
+
+
+def results_path(*parts: str | Path) -> Path:
+    """Resolve `parts` against results/, so scripts run from any working directory.
+
+    An absolute part wins, which keeps an explicit `--output_fig_dir /tmp/figs`
+    working.
+    """
+    return RESULTS_DIR.joinpath(*parts)
 
 
 TRANSLATIONS = {
@@ -307,14 +321,14 @@ def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
     """Smooth data with a simple moving average that handles boundaries correctly."""
     if window_size <= 1:
         return data
-    
+
     # Convolve data with ones to get the sum over the window
     data_sum = np.convolve(data, np.ones(window_size), 'same')
-    
+
     # Create an array of ones with the same shape as data
     # Convolving this with ones gives the number of valid (non-padded) points in the window
     counts = np.convolve(np.ones_like(data), np.ones(window_size), 'same')
-    
+
     # Divide sum by count to get the correct average
     return data_sum / counts
 

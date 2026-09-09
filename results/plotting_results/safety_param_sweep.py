@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from results import cli
-from results.common import SAFETY_SWEEP_SPEC, TRANSLATIONS, set_mpl_style
+from results.common import SAFETY_SWEEP_SPEC, TRANSLATIONS, results_path, set_mpl_style
 from results.plotting_results.seed_variance import ci95, format_table, load_final_value
 
 
@@ -127,7 +127,7 @@ def plot_sweep(
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
 
     algos = args.algos or list(SAFETY_SWEEP_SPEC.keys())
     for algo in algos:
@@ -154,7 +154,7 @@ def main(args: argparse.Namespace) -> None:
             print(f"\n=== {algo} / sweep over {hparam} (values: {values}) ===")
             print(format_table(rows, headers))
 
-            out_path = Path(args.output_fig_dir) / f"hparam_sweep_{algo}_{hparam}.pdf"
+            out_path = results_path(args.output_fig_dir) / f"hparam_sweep_{algo}_{hparam}.pdf"
             plot_sweep(reward_data, cost_data, args.envs, values, algo, hparam, out_path,
                        method=args.ci_method)
             print(f"Saved figure: {out_path}")

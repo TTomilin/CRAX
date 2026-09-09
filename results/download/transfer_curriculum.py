@@ -15,14 +15,13 @@ For CURRICULUM runs:
 
 import argparse
 import os
-from pathlib import Path
 
 import wandb
 from wandb.apis.public import Run
 
 from results import cli
 from results.common import (WANDB_ENV_NAME_ALIASES, apply_max_age_filter,
-                            env_name_variants, get_metrics_for_env)
+                            env_name_variants, get_metrics_for_env, results_path)
 
 
 def main(args: argparse.Namespace) -> None:
@@ -95,12 +94,10 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
         print(f"Skipping run {run_id}: not tagged as TRANSFER or CURRICULUM")
         return
 
-    root_dir = Path(__file__).parent.resolve()
-
     if is_curriculum:
         # Curriculum run: algo stored in config.alg
         algo = config.get('alg', config.get('algorithm', 'unknown'))
-        folder_path = root_dir / args.output / 'curriculum' / canonical_env / algo
+        folder_path = results_path(args.output) / 'curriculum' / canonical_env / algo
         file_path = folder_path / f"seed_{seed}.parquet"
         key_metrics = metrics + ['global_step', 'curriculum_stage']
     else:
@@ -115,9 +112,9 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
             if not args.include_unsafe_phase:
                 print(f"Skipping unsafe phase run {run_id}")
                 return
-            folder_path = root_dir / args.output / 'transfer' / canonical_env / f"level_{difficulty}" / 'ppo_pretrain'
+            folder_path = results_path(args.output) / 'transfer' / canonical_env / f"level_{difficulty}" / 'ppo_pretrain'
         else:
-            folder_path = root_dir / args.output / 'transfer' / canonical_env / f"level_{difficulty}" / algo
+            folder_path = results_path(args.output) / 'transfer' / canonical_env / f"level_{difficulty}" / algo
 
         file_path = folder_path / f"seed_{seed}.parquet"
         key_metrics = metrics

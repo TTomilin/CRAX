@@ -17,6 +17,7 @@ from results.common import (
     legend_ncol,
     legend_rows,
     BASELINES_COLORS, TRANSLATIONS,
+    results_path,
 )
 
 
@@ -176,7 +177,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
                    fancybox=True, shadow=True)
 
     algo_names = "_" + "_".join(args.algos) if len(args.algos) <= 2 else ""
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{args.out_name}_level_{args.level}{algo_names}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
@@ -185,7 +186,7 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
     # load all data upfront
     store: Dict[Tuple[str, str, str], List[pd.DataFrame]] = {}
     for env in args.envs:

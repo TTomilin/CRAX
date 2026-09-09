@@ -1,12 +1,11 @@
 import argparse
 import os
-from pathlib import Path
 
 import wandb
 from wandb.apis.public import Run
 
 from results import cli
-from results.common import apply_max_age_filter, get_metrics_for_env
+from results.common import apply_max_age_filter, get_metrics_for_env, results_path
 
 
 def main(args: argparse.Namespace) -> None:
@@ -68,8 +67,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
         extra_attribute = f"{attribute_key}_{attribute_val}"
 
     # Construct folder path for each configuration
-    root_dir = Path(__file__).parent.parent.resolve()
-    folder_path = root_dir / args.output / env / f"level_{level}" / algo / extra_attribute
+    folder_path = results_path(args.output, env, f"level_{level}", algo, extra_attribute)
     os.makedirs(folder_path, exist_ok=True)  # Ensure the directory exists
 
     file_path = folder_path / f"seed_{seed}.parquet"

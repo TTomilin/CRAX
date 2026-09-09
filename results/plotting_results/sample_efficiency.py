@@ -40,6 +40,7 @@ from results.common import (
     get_series,
     set_mpl_style,
     TRANSLATIONS,
+    results_path,
 )
 from results.plotting_results.seed_variance import ci95
 
@@ -284,10 +285,10 @@ def plot_efficiency_heatmap(
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
 
     data = load_efficiency(base, args.envs, args.algos, args.level, args.seeds, args.threshold, args.last_frac,
-                            args.ref_algo, args.viol_norm)
+                           args.ref_algo, args.viol_norm)
 
     rows = build_table(data, args.envs, args.algos, args.ci_method)
     headers = ["Env", "Algo", "N", "RewardEff", "RewardEff_CI95",
@@ -296,7 +297,7 @@ def main(args: argparse.Namespace) -> None:
           f"CI method: {args.ci_method}  |  viol_norm: {args.viol_norm} (ref_algo={args.ref_algo})\n")
     print(format_table(rows, headers))
 
-    out_dir = Path(args.output_fig_dir)
+    out_dir = results_path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / f"{args.out_name}_table.csv"
     pd.DataFrame(rows, columns=headers).to_csv(csv_path, index=False)

@@ -15,13 +15,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 import pandas as pd
 import wandb
 
 from results import cli
-from results.common import apply_max_age_filter
+from results.common import apply_max_age_filter, results_path
 
 STEP_KEY = "TotalEnvSteps"
 REWARD_KEY = "Metrics/EpRet"
@@ -44,7 +43,7 @@ def main(args: argparse.Namespace) -> None:
     filters = build_filters(args)
     runs = api.runs(args.project, filters=filters, order="-created_at", per_page=200)
 
-    output_dir = Path(args.output)
+    output_dir = results_path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     seen_seeds = set()
@@ -99,7 +98,7 @@ def build_args() -> argparse.ArgumentParser:
         level_arg=None,
         project_default="omnisafe",
         omit=("envs", "algos", "metrics", "include_runs"),
-        output="results/data/omnisafe_ant_velocity",
+        output="data/omnisafe_ant_velocity",
     )
     p.add_argument("--run_name_contains", type=str, default="AntVelocity",
                    help="Only keep runs whose name contains this substring (client-side filter; "

@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from results import cli
-from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, TRANSLATIONS
+from results.common import DEFAULT_METRIC_COLS as METRIC_COLS, get_series, results_path, TRANSLATIONS
 from results.plotting_results.seed_variance import (
     build_table, missing_seed_report, format_table, build_trend, plot_results,
 )
@@ -82,7 +82,7 @@ def load_all_final_values(
 
 
 def main(args: argparse.Namespace) -> None:
-    base = Path(__file__).parent.parent.resolve() / args.input
+    base = results_path(args.input)
     seeds_large = sorted(args.seeds_large)
     seeds_small = sorted(args.seeds_small)
     all_seeds = sorted(set(seeds_small) | set(seeds_large))
@@ -124,7 +124,7 @@ def main(args: argparse.Namespace) -> None:
 
     trend = build_trend(final_values_by_metric, groups, args.algos, args.metrics, seeds_large,
                         method=args.ci_method)
-    out_path = Path(args.output_fig_dir) / f"{args.out_name}.pdf"
+    out_path = results_path(args.output_fig_dir) / f"{args.out_name}.pdf"
     plot_results(rows, trend, groups, seeds_small, seeds_large, out_path)
     print(f"Saved figure: {out_path}")
 
