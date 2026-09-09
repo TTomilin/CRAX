@@ -14,6 +14,8 @@ from results.common import (
     set_mpl_style,
     nice_grid,
     moving_average,
+    legend_ncol,
+    legend_rows,
     BASELINES_COLORS, TRANSLATIONS,
 )
 
@@ -165,13 +167,18 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=min(len(labels), 10),
+        rows = legend_rows(len(args.algos))
+        # A second row grows the legend downwards, clear of the axis labels;
+        # savefig(bbox_inches="tight") expands the canvas to include it.
+        y_anchor = 0.0 + 0.01 * (rows - 1)
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, y_anchor),
+                   ncol=legend_ncol(len(args.algos), len(labels)),
                    fancybox=True, shadow=True)
 
-    algo_names = "_".join(args.algos) if len(args.algos) <= 2 else ""
+    algo_names = "_" + "_".join(args.algos) if len(args.algos) <= 2 else ""
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_level_{args.level}_{algo_names}.pdf"
+    out_path = out_dir / f"{args.out_name}_level_{args.level}{algo_names}.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")

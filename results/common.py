@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -237,6 +238,32 @@ def _reconstructs_ppo_cost_reward(
     env = canonicalize_env_name(env_name) if env_name else None
     return not (env in PPO_COST_NO_RECONSTRUCTION
                 or (env_name or "") in PPO_COST_NO_RECONSTRUCTION)
+
+
+# Above this many algorithms a single-row legend gets too wide for the figure,
+# so it is wrapped onto two rows.
+LEGEND_MAX_ALGOS_PER_ROW = 7
+
+
+def legend_rows(n_algos: int, max_algos_per_row: int = LEGEND_MAX_ALGOS_PER_ROW) -> int:
+    """Rows the bottom legend will occupy. See `legend_ncol`."""
+    return 2 if n_algos > max_algos_per_row else 1
+
+
+def legend_ncol(n_algos: int, n_labels: int,
+                max_algos_per_row: int = LEGEND_MAX_ALGOS_PER_ROW) -> int:
+    """Number of columns for a figure-wide bottom legend.
+
+    Wraps onto two rows once there are more than `max_algos_per_row` algorithms.
+    `n_labels` is the total number of legend entries, which can exceed the number
+    of algorithms (the cost panels add a "Threshold" entry), so the split is
+    computed over the entries actually drawn.
+    """
+    if n_labels <= 0:
+        return 1
+    if n_algos > max_algos_per_row:
+        return math.ceil(n_labels / 2)
+    return n_labels
 
 
 def get_series(

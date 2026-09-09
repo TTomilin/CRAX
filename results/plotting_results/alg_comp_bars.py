@@ -13,6 +13,8 @@ from results.common import (
     get_series,
     set_mpl_style,
     nice_grid as _nice_grid,
+    legend_ncol,
+    legend_rows,
     BASELINES_COLORS, TRANSLATIONS,
 )
 
@@ -170,7 +172,7 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
 
     fig, axs = plt.subplots(total_rows, total_cols, figsize=(fig_w, fig_h), squeeze=False)
     hspace = 0.45 if single_level_mode else 0.55
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12, wspace=0.35, hspace=hspace)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.1, wspace=0.35, hspace=hspace)
 
     legend_handles: Dict[str, plt.Line2D] = {}
 
@@ -410,18 +412,25 @@ def plot_final_bars(stats: pd.DataFrame, args: argparse.Namespace) -> None:
         labels = list(legend_handles.keys())
         handles = [legend_handles[k] for k in labels]
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
+        rows = legend_rows(len(algos))
+        # A second row grows the legend downwards, clear of the axis labels;
+        # savefig(bbox_inches="tight") expands the canvas to include it.
+        y_anchor = (0.04 if single_level_mode else 0.0) - 0.04 * (rows - 1)
         fig.legend(
             handles, labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, 0.04 if single_level_mode else 0.0),
-            ncol=min(len(labels), 10),
+            bbox_to_anchor=(0.5, y_anchor),
+            ncol=legend_ncol(len(algos), len(labels)),
             fancybox=True,
             shadow=True,
         )
 
     out_dir = Path(args.output_fig_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{args.out_name}_final.pdf"
+    # Name single-level figures after the level they show, so that runs for
+    # different levels do not overwrite each other.
+    level_suffix = f"_level_{levels[0]}" if len(levels) == 1 else ""
+    out_path = out_dir / f"{args.out_name}{level_suffix}_final.pdf"
     plt.savefig(out_path, bbox_inches="tight")
     plt.show()
     print(f"Saved figure: {out_path}")
@@ -1001,6 +1010,34 @@ def build_args() -> argparse.ArgumentParser:
                    help="Write the LaTeX tables to this path instead of stdout.")
     p.add_argument("--no_plot", action="store_true", help="Skip plotting, only generate LaTeX table.")
     return p
+
+
+def main(args: argparse.Namespace) -> None:
+    if args.single_level is not None:
+        args.levels = [args.single_level]
+
+    base = Path(__file__).parent.parent.resolve() / args.input
+    df = load_final_values(
+        base=base,
+        envs=args.envs,
+        levels=args.levels,
+        algos=args.algos,
+        seeds=args.seeds,
+        metrics=args.metrics,
+        final_mode=args.final_mode,
+        last_k=args.last_k,
+    )
+    if df.empty:
+        raise SystemExit("No data loaded. Check paths/envs/levels/algos/seeds.")
+    stats = summarize(df)
+
+    # Generate LaTeX table if requested
+    if args.latex or args.output_latex:
+        print_latex_table(stats, args)
+
+    # Plot unless --no_plot is set
+    if not args.no_plot:
+        plot_final_bars(stats, args)
 
 
 if __name__ == "__main__":
