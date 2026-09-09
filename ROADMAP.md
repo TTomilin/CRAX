@@ -60,10 +60,22 @@ penalty, and rectification methods on PPO plus a small SAC family.
   to complement `sac_lag` and `sac_pid`.
 - 🔵 **Safety-critic and shielding methods**: methods that act on the policy at
   execution time rather than through the objective.
-- 🔵 **Offline safe RL**: a data-collection utility plus offline baselines,
-  reusing the existing checkpointing and replay-buffer code.
 
-## 3. Observations and vision
+## 3. Offlined dataset generation script
+
+- 🔵 **Offline safe RL**: a data-collection script plus offline baselines that generates hdf5 files (reusing the existing checkpointing and replay-buffer code). Reference: https://github.com/liuzuxin/DSRL
+
+## 4. Safe multi-agent (SafeMARL)
+
+- 🔵 Non-stationary multi-agent safety (like car driving)
+- 🔵 Decentralized SafeMARL
+- 🔵 Compeititve SafeMARL
+
+Reference: https://arxiv.org/pdf/2505.17342v2
+
+<!-- ## 5. Robust SafeRL -->
+
+## 5. Observations and vision
 
 GPU pixel observations already work through `GpuPixelObservationWrapper`
 (`crax/envs/wrappers/pixel_observation_gpu.py`), documented in
@@ -76,7 +88,7 @@ GPU pixel observations already work through `GpuPixelObservationWrapper`
 - 🟡 **Frame stacking and recurrent policies** for partially observable variants.
 - 🔵 **Depth and segmentation channels** as alternatives to RGB.
 
-## 4. Benchmarking and reproducibility
+## 6. Benchmarking and reproducibility
 
 - 🟢 **Reference results.** The download/aggregation pipeline lives in
   `results/` (see [results/README.md](results/README.md)). We want a published
@@ -84,7 +96,7 @@ GPU pixel observations already work through `GpuPixelObservationWrapper`
   counts and confidence intervals, so new methods can be compared without
   re-running the baselines.
 
-## 5. Performance
+## 6. Performance
 
 - 🟢 Continued MuJoCo Warp integration for both physics and rendering.
 - 🟡 **Hasard overhead.** Hasard-heavy environments become very slow. Investigate 
@@ -92,7 +104,7 @@ GPU pixel observations already work through `GpuPixelObservationWrapper`
 - 🔵 TPU support verification. The code is TPU-compatible in principle but has
   not been tested.
 
-## 6. Testing and CI
+## 7. Testing and CI
 
 This is the largest engineering gap and the easiest place to contribute.
 
@@ -106,7 +118,7 @@ This is the largest engineering gap and the easiest place to contribute.
 - 🟡 **GitHub Actions workflow** running the CPU-only subset on every pull
   request; the repository has no `.github/` directory yet.
 
-## 7. Documentation and examples
+## 8. Documentation and examples
 
 - 🟡 **Per-suite documentation** describing each task's reward, cost, observation
   space and difficulty levels — the level of detail currently only available for
@@ -116,7 +128,7 @@ This is the largest engineering gap and the easiest place to contribute.
   walkthrough: subclass the suite base, add difficulty entries, register in
   `crax/envs/__init__.py`, add tests.
 
-## 8. Ecosystem and packaging
+## 9. Ecosystem and packaging
 
 - 🟡 **Gymnasium / Safety-Gymnasium API parity.** Wrappers exist
   (`crax/envs/wrappers/gym.py`, `dm_env.py`, `torch.py`); we want them tested
