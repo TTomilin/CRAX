@@ -125,6 +125,11 @@ def compute_ppo_lagrange_loss(
 
     mean_cost = jnp.mean(costs)
 
+    # This is to collect metrics for the observation routing ablation in the paper
+    # Explained variance of the GAE return targets ssays whether a critic is actually better than predicting the mean
+    cost_value_ev = 1.0 - jnp.var(cost_v_error) / (jnp.var(cost_vs) + 1e-8)
+    value_ev = 1.0 - jnp.var(v_error) / (jnp.var(vs) + 1e-8)
+
     total_loss = policy_loss + v_loss + cost_v_loss + entropy_loss
     return total_loss, {
         'total_loss': total_loss,
@@ -133,4 +138,9 @@ def compute_ppo_lagrange_loss(
         'cost_v_loss': cost_v_loss,
         'entropy_loss': entropy_loss,
         'mean_cost': mean_cost,
+        'cost_value_ev': cost_value_ev,
+        'value_ev': value_ev,
+        'cost_value_mse': jnp.mean(cost_v_error * cost_v_error),
+        'value_mse': jnp.mean(v_error * v_error),
+        'cost_return_var': jnp.var(cost_vs),
     }
