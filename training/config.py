@@ -215,6 +215,26 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--vision_frame_stack", type=int, default=3, help="Number of frames to stack channel-wise")
     parser.add_argument("--vision_augment", type=bool_type, nargs="?", const=True, default=True,
                         help="DrQ-style random translation of pixel observations during SGD.")
+    parser.add_argument("--vision_independent_encoders", action="store_true",
+                        help="Use separate actor, reward-value and cost-value vision encoders even without "
+                             "privileged inputs. This is required for the encoder-matched ego baseline in "
+                             "the privileged-vision study; the default preserves the legacy shared encoder.")
+    parser.add_argument("--vision_privileged_camera", type=str, default=None,
+                        help="Name of an extra MuJoCo camera rendered for the critic(s) only. Which heads actually "
+                             "receive it is set by --vision_privilege_mode. Must differ from --vision_camera. "
+                             "Not needed (and ignored) for the 'state_oracle' mode.")
+    parser.add_argument("--vision_privilege_mode", type=str,
+                        choices=["none", "cost", "all_critics", "reward", "state_oracle"], default="none",
+                        help="Which heads see the privileged camera; the five experimental conditions are: "
+                             "'none' (baseline, single ego camera for every head); "
+                             "'cost' (only the cost critic sees the privileged camera, the actor and the reward "
+                             "critic stay ego-only \u2014 asymmetric safety information); "
+                             "'all_critics' (both critics see it, the actor stays ego-only); "
+                             "'reward' (only the reward critic sees it \u2014 control for 'cost'); "
+                             "'state_oracle' (no extra camera: the cost critic drops pixels entirely and reads the "
+                             "state vector, requiring --vision_obs_mode pixels+state). "
+                             "Any mode other than 'none' forces per-head (unshared) CNN encoders so the actor is "
+                             "provably blind to the privileged view.")
 
     # --- Video Recording ---
     parser.add_argument("--cameras", type=str, nargs="+", default=["fixedfar", "vision"], help="Camera names/ids")

@@ -22,6 +22,101 @@ from training.run_utils import (
 from crax.envs.limb_colors import colorize_env_limbs
 
 
+# Algorithms whose vision networks own a cost value head (the only ones the privileged-camera conditions can be run with)
+COST_VALUE_ALGS = {'ppo_lag', 'ppo_pid', 'focops', 'p3o', 'crpo'}
+
+
+def resolve_privilege_routing(config, alg_name):
+    """
+    Returns (cameras, routing): `cameras` is the tuple of MJ cameras to render and `routing` is dict of per-head `pixels/<camera>` key tuples + state_obs_key for state-oracle.
+    """
+    mode = config.vision_privilege_mode
+    ego_camera = config.vision_camera
+    priv_camera = config.vision_privileged_camera
+
+    if mode == 'none':
+        if not getattr(config, 'vision_independent_encoders', False):
+            return (ego_camera,), {}
+        ego_key = f'pixels/{ego_camera}'
+        return (ego_camera,), dict(
+            policy_pixel_keys=(ego_key,),
+            value_pixel_keys=(ego_key,),
+            cost_value_pixel_keys=(ego_key,),
+            share_encoder=False,
+        )
+
+    if not config.vision:
+        raise ValueError(
+            f"--vision_privilege_mode '{mode}' requires --vision: the "
+            f"privileged-camera conditions only exist for pixel observations."
+        )
+    if alg_name not in COST_VALUE_ALGS:
+        raise ValueError(
+            f"--vision_privilege_mode '{mode}' requires an algorithm with a "
+            f"cost value network (one of {sorted(COST_VALUE_ALGS)}), but the "
+            f"selected algorithm is '{alg_name}'."
+        )
+
+    if mode == 'state_oracle':
+        if config.vision_obs_mode != 'pixels+state':
+            raise ValueError(
+                "--vision_privilege_mode 'state_oracle' gives the cost critic "
+                "the state vector instead of pixels, so it requires "
+                f"--vision_obs_mode pixels+state (got "
+                f"'{config.vision_obs_mode}')."
+            )
+    else:
+        if config.vision_obs_mode != 'pixels':
+            raise ValueError(
+                f"--vision_privilege_mode '{mode}' requires "
+                "--vision_obs_mode pixels so simulator state cannot leak into "
+                "the actor or critics and confound the camera ablation."
+            )
+        if not priv_camera:
+            raise ValueError(
+                f"--vision_privilege_mode '{mode}' requires "
+                f"--vision_privileged_camera to name the extra camera to "
+                f"render for the critic(s)."
+            )
+        if priv_camera == ego_camera:
+            raise ValueError(
+                f"--vision_privileged_camera '{priv_camera}' is the same as "
+                f"--vision_camera, so the critic would gain no extra "
+                f"information; pick a different camera."
+            )
+
+    ego_key = f'pixels/{ego_camera}'
+    priv_key = f'pixels/{priv_camera}'
+
+    if mode == 'state_oracle':
+        cameras = (ego_camera,)
+        routing = dict(
+            policy_obs_key='',
+            value_obs_key='',
+            policy_pixel_keys=(ego_key,),
+            value_pixel_keys=(ego_key,),
+            cost_value_pixel_keys=(),
+            cost_value_obs_key='state',
+        )
+    else:
+        cameras = (ego_camera, priv_camera)
+        per_mode = {
+            'cost': ((ego_key,), (ego_key,), (ego_key, priv_key)),
+            'all_critics': ((ego_key,), (ego_key, priv_key), (ego_key, priv_key)),
+            'reward': ((ego_key,), (ego_key, priv_key), (ego_key,)),
+        }
+        policy_keys, value_keys, cost_value_keys = per_mode[mode]
+        routing = dict(
+            policy_pixel_keys=policy_keys,
+            value_pixel_keys=value_keys,
+            cost_value_pixel_keys=cost_value_keys,
+        )
+
+    # This is required, but can fuse those that only receive egocentric obs
+    routing['share_encoder'] = False
+    return cameras, routing
+
+
 def main():
     """Main function to run training from command line."""
     parser = build_base_parser(description='Train Safe-Brax agents from config files')
@@ -36,6 +131,10 @@ def main():
     # the user didn't explicitly pass --vision_camera
     if config.vision_camera is None:
         config.vision_camera = morphology_override(env_name, VISION_CAMERA_OVERRIDES) or 'vision'
+
+    # Resolve priviledged camera
+    privilege_mode = config.vision_privilege_mode
+    cameras, pixel_routing = resolve_privilege_routing(config, alg_name)
 
     # Setup GPU environment
     setup_gpu_environment(vision=config.vision)
@@ -59,11 +158,26 @@ def main():
                 obs_mode=config.vision_obs_mode,
                 frame_stack=config.vision_frame_stack,
             )
+            if privilege_mode != 'none':
+                # For multi-camera rendering
+                vision_kwargs['cameras'] = cameras
             print(
                 f"Vision mode: GPU rendering (MJWarp), "
                 f"camera='{config.vision_camera}', "
                 f"{config.vision_width}x{config.vision_height}"
             )
+            #Debug
+            if pixel_routing:
+                print(
+                    f"Vision mode: privilege='{privilege_mode}', "
+                    f"cameras={cameras}, per-head encoders (share_encoder=False), "
+                    f"policy={pixel_routing['policy_pixel_keys']}, "
+                    f"reward_value={pixel_routing['value_pixel_keys']}, "
+                    f"cost_value={pixel_routing['cost_value_pixel_keys']}, "
+                    f"policy_state={pixel_routing.get('policy_obs_key', '')!r}, "
+                    f"reward_state={pixel_routing.get('value_obs_key', '')!r}, "
+                    f"cost_state={pixel_routing.get('cost_value_obs_key', '')!r}"
+                )
 
         # Create environments with a difficulty level
         env_kwargs = config.env_kwargs or {}
@@ -166,10 +280,12 @@ def main():
         # Inject vision network factory + pixel-obs wrapping kwargs if vision mode is enabled
         if config.vision:
             state_obs_key = 'state' if config.vision_obs_mode == 'pixels+state' else ''
+            network_routing = dict(pixel_routing)
+            network_routing.setdefault('policy_obs_key', state_obs_key)
+            network_routing.setdefault('value_obs_key', state_obs_key)
             train_kwargs['network_factory'] = make_vision_network_factory(
                 alg_name,
-                policy_obs_key=state_obs_key,
-                value_obs_key=state_obs_key,
+                **network_routing,
             )
             train_kwargs['augment_pixels'] = config.vision_augment
             train_kwargs['vision_kwargs'] = vision_kwargs
