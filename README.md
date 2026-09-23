@@ -225,6 +225,14 @@ Planned work is tracked in [ROADMAP.md](ROADMAP.md). Contributions are welcome.
 The roadmap flags which items are self-contained enough to pick up directly. 
 For anything substantial, please open an issue first so we can avoid duplicated work.
 
+## Research Powered by CRAX
+
+Papers that have used CRAX:
+
+- Lindsay Spoor, Aske Plaat, Thomas Moerland. *Evaluation Metrics for Safe Reinforcement Learning*, 2026. [arXiv:2609.15315](https://arxiv.org/abs/2609.15315)
+
+Using CRAX in your work? Feel free to open a pull request to add your paper to this list.
+
 ## Acknowledgements
 
 CRAX builds on [Brax](https://github.com/google/brax), Google's JAX-based physics and RL library, and on [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html)
