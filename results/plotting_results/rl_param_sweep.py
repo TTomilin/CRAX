@@ -16,6 +16,9 @@ from results.common import RL_SWEEP_SPEC, results_path
 from results.plotting_results.safety_param_sweep import build_table, discover_values, load_sweep_data, plot_sweep
 from results.plotting_results.seed_variance import format_table
 
+# Every hyperparameter swept by at least one method, in the order RL_SWEEP_SPEC lists them.
+ALL_RL_HPARAMS = list(dict.fromkeys(h for hparams in RL_SWEEP_SPEC.values() for h in hparams))
+
 
 def main(args: argparse.Namespace) -> None:
     base = results_path(args.input)
@@ -26,6 +29,12 @@ def main(args: argparse.Namespace) -> None:
         if hparams is None:
             print(f"Skipping '{algo}': no Stage 1 sweep spec defined for it.")
             continue
+
+        if args.hparams is not None:
+            hparams = [h for h in hparams if h in args.hparams]
+            if not hparams:
+                print(f"Skipping '{algo}': none of the requested hyperparameters are swept for it.")
+                continue
 
         for hparam in hparams:
             values = sorted(
@@ -63,6 +72,9 @@ def build_args() -> argparse.ArgumentParser:
     p.add_argument("--algos", type=str, nargs="+", default=None,
                    choices=list(RL_SWEEP_SPEC.keys()),
                    help="Which methods to analyze (default: all methods in RL_SWEEP_SPEC)")
+    p.add_argument("--hparams", type=str, nargs="+", default=None,
+                   choices=ALL_RL_HPARAMS,
+                   help="Which hyperparameter sweeps to analyze (default: all sweeps of each method)")
     return p
 
 
