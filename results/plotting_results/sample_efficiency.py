@@ -15,10 +15,14 @@ scalars):
    threshold, i.e. integral of max(cost - threshold, 0) over steps, also
    normalized by steps spanned. Lower is better. The raw value is in
    task-specific cost units, so it is not comparable across tasks. To make it
-   comparable, it is also normalized by the same statistic computed for an
-   unconstrained reference algorithm (`--ref_algo`, default "ppo") on the same
-   task: CumViol_norm = CumViol / CumViol_ref. Controlled by `--viol_norm`
-   ("reference" by default, or "none" to keep only the raw value).
+   comparable, it is normalized according to `--viol_norm`:
+   - "threshold" (default): CumViol_norm = CumViol / threshold, i.e. mean
+     overshoot as a fraction of the cost budget.
+   - "reference": CumViol_norm = CumViol / CumViol_ref, relative to an
+     unconstrained reference algorithm (`--ref_algo`, default "ppo") on the
+     same task. Note this ranks tasks by how unsafe the reference is: a task
+     where the reference barely exceeds the threshold inflates every ratio.
+   - "none": keep only the raw value.
 
 Outputs a table (printed + saved as CSV) and a heatmap figure (algorithms x
 environments, one panel for reward efficiency and one for cumulative
@@ -128,6 +132,7 @@ def load_efficiency(
 
         rv = ref_viol.get(env, float("nan"))
         use_ref_norm = viol_norm == "reference" and np.isfinite(rv) and rv > 0
+        use_thr_norm = viol_norm == "threshold" and threshold > 0
         if viol_norm == "reference" and not use_ref_norm:
             print(f"Warning: no usable reference violation for env={env!r} "
                   f"(ref_algo={ref_algo!r}); leaving CumViol unnormalized for this env.")
@@ -137,7 +142,12 @@ def load_efficiency(
             entries: Dict[int, Tuple[float, float, float]] = {}
             for s, (r, v, _) in per_seed.items():
                 r_out = r / max_final if max_final and max_final > 0 else float("nan")
-                v_norm = v / rv if use_ref_norm else v
+                if use_ref_norm:
+                    v_norm = v / rv
+                elif use_thr_norm:
+                    v_norm = v / threshold
+                else:
+                    v_norm = v
                 entries[s] = (r_out, v, v_norm)
             out[(env, algo)] = entries
     return out
@@ -217,7 +227,7 @@ def plot_efficiency_heatmap(
             if not per_seed:
                 continue
             r_vals = np.array([v[0] for v in per_seed.values()])
-            v_vals = np.array([(v[2] if viol_norm == "reference" else v[1]) for v in per_seed.values()])
+            v_vals = np.array([(v[1] if viol_norm == "none" else v[2]) for v in per_seed.values()])
             r_mean, _, r_ci = ci95(r_vals, method=ci_method)
             v_mean, _, v_ci = ci95(v_vals, method=ci_method)
             reward_mean[i, j] = r_mean
@@ -319,8 +329,9 @@ def build_args() -> argparse.ArgumentParser:
     )
     p.add_argument("--ref_algo", type=str, default="ppo",
                    help="Unconstrained reference algo used to normalize CumViol across tasks.")
-    p.add_argument("--viol_norm", type=str, default="reference", choices=["none", "reference"],
-                   help="'reference' divides CumViol by the ref_algo's mean CumViol on the same env; "
+    p.add_argument("--viol_norm", type=str, default="threshold", choices=["none", "threshold", "reference"],
+                   help="'threshold' divides CumViol by the safety threshold (overshoot as a fraction of budget); "
+                        "'reference' divides by the ref_algo's mean CumViol on the same env; "
                         "'none' keeps only the raw (task-scale) value.")
     p.add_argument("--annotate_ci", action="store_true", default=False,
                    help="Add a second ±CI line under each heatmap cell's mean.")
