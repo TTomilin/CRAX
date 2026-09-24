@@ -183,6 +183,8 @@ def plot_curves(store: RunStore, args: argparse.Namespace, algo: str) -> None:
         for metric_i, metric in enumerate(metrics):
             ax = axs[metric_i][env_i]
 
+            non_negative = True
+
             for obs_mode in obs_modes:
                 runs = store.get((env, algo, obs_mode, metric), [])
                 if not runs:
@@ -190,6 +192,8 @@ def plot_curves(store: RunStore, args: argparse.Namespace, algo: str) -> None:
                 steps, vals = align_and_stack(runs)
                 if vals.size == 0:
                     continue
+                mode_non_negative = float(vals.min()) >= 0.0
+                non_negative &= mode_non_negative
 
                 x = steps.astype(float)
                 mean = vals.mean(axis=0)
@@ -198,11 +202,18 @@ def plot_curves(store: RunStore, args: argparse.Namespace, algo: str) -> None:
                     mean = moving_average(mean, args.smoothing_window)
                     ci = moving_average(ci, args.smoothing_window)
 
+                lower = mean - ci
+                if mode_non_negative:
+                    lower = np.maximum(lower, 0.0)
+
                 line, = ax.plot(x, mean, label=obs_mode,
                                 color=OBS_MODE_COLORS.get(obs_mode))
-                ax.fill_between(x, mean - ci, mean + ci, alpha=0.25,
+                ax.fill_between(x, lower, mean + ci, alpha=0.25,
                                 color=line.get_color())
                 handles.setdefault(obs_mode, line)
+
+            if non_negative:
+                ax.set_ylim(bottom=0.0)
 
             # Only the bottom row carries the x-axis label. The columns share it.
             if metric_i == len(metrics) - 1:
@@ -232,6 +243,17 @@ def _final_value(runs: List[pd.DataFrame], last_k: int) -> Optional[Tuple[float,
     return float(per_seed.mean()), float(ci), int(per_seed.size)
 
 
+def _clipped_yerr(heights: List[float], errors: List[float]) -> np.ndarray:
+    """Asymmetric yerr whose lower whisker stops at zero.
+
+    Reward and cost cannot be negative, so the lower half of a symmetric CI on a
+    small mean would point at values no run ever reached.
+    """
+    lower = [min(err, height) if height >= 0 else err
+             for height, err in zip(heights, errors)]
+    return np.array([lower, errors])
+
+
 def plot_bars(store: RunStore, args: argparse.Namespace, algo: str) -> None:
     """Final-performance bars, one bar per observation modality."""
     set_mpl_style()
@@ -258,10 +280,12 @@ def plot_bars(store: RunStore, args: argparse.Namespace, algo: str) -> None:
                 drawn.append(obs_mode)
 
             if positions:
-                bars = ax.bar(positions, heights, yerr=errors, capsize=4,
-                              color=colors, edgecolor="black", linewidth=0.6)
+                bars = ax.bar(positions, heights, yerr=_clipped_yerr(heights, errors),
+                              capsize=4, color=colors, edgecolor="black", linewidth=0.6)
                 for obs_mode, bar in zip(drawn, bars):
                     handles.setdefault(obs_mode, bar)
+                if min(heights) >= 0.0:
+                    ax.set_ylim(bottom=0.0)
 
             ax.set_xticks(range(len(obs_modes)))
             # Bars are labelled by the legend; the tick marks only anchor them.
@@ -302,6 +326,7 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
         for metric_i, metric in enumerate(metrics):
             ax = axs[metric_i][env_i]
 
+            panel_min = 0.0
             for algo_i, algo in enumerate(algos):
                 positions, heights, errors = [], [], []
                 for group_i, obs_mode in enumerate(obs_modes):
@@ -318,10 +343,15 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
 
                 if not positions:
                     continue
-                bars = ax.bar(positions, heights, width=bar_w, yerr=errors, capsize=3,
+                panel_min = min(panel_min, min(heights))
+                bars = ax.bar(positions, heights, width=bar_w,
+                              yerr=_clipped_yerr(heights, errors), capsize=3,
                               color=BASELINES_COLORS.get(algo),
                               edgecolor="black", linewidth=0.6)
                 handles.setdefault(algo, bars[0])
+
+            if panel_min >= 0.0:
+                ax.set_ylim(bottom=0.0)
 
             ax.set_xticks(range(len(obs_modes)))
             ax.set_xticklabels([SHORT_MODE_LABELS.get(om, TRANSLATIONS.get(om, om))
