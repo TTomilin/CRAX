@@ -310,7 +310,7 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
     envs, metrics = args.envs, args.metrics
     # A single row of panels leaves no gap under the axes for the figure-level
     # legend, which would then land on top of the bars. Reserve the band here.
-    fig, axs = _metric_grid(args, bottom=0.30 if len(metrics) == 1 else 0.12)
+    fig, axs = _metric_grid(args, bottom=0.30 if len(metrics) == 1 else 0.15)
 
     handles: Dict[str, plt.Line2D] = {}
     obs_modes = [om for om in args.obs_modes if _present_algos(store, args, om)]
@@ -395,10 +395,10 @@ def build_args() -> argparse.ArgumentParser:
         omit=("ci_method", "last_frac", "max_cols"),
         stats=True,
         out_name="obs_comparison",
-        envs=["safe_goal_point", "safe_push_point", "safe_circle_point", "safe_reacher"],
+        envs=["safe_goal_point", "safe_push_point", "safe_circle_point"],
         algos=["ppo", "ppo_lag", "p3o", "focops"],
-        panel_w=6.0,
-        panel_h=3.0,
+        panel_w=4.0,
+        panel_h=2.5,
     )
     p.add_argument("--obs_modes", type=str, nargs="+", default=list(DEFAULT_OBS_MODES),
                    help="Observation modes to compare. 'vector' is the state-observation "
