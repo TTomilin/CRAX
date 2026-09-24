@@ -11,7 +11,7 @@ Able to plot both curves and bars, sharing the same loader and selection flags:
     python -m results.plotting_results.obs_comparison --bars --envs safe_goal_point --algos ppo_lag
 
     # all modes side by side, algos grouped within each
-    python -m results.plotting_results.obs_comparison --grouped --max_cols 3 \
+    python -m results.plotting_results.obs_comparison --grouped \
         --envs safe_goal_point safe_push_point safe_circle_point
 
 One figure per algorithm, since obs mode is already the line/bar dimension and
@@ -47,7 +47,6 @@ from results.common import (
     get_series,
     legend_ncol,
     moving_average,
-    nice_grid,
     obs_mode_dir,
     results_path,
     set_mpl_style,
@@ -125,6 +124,34 @@ def _present_algos(store: RunStore, args: argparse.Namespace, obs_mode: str) -> 
     ]
 
 
+def _metric_grid(args: argparse.Namespace, bottom: Optional[float] = None):
+    """One panel per (metric, env): metrics down the rows, envs across the columns.
+
+    Reward on top and cost below.
+    """
+    n_rows, n_cols = len(args.metrics), len(args.envs)
+    fig, axs = plt.subplots(n_rows, n_cols,
+                            figsize=(args.panel_w * n_cols, args.panel_h * n_rows),
+                            squeeze=False)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.92,
+                        bottom=0.12 if bottom is None else bottom,
+                        wspace=0.25, hspace=0.30)
+    return fig, axs
+
+
+def _decorate(ax, args: argparse.Namespace, env: str, metric: str,
+              row: int, col: int, handles: Dict[str, plt.Line2D]) -> None:
+    """Shared per-panel labelling: env titles on top, metric names on the left."""
+    if row == 0:
+        ax.set_title(TRANSLATIONS.get(env, env), pad=8)
+    if col == 0:
+        ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
+
+    if metric == "cost" and not args.no_threshold:
+        thr = ax.axhline(args.threshold, linestyle="--", color="red", linewidth=1.8)
+        handles.setdefault("Threshold", thr)
+
+
 def _finalize(fig, handles: Dict[str, plt.Line2D], n_entries: int,
               args: argparse.Namespace, suffix: str, kind: str) -> None:
     """Attach the shared bottom legend and write the figure out."""
@@ -147,24 +174,14 @@ def plot_curves(store: RunStore, args: argparse.Namespace, algo: str) -> None:
     """Reward/cost training curves, one line per observation modality."""
     set_mpl_style()
     envs, metrics = args.envs, args.metrics
-    m = len(metrics)
-    nrows, ncols_env = nice_grid(len(envs), max_cols=args.max_cols)
-
-    fig, axs = plt.subplots(nrows, ncols_env * m,
-                            figsize=(args.panel_w * ncols_env * m, args.panel_h * nrows),
-                            squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12,
-                        wspace=0.35, hspace=0.55)
-
-    def get_ax(env_i: int, metric_i: int):
-        return axs[env_i // ncols_env, (env_i % ncols_env) * m + metric_i]
+    fig, axs = _metric_grid(args)
 
     handles: Dict[str, plt.Line2D] = {}
     obs_modes = _present_obs_modes(store, args, algo)
 
     for env_i, env in enumerate(envs):
         for metric_i, metric in enumerate(metrics):
-            ax = get_ax(env_i, metric_i)
+            ax = axs[metric_i][env_i]
 
             for obs_mode in obs_modes:
                 runs = store.get((env, algo, obs_mode, metric), [])
@@ -187,27 +204,17 @@ def plot_curves(store: RunStore, args: argparse.Namespace, algo: str) -> None:
                                 color=line.get_color())
                 handles.setdefault(obs_mode, line)
 
-            ax.set_xlabel("Steps")
-            ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
+            # Only the bottom row carries the x-axis label. The columns share it.
+            if metric_i == len(metrics) - 1:
+                ax.set_xlabel("Steps")
             if ax.get_ylim()[1] >= 1000:
                 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
             ax.yaxis.get_major_formatter().set_useOffset(False)
             ax.set_xlim(0.0, args.x_max)
 
-            if metric == "cost" and not args.no_threshold:
-                thr = ax.axhline(args.threshold, linestyle="--", color="red", linewidth=1.8)
-                handles.setdefault("Threshold", thr)
+            _decorate(ax, args, env, metric, metric_i, env_i, handles)
             if args.grid:
                 ax.grid(True, linestyle="--", linewidth=0.9, alpha=0.45)
-
-        left = get_ax(env_i, 0).get_position()
-        right = get_ax(env_i, m - 1).get_position()
-        fig.text(0.5 * (left.x0 + right.x1), max(left.y1, right.y1) + 0.01,
-                 TRANSLATIONS.get(env, env), ha="center", va="bottom", fontsize=14)
-
-    for env_i in range(len(envs), nrows * ncols_env):
-        for metric_i in range(m):
-            get_ax(env_i, metric_i).axis("off")
 
     _finalize(fig, handles, len(obs_modes), args, algo, "curves")
 
@@ -229,24 +236,14 @@ def plot_bars(store: RunStore, args: argparse.Namespace, algo: str) -> None:
     """Final-performance bars, one bar per observation modality."""
     set_mpl_style()
     envs, metrics = args.envs, args.metrics
-    m = len(metrics)
-    nrows, ncols_env = nice_grid(len(envs), max_cols=args.max_cols)
-
-    fig, axs = plt.subplots(nrows, ncols_env * m,
-                            figsize=(args.panel_w * ncols_env * m, args.panel_h * nrows),
-                            squeeze=False)
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92, bottom=0.12,
-                        wspace=0.35, hspace=0.55)
-
-    def get_ax(env_i: int, metric_i: int):
-        return axs[env_i // ncols_env, (env_i % ncols_env) * m + metric_i]
+    fig, axs = _metric_grid(args)
 
     handles: Dict[str, plt.Line2D] = {}
     obs_modes = _present_obs_modes(store, args, algo)
 
     for env_i, env in enumerate(envs):
         for metric_i, metric in enumerate(metrics):
-            ax = get_ax(env_i, metric_i)
+            ax = axs[metric_i][env_i]
 
             positions, heights, errors, colors, drawn = [], [], [], [], []
             for i, obs_mode in enumerate(obs_modes):
@@ -269,23 +266,11 @@ def plot_bars(store: RunStore, args: argparse.Namespace, algo: str) -> None:
             ax.set_xticks(range(len(obs_modes)))
             # Bars are labelled by the legend; the tick marks only anchor them.
             ax.set_xticklabels([""] * len(obs_modes))
-            ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
             ax.axhline(0.0, color="black", linewidth=0.8)
 
-            if metric == "cost" and not args.no_threshold:
-                thr = ax.axhline(args.threshold, linestyle="--", color="red", linewidth=1.8)
-                handles.setdefault("Threshold", thr)
+            _decorate(ax, args, env, metric, metric_i, env_i, handles)
             if args.grid:
                 ax.grid(True, axis="y", linestyle="--", linewidth=0.9, alpha=0.45)
-
-        left = get_ax(env_i, 0).get_position()
-        right = get_ax(env_i, m - 1).get_position()
-        fig.text(0.5 * (left.x0 + right.x1), max(left.y1, right.y1) + 0.01,
-                 TRANSLATIONS.get(env, env), ha="center", va="bottom", fontsize=14)
-
-    for env_i in range(len(envs), nrows * ncols_env):
-        for metric_i in range(m):
-            get_ax(env_i, metric_i).axis("off")
 
     _finalize(fig, handles, len(obs_modes), args, algo, "bars")
 
@@ -299,20 +284,9 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
     """
     set_mpl_style()
     envs, metrics = args.envs, args.metrics
-    m = len(metrics)
-    nrows, ncols_env = nice_grid(len(envs), max_cols=args.max_cols)
-
-    fig, axs = plt.subplots(nrows, ncols_env * m,
-                            figsize=(args.panel_w * ncols_env * m, args.panel_h * nrows),
-                            squeeze=False)
     # A single row of panels leaves no gap under the axes for the figure-level
     # legend, which would then land on top of the bars. Reserve the band here.
-    fig.subplots_adjust(left=0.06, right=0.98, top=0.92,
-                        bottom=0.30 if nrows == 1 else 0.12,
-                        wspace=0.35, hspace=0.55)
-
-    def get_ax(env_i: int, metric_i: int):
-        return axs[env_i // ncols_env, (env_i % ncols_env) * m + metric_i]
+    fig, axs = _metric_grid(args, bottom=0.30 if len(metrics) == 1 else 0.12)
 
     handles: Dict[str, plt.Line2D] = {}
     obs_modes = [om for om in args.obs_modes if _present_algos(store, args, om)]
@@ -326,7 +300,7 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
 
     for env_i, env in enumerate(envs):
         for metric_i, metric in enumerate(metrics):
-            ax = get_ax(env_i, metric_i)
+            ax = axs[metric_i][env_i]
 
             for algo_i, algo in enumerate(algos):
                 positions, heights, errors = [], [], []
@@ -352,23 +326,11 @@ def plot_grouped_bars(store: RunStore, args: argparse.Namespace) -> None:
             ax.set_xticks(range(len(obs_modes)))
             ax.set_xticklabels([SHORT_MODE_LABELS.get(om, TRANSLATIONS.get(om, om))
                                 for om in obs_modes])
-            ax.set_ylabel(TRANSLATIONS.get(metric, metric.capitalize()))
             ax.axhline(0.0, color="black", linewidth=0.8)
 
-            if metric == "cost" and not args.no_threshold:
-                thr = ax.axhline(args.threshold, linestyle="--", color="red", linewidth=1.8)
-                handles.setdefault("Threshold", thr)
+            _decorate(ax, args, env, metric, metric_i, env_i, handles)
             if args.grid:
                 ax.grid(True, axis="y", linestyle="--", linewidth=0.9, alpha=0.45)
-
-        left = get_ax(env_i, 0).get_position()
-        right = get_ax(env_i, m - 1).get_position()
-        fig.text(0.5 * (left.x0 + right.x1), max(left.y1, right.y1) + 0.01,
-                 TRANSLATIONS.get(env, env), ha="center", va="bottom", fontsize=14)
-
-    for env_i in range(len(envs), nrows * ncols_env):
-        for metric_i in range(m):
-            get_ax(env_i, metric_i).axis("off")
 
     _finalize(fig, handles, len(algos), args, "grouped", "bars")
 
@@ -400,11 +362,12 @@ def build_args() -> argparse.ArgumentParser:
     p = cli.plot_parser(
         "Compare vector vs. pixel observations (per camera) for CRAX runs.",
         level_arg="single",
-        omit=("ci_method", "last_frac"),
+        omit=("ci_method", "last_frac", "max_cols"),
         stats=True,
         out_name="obs_comparison",
         envs=["safe_goal_point", "safe_push_point", "safe_circle_point", "safe_reacher"],
         algos=["ppo", "ppo_lag", "p3o", "focops"],
+        panel_w=6.0,
         panel_h=3.0,
     )
     p.add_argument("--obs_modes", type=str, nargs="+", default=list(DEFAULT_OBS_MODES),
