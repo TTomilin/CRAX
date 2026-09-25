@@ -34,12 +34,14 @@ DEFAULT_COST_BUDGET = 25.0
 DEFAULT_LAMBDA_RUNAWAY = 200.0
 
 _BANNER = re.compile(r'condition=(\w+)\s+seed=(\d+)')
+_BANNER_ENV = re.compile(r'\benv=(\w+)')
+LEGACY_ENV_NAME = 'safe_goal_point'
 _STEP = re.compile(r'^Step (\d+):\s*$')
 _NUMBER = r'[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][-+]?\d+)?'
 _KV = re.compile(rf'^\s+([\w/]+):\s+({_NUMBER}|nan|[-+]?inf)\s*$')
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Multi-seed privileged-vision analysis")
     p.add_argument("log_dirs", type=str, nargs='+',
                    help="Directories containing vision_privilege_*.out files")
@@ -64,11 +66,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--paper_dir", type=str, default="paper/figures",
                    help="Directory in paper to copy generated figures to (or '' to disable)")
     p.add_argument("--no_plot", action='store_true')
-    return p.parse_args()
+    p.add_argument("--env_name", type=str, default=None,
+                   help="Only analyse runs of this environment (e.g. safe_push_point). "
+                        "Required when the log directories mix several environments.")
+    p.add_argument("--figure_prefix", type=str, default="vision_privilege",
+                   help="File-name stem prefix of the generated figures")
+    p.add_argument("--log_glob", type=str, default="vision_privilege_*.out",
+                   help="Glob used to find the Slurm stdout logs in each log dir")
+    return p.parse_args(argv)
 
 
 def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
     """Smooth data with a simple moving average that handles boundaries correctly."""
+    window_size = min(window_size, len(data))
     if window_size <= 1:
         return data
     data_sum = np.convolve(data, np.ones(window_size), 'same')
@@ -77,8 +87,9 @@ def moving_average(data: np.ndarray, window_size: int) -> np.ndarray:
 
 
 def parse_log(path: Path) -> Optional[Dict]:
-    """-> {'condition','seed','path','recs':[{'step':int, metric:float}]}"""
+    """-> {'condition','seed','env','path','recs':[{'step':int, metric:float}]}"""
     condition = seed = None
+    env_name = LEGACY_ENV_NAME
     recs: List[Dict[str, float]] = []
     current: Optional[Dict[str, float]] = None
     with path.open(errors='replace') as fh:
@@ -89,6 +100,8 @@ def parse_log(path: Path) -> Optional[Dict]:
                     recs = []
                     current = None
                 condition, seed = m.group(1), int(m.group(2))
+                env_match = _BANNER_ENV.search(line)
+                env_name = env_match.group(1) if env_match else LEGACY_ENV_NAME
                 continue
             m = _STEP.match(line)
             if m:
@@ -113,7 +126,8 @@ def parse_log(path: Path) -> Optional[Dict]:
             record['kind'] = 'interval'
         else:
             record['kind'] = 'epoch_summary'
-    return {'condition': condition, 'seed': seed, 'path': str(path), 'recs': recs}
+    return {'condition': condition, 'seed': seed, 'env': env_name,
+            'path': str(path), 'recs': recs}
 
 
 def series(recs: Sequence[Dict[str, float]], key: str,
@@ -142,7 +156,8 @@ def _first_crossing(steps: np.ndarray, values: np.ndarray,
 
 def summarise_run(run: Dict, args: argparse.Namespace) -> Dict:
     recs = run['recs']
-    out = {'condition': run['condition'], 'seed': run['seed'], 'path': run['path']}
+    out = {'condition': run['condition'], 'seed': run['seed'],
+           'env': run.get('env', LEGACY_ENV_NAME), 'path': run['path']}
     for name in ('reward', 'cost'):
         _, training_values = series(
             recs, f'episodic/{name}', kind='interval',
@@ -226,8 +241,8 @@ def markdown_table(agg: Dict[str, Dict], args: argparse.Namespace) -> str:
         rev = '--' if a['value_ev'] is None else f"{a['value_ev']:.3f}"
         lines.append(
             f"| {CONDITION_LABELS[condition]} | {a['n_seeds']} "
-            f"| {a['reward_mean']:.2f} $\pm$ {a['reward_std']:.2f} "
-            f"| {a['cost_mean']:.1f} $\pm$ {a['cost_std']:.1f} | {a['cost_worst']:.1f} "
+            f"| {a['reward_mean']:.2f} $\\pm$ {a['reward_std']:.2f} "
+            f"| {a['cost_mean']:.1f} $\\pm$ {a['cost_std']:.1f} | {a['cost_worst']:.1f} "
             f"| {a['safe_pct']:.0f}% | {a['n_runaway']}/{a['n_seeds']} "
             f"| {a['lambda_max']:.0f} | {ev} | {rev} |"
         )
@@ -263,12 +278,13 @@ def plot(runs: List[Dict], out_dir: Path,
         print(f"plotting skipped ({exc})")
         return []
 
+    prefix = getattr(args, 'figure_prefix', 'vision_privilege')
     panel_groups = [
-      ('vision_privilege_learning_curves', [
+      (f'{prefix}_learning_curves', [
         ('episodic/reward', 'Episodic return', None, None, False),
         ('episodic/cost', 'Episodic cost', args.cost_budget, None, False),
       ]),
-      ('vision_privilege_diagnostics', [
+      (f'{prefix}_diagnostics', [
         ('training/lambda_lagr', 'Lagrange multiplier', None, None, True),
         ('training/cost_value_ev', 'Cost-critic explained variance', 0.0, (-0.3, 1.05), False),
         ('training/value_ev', 'Reward-critic explained variance', 0.0, (-0.3, 1.05), False),
@@ -353,30 +369,40 @@ def plot(runs: List[Dict], out_dir: Path,
     return outputs
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = parse_args(argv)
     runs = []
     for d in args.log_dirs:
         directory = Path(d)
         if not directory.exists():
             print(f"warning: {directory} does not exist", file=sys.stderr)
             continue
-        for path in sorted(directory.glob('vision_privilege_*.out')):
+        for path in sorted(directory.glob(args.log_glob)):
             parsed = parse_log(path)
             if parsed is None:
                 print(f"warning: no usable records in {path.name}", file=sys.stderr)
                 continue
             runs.append(parsed)
     if not runs:
-        raise SystemExit('No parsable vision_privilege_*.out logs found.')
+        raise SystemExit(f'No parsable {args.log_glob} logs found.')
+
+    envs_found = sorted({run['env'] for run in runs})
+    if args.env_name is not None:
+        runs = [run for run in runs if run['env'] == args.env_name]
+        if not runs:
+            raise SystemExit(f"No runs of env '{args.env_name}' found "
+                             f"(available: {', '.join(envs_found)}).")
+    elif len(envs_found) > 1:
+        raise SystemExit("Logs mix several environments "
+                         f"({', '.join(envs_found)}); pass --env_name.")
 
     # Log directories are ordered oldest to newest.
     unique_runs = {}
     for run in runs:
-        key = (run['condition'], run['seed'])
+        key = (run['env'], run['condition'], run['seed'])
         if key in unique_runs:
             print(
-                f"warning: replacing duplicate {key[0]} seed {key[1]}: "
+                f"warning: replacing duplicate {key[0]} {key[1]} seed {key[2]}: "
                 f"{unique_runs[key]['path']} -> {run['path']}",
                 file=sys.stderr,
             )
@@ -409,7 +435,7 @@ def main() -> None:
     out_dir = Path(args.out) if args.out else Path('results/vision_privilege/pooled')
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / 'table.json').write_text(json.dumps(
-        {'conditions': agg, 'runs': summaries,
+        {'env_name': runs[0]['env'], 'conditions': agg, 'runs': summaries,
          'cost_budget': args.cost_budget,
          'lambda_runaway_threshold': args.lambda_runaway,
          'summary_step_window': [args.summary_start_step,
@@ -421,8 +447,9 @@ def main() -> None:
             print(f"\nWrote {fig_path}")
         paper_dir = Path(args.paper_dir) if args.paper_dir else None
         if paper_dir and paper_dir.exists():
-            for fig_name in ('vision_privilege_learning_curves.pdf', 'vision_privilege_diagnostics.pdf',
-                             'vision_privilege_learning_curves.png', 'vision_privilege_diagnostics.png'):
+            prefix = args.figure_prefix
+            for fig_name in (f'{prefix}_learning_curves.pdf', f'{prefix}_diagnostics.pdf',
+                             f'{prefix}_learning_curves.png', f'{prefix}_diagnostics.png'):
                 src = out_dir / fig_name
                 if src.exists():
                     shutil.copy2(src, paper_dir / fig_name)
