@@ -165,22 +165,73 @@ class CNN(linen.Module):
 VISION_LATENT_KEY = '_vision_latent'
 
 
+def _pixel_batch_shape(data: dict, state_obs_key: str = '') -> Tuple[int, ...]:
+  """Leading (batch) dims of an observation dict, ignoring feature axes.
+
+  Pixel entries are `batch_shape + (H, W, C)`, every other entry is assumed
+  to be `batch_shape + (features,)`. Used to size the zero-width latent when
+  a head routes no cameras at all.
+  """
+  if state_obs_key and state_obs_key in data:
+    return data[state_obs_key].shape[:-1]
+  for key, value in data.items():
+    return value.shape[:-3] if key.startswith('pixels/') else value.shape[:-1]
+  raise ValueError(
+      'Cannot derive a batch shape from an empty observation dict.'
+  )
+
+
+def _select_pixel_keys(
+    data: dict, pixel_keys: Optional[Sequence[str]]
+) -> Tuple[str, ...]:
+  """Resolves which pixel entries of `data` an encoder should consume.
+
+  `None` means every `pixels/*` key, taken in `sorted()` order so that the
+  parameter layout never depends on dict insertion order. An explicit
+  sequence is used verbatim, in the given order.
+  """
+  if not isinstance(data, Mapping):
+    raise TypeError(
+        'VisionEncoder expects a dict observation with pixels/* entries, got '
+        f'{type(data).__name__}; the env is probably not pixel-wrapped.'
+    )
+  if pixel_keys is None:
+    return tuple(sorted(k for k in data if k.startswith('pixels/')))
+  missing = [k for k in pixel_keys if k not in data]
+  if missing:
+    raise KeyError(
+        f'VisionEncoder was routed pixel keys {tuple(pixel_keys)} but '
+        f'{missing} are absent from the observation; available keys are '
+        f'{tuple(sorted(data))}.'
+    )
+  return tuple(pixel_keys)
+
+
 class VisionEncoder(linen.Module):
   """NatureCNN backbone shared by the policy/value(/cost-value) heads.
 
   The CNN architecture originates from the paper:
   "Human-level control through deep reinforcement learning",
   Nature 518, no. 7540 (2015): 529-533
+
+  `pixel_keys` routes cameras explicitly: `None` consumes every `pixels/*`
+  entry (in sorted order), a tuple consumes exactly those entries in that
+  order, and an empty tuple builds no CNN at all and returns a zero-width
+  latent — which is how a state-only critic is expressed.
   """
 
   normalise_channels: bool = False
+  pixel_keys: Optional[Tuple[str, ...]] = None
+  state_obs_key: str = ''
 
   @linen.compact
   def __call__(self, data: dict) -> jnp.ndarray:
+    keys = _select_pixel_keys(data, self.pixel_keys)
+    if not keys:
+      batch_shape = _pixel_batch_shape(data, self.state_obs_key)
+      return jnp.zeros(batch_shape + (0,))
     pixels_hidden = {
-        k: v.astype(jnp.float32) / 255.0
-        for k, v in data.items()
-        if k.startswith('pixels/')
+        k: data[k].astype(jnp.float32) / 255.0 for k in keys
     }
     if self.normalise_channels:
       # Calculates shared statistics over an entire 2D image.
@@ -207,7 +258,7 @@ class VisionEncoder(linen.Module):
         activation=linen.relu,
         use_bias=False,
     )
-    cnn_outs = [natureCNN()(pixels_hidden[key]) for key in pixels_hidden]
+    cnn_outs = [natureCNN()(pixels_hidden[key]) for key in keys]
     flat_outs = [
         jnp.reshape(cnn_out, cnn_out.shape[:-3] + (-1,)) for cnn_out in cnn_outs
     ]
@@ -232,10 +283,15 @@ class VisionMLP(linen.Module):
   normalise_channels: bool = False
   state_obs_key: str = ''
   policy_head: bool = True  # = False is useful for frozen encoders.
+  pixel_keys: Optional[Tuple[str, ...]] = None
 
   @linen.compact
   def __call__(self, data: dict):
-    latent = VisionEncoder(normalise_channels=self.normalise_channels)(data)
+    latent = VisionEncoder(
+        normalise_channels=self.normalise_channels,
+        pixel_keys=self.pixel_keys,
+        state_obs_key=self.state_obs_key,
+    )(data)
     if not self.policy_head:
       return latent
     if self.state_obs_key:
@@ -472,8 +528,14 @@ def make_policy_network_vision(
     layer_norm: bool = False,
     state_obs_key: str = '',
     normalise_channels: bool = False,
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
-  """Creates a policy network for vision inputs."""
+  """Creates a policy network for vision inputs.
+
+  `pixel_keys` routes cameras: None = every `pixels/*` key (sorted), an
+  explicit sequence = exactly those keys, `()` = no cameras at all (a
+  state-only network, which requires a `state_obs_key`).
+  """
   module = VisionMLP(
       layer_sizes=list(hidden_layer_sizes) + [output_size],
       activation=activation,
@@ -481,6 +543,7 @@ def make_policy_network_vision(
       layer_norm=layer_norm,
       normalise_channels=normalise_channels,
       state_obs_key=state_obs_key,
+      pixel_keys=None if pixel_keys is None else tuple(pixel_keys),
   )
 
   def apply(processor_params, policy_params, obs):
@@ -492,7 +555,8 @@ def make_policy_network_vision(
     return module.apply(policy_params, obs)
 
   dummy_obs = {
-      key: jnp.zeros((1,) + shape) for key, shape in observation_size.items()
+      key: jnp.zeros((1,) + tuple(shape))
+      for key, shape in observation_size.items()
   }
   return FeedForwardNetwork(
       init=lambda key: module.init(key, dummy_obs), apply=apply
@@ -507,14 +571,19 @@ def make_value_network_vision(
     kernel_init: Initializer = jax.nn.initializers.lecun_uniform(),
     state_obs_key: str = '',
     normalise_channels: bool = False,
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
-  """Creates a value network for vision inputs."""
+  """Creates a value network for vision inputs.
+
+  See `make_policy_network_vision` for the `pixel_keys` semantics.
+  """
   value_module = VisionMLP(
       layer_sizes=list(hidden_layer_sizes) + [1],
       activation=activation,
       kernel_init=kernel_init,
       normalise_channels=normalise_channels,
       state_obs_key=state_obs_key,
+      pixel_keys=None if pixel_keys is None else tuple(pixel_keys),
   )
 
   def apply(processor_params, policy_params, obs):
@@ -526,7 +595,8 @@ def make_value_network_vision(
     return jnp.squeeze(value_module.apply(policy_params, obs), axis=-1)
 
   dummy_obs = {
-      key: jnp.zeros((1,) + shape) for key, shape in observation_size.items()
+      key: jnp.zeros((1,) + tuple(shape))
+      for key, shape in observation_size.items()
   }
   return FeedForwardNetwork(
       init=lambda key: value_module.init(key, dummy_obs), apply=apply
@@ -549,10 +619,15 @@ class VisionQMLP(linen.Module):
   layer_norm: bool = False
   normalise_channels: bool = False
   state_obs_key: str = ''
+  pixel_keys: Optional[Tuple[str, ...]] = None
 
   @linen.compact
   def __call__(self, data: dict, actions: jnp.ndarray):
-    latent = VisionEncoder(normalise_channels=self.normalise_channels)(data)
+    latent = VisionEncoder(
+        normalise_channels=self.normalise_channels,
+        pixel_keys=self.pixel_keys,
+        state_obs_key=self.state_obs_key,
+    )(data)
     if self.state_obs_key:
       latent = jnp.concatenate([latent, data[self.state_obs_key]], axis=-1)
     hidden = jnp.concatenate([latent, actions], axis=-1)
@@ -578,6 +653,7 @@ def make_q_network_vision(
     layer_norm: bool = False,
     state_obs_key: str = '',
     normalise_channels: bool = False,
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
   """Creates a Q-network (or cost-Q-network) for vision inputs.
 
@@ -585,6 +661,8 @@ def make_q_network_vision(
   than a flat state vector: a CNN encoder replaces the raw-obs concat, and
   (optionally) a `state_obs_key` slice is normalized via running stats and
   concatenated in, exactly as the vision policy/value heads do.
+
+  See `make_policy_network_vision` for the `pixel_keys` semantics.
   """
   module = VisionQMLP(
       hidden_layer_sizes=list(hidden_layer_sizes),
@@ -593,6 +671,7 @@ def make_q_network_vision(
       layer_norm=layer_norm,
       normalise_channels=normalise_channels,
       state_obs_key=state_obs_key,
+      pixel_keys=None if pixel_keys is None else tuple(pixel_keys),
   )
 
   def apply(processor_params, q_params, obs, actions):
@@ -604,7 +683,8 @@ def make_q_network_vision(
     return module.apply(q_params, obs, actions)
 
   dummy_obs = {
-      key: jnp.zeros((1,) + shape) for key, shape in observation_size.items()
+      key: jnp.zeros((1,) + tuple(shape))
+      for key, shape in observation_size.items()
   }
   dummy_action = jnp.zeros((1, action_size))
   return FeedForwardNetwork(
@@ -615,6 +695,7 @@ def make_q_network_vision(
 def make_vision_encoder_network(
     observation_size: Mapping[str, Tuple[int, ...]],
     normalise_channels: bool = False,
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
   """Creates a shared CNN encoder network for vision PPO heads.
 
@@ -623,13 +704,26 @@ def make_vision_encoder_network(
   functions, inference) can treat it uniformly. `processor_params` is unused
   since pixels are normalized internally (/255, optional per-channel LN)
   rather than via running statistics.
+
+  See `make_policy_network_vision` for the `pixel_keys` semantics. Note that
+  a shared encoder feeds every head, so its key set is by construction the
+  same for all of them.
   """
-  module = VisionEncoder(normalise_channels=normalise_channels)
+  module = VisionEncoder(
+      normalise_channels=normalise_channels,
+      pixel_keys=None if pixel_keys is None else tuple(pixel_keys),
+  )
   dummy_obs = {
-      key: jnp.zeros((1,) + shape)
+      key: jnp.zeros((1,) + tuple(shape))
       for key, shape in observation_size.items()
       if key.startswith('pixels/')
   }
+  if not dummy_obs:
+    # No pixels at all (e.g. an empty `pixel_keys`): the encoder still needs some array to read the batch dims off.
+    dummy_obs = {
+        key: jnp.zeros((1,) + tuple(shape))
+        for key, shape in observation_size.items()
+    }
 
   def apply(processor_params, encoder_params, obs):
     del processor_params
@@ -662,7 +756,8 @@ def _make_vision_head_network(
   )
   dummy_obs = {VISION_LATENT_KEY: jnp.zeros((1, latent_size))}
   if state_obs_key:
-    dummy_obs[state_obs_key] = jnp.zeros((1,) + observation_size[state_obs_key])
+    dummy_obs[state_obs_key] = jnp.zeros(
+        (1,) + tuple(observation_size[state_obs_key]))
 
   def apply(processor_params, head_params, obs):
     if state_obs_key:
@@ -687,8 +782,15 @@ def make_policy_head_network_vision(
     activation: ActivationFn = linen.swish,
     kernel_init: Initializer = jax.nn.initializers.lecun_uniform(),
     state_obs_key: str = '',
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
-  """Policy head over a precomputed shared-VisionEncoder latent."""
+  """Policy head over a precomputed shared-VisionEncoder latent.
+
+  `pixel_keys` is accepted for API symmetry with the unshared builders but
+  is unused: the head sees only the latent, so camera routing is decided by
+  the shared `VisionEncoder` that produced it.
+  """
+  del pixel_keys
   return _make_vision_head_network(
       layer_sizes=list(hidden_layer_sizes) + [output_size],
       observation_size=observation_size,
@@ -709,8 +811,14 @@ def make_value_head_network_vision(
     activation: ActivationFn = linen.swish,
     kernel_init: Initializer = jax.nn.initializers.lecun_uniform(),
     state_obs_key: str = '',
+    pixel_keys: Optional[Sequence[str]] = None,
 ) -> FeedForwardNetwork:
-  """Value (or cost-value) head over a precomputed shared-VisionEncoder latent."""
+  """Value (or cost-value) head over a precomputed shared-VisionEncoder latent.
+
+  `pixel_keys` is accepted for API symmetry with the unshared builders but
+  is unused (see `make_policy_head_network_vision`).
+  """
+  del pixel_keys
   return _make_vision_head_network(
       layer_sizes=list(hidden_layer_sizes) + [1],
       observation_size=observation_size,
@@ -765,7 +873,8 @@ def make_policy_network_latents(
     )
 
   dummy_obs = {
-      key: jnp.zeros((1,) + shape) for key, shape in observation_size.items()
+      key: jnp.zeros((1,) + tuple(shape))
+      for key, shape in observation_size.items()
   }
   return FeedForwardNetwork(
       init=lambda key: module.init(key, dummy_obs), apply=apply

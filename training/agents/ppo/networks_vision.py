@@ -45,7 +45,11 @@ def make_ppo_networks_vision(
     normalise_channels: bool = False,
     policy_obs_key: str = "",
     value_obs_key: str = "",
+    cost_value_obs_key: Optional[str] = None,
     share_encoder: bool = True,
+    policy_pixel_keys: Optional[Sequence[str]] = None,
+    value_pixel_keys: Optional[Sequence[str]] = None,
+    cost_value_pixel_keys: Optional[Sequence[str]] = None,
 ) -> PPONetworks:
     """Make Vision PPO networks with preprocessor.
 
@@ -63,11 +67,21 @@ def make_ppo_networks_vision(
             to pixel inputs.
         policy_obs_key: Key for state observations in the policy network.
         value_obs_key: Key for state observations in the value network.
+        cost_value_obs_key: Key for state observations in the cost value
+            network. Defaults to `value_obs_key` when None. Set it explicitly
+            for a state-oracle cost critic (pixel-free cost value network).
         share_encoder: If True (default), the policy/value/cost-value heads
             share a single CNN backbone (one CNN forward pass per timestep,
             fed by the joint PPO loss so gradients from all heads flow into
             it). If False, each head gets its own independently-trained CNN
             (more params, one CNN forward per head).
+        policy_pixel_keys: Cameras (obs keys) routed to the policy. None =
+            every `pixels/*` key; a sequence = exactly those keys in that
+            order; `()` = no cameras at all.
+        value_pixel_keys: Cameras routed to the (reward) value network.
+        cost_value_pixel_keys: Cameras routed to the cost value network.
+            Heterogeneous routing (e.g. a privileged camera the cost critic
+            sees but the actor does not) requires `share_encoder=False`.
 
     Returns:
         PPONetworks with policy, value, and optionally cost_value networks.
@@ -76,16 +90,46 @@ def make_ppo_networks_vision(
         event_size=action_size
     )
 
+    if cost_value_obs_key is None:
+        cost_value_obs_key = value_obs_key
+
+    all_pixel_keys = tuple(
+        sorted(k for k in observation_size if k.startswith('pixels/'))
+    )
+
+    def _normalise(keys):
+        return all_pixel_keys if keys is None else tuple(keys)
+
+    routed = {
+        'policy': _normalise(policy_pixel_keys),
+        'value': _normalise(value_pixel_keys),
+    }
+    if cost_value_hidden_layer_sizes is not None:
+        routed['cost_value'] = _normalise(cost_value_pixel_keys)
+
+    if share_encoder and len(set(routed.values())) > 1:
+        raise ValueError(
+            "share_encoder=True requires identical pixel routing for every "
+            "head, but got "
+            + ", ".join(f"{name}={keys}" for name, keys in routed.items())
+            + ". A shared CNN backbone encodes all of its cameras into the "
+            "single latent that every head consumes, so a privileged camera "
+            "would leak straight into the actor. Pass share_encoder=False to "
+            "give each head its own encoder when the routing is "
+            "heterogeneous."
+        )
+
     if share_encoder:
         encoder_network = networks.make_vision_encoder_network(
             observation_size=observation_size,
             normalise_channels=normalise_channels,
+            pixel_keys=routed['policy'],
         )
         # Shape-only: figure out the encoder's output width so the heads can
         # size their first Dense layer. Values are discarded. Only used here
         # to read `.shape[-1]`. Real init happens once in the training loop.
         dummy_pixel_obs = {
-            key: jp.zeros((1,) + shape)
+            key: jp.zeros((1,) + tuple(shape))
             for key, shape in observation_size.items()
             if key.startswith('pixels/')
         }
@@ -121,7 +165,7 @@ def make_ppo_networks_vision(
                 preprocess_observations_fn=preprocess_observations_fn,
                 activation=activation,
                 hidden_layer_sizes=cost_value_hidden_layer_sizes,
-                state_obs_key=value_obs_key,
+                state_obs_key=cost_value_obs_key,
             )
     else:
         encoder_network = None
@@ -133,6 +177,7 @@ def make_ppo_networks_vision(
             hidden_layer_sizes=policy_hidden_layer_sizes,
             state_obs_key=policy_obs_key,
             normalise_channels=normalise_channels,
+            pixel_keys=policy_pixel_keys,
         )
 
         value_network = networks.make_value_network_vision(
@@ -142,6 +187,7 @@ def make_ppo_networks_vision(
             hidden_layer_sizes=value_hidden_layer_sizes,
             state_obs_key=value_obs_key,
             normalise_channels=normalise_channels,
+            pixel_keys=value_pixel_keys,
         )
 
         cost_value_network = None
@@ -151,8 +197,9 @@ def make_ppo_networks_vision(
                 preprocess_observations_fn=preprocess_observations_fn,
                 activation=activation,
                 hidden_layer_sizes=cost_value_hidden_layer_sizes,
-                state_obs_key=value_obs_key,
+                state_obs_key=cost_value_obs_key,
                 normalise_channels=normalise_channels,
+                pixel_keys=cost_value_pixel_keys,
             )
 
     return PPONetworks(

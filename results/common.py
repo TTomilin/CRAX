@@ -114,7 +114,7 @@ RL_SWEEP_SPEC: Dict[str, List[str]] = {
 
 # Define a consistent color palette for baselines across all plots
 # Using matplotlib's tab10 colormap
-_tab10_colors = cm.get_cmap("tab10").colors
+_tab10_colors = plt.get_cmap("tab10").colors
 BASELINES_COLORS: Dict[str, str] = {
     "ppo": _tab10_colors[0],
     "ppo_cost": _tab10_colors[1],

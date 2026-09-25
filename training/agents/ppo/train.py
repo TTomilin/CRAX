@@ -712,6 +712,21 @@ def train(
         cost_value=cost_value_params,
         encoder=encoder_params,
     )
+    parameter_counts = {
+        name: int(sum(leaf.size for leaf in jax.tree_util.tree_leaves(params)))
+        for name, params in (
+            ('policy', init_params.policy),
+            ('value', init_params.value),
+            ('cost_value', init_params.cost_value),
+            ('shared_encoder', init_params.encoder),
+        )
+        if params is not None
+    }
+    print(
+        "Network parameter counts: "
+        + ", ".join(f"{name}={count}" for name, count in parameter_counts.items())
+        + f", total={sum(parameter_counts.values())}"
+    )
     _dbg(f"Network params initialized. policy keys: {list(init_params.policy['params'].keys()) if isinstance(init_params.policy, dict) and 'params' in init_params.policy else 'N/A'}")
 
     # Initialize aux_state if init function provided (for Lagrange multipliers, PID state, etc.)

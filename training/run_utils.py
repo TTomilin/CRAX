@@ -76,7 +76,8 @@ def custom_progress_fn(num_steps: int, metrics: Dict[str, Any], use_wandb: bool 
     for key, value in metrics.items():
         value = _mean_value(value)
         # Print only key categories to keep console light
-        if verbose and any(tok in key for tok in ("lambda", "cost", "constraint", "reward")):
+        # "_ev" keeps the metric for the observation routing ablation in the paper (value_ev / cost_value_ev)
+        if verbose and any(tok in key for tok in ("lambda", "cost", "constraint", "reward", "_ev")):
             print(f"  {key}: {value}")
         log_data[key] = value
 
@@ -176,7 +177,10 @@ def make_vision_network_factory(alg_name: str, **vision_net_kwargs):
         alg_name: Algorithm name (e.g., 'ppo', 'ppo_lag', 'sac_lag').
         **vision_net_kwargs: Extra kwargs passed to the underlying
             make_*_networks_vision factory (e.g., normalise_channels,
-            policy_obs_key, value_obs_key).
+            policy_obs_key, value_obs_key, cost_value_obs_key,
+            share_encoder, and the per-head camera routing kwargs:
+            policy_pixel_keys / value_pixel_keys / cost_value_pixel_keys
+            used by the privileged-camera experiments).
 
     Returns:
         A network_factory callable compatible with the algorithm's training
