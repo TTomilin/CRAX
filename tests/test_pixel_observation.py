@@ -43,6 +43,21 @@ def _make_env(vision_kwargs=None, level=1):
     )
 
 
+def _skip_without_gpu():
+    """Skip the calling test unless MJWarp can actually render.
+
+    MJWarp's batch ray tracer is CUDA-only, so the GPU wrapper cannot be
+    constructed (let alone run) on a CPU-only machine.
+    """
+    try:
+        import mujoco_warp  # noqa: F401
+    except Exception:
+        pytest.skip("requires CUDA GPU for MJWarp rendering")
+    devices = jax.devices()
+    if not any(d.platform in ('gpu', 'cuda') for d in devices):
+        pytest.skip("requires CUDA GPU for MJWarp rendering")
+
+
 def _make_env_no_registry(vision_kwargs=None, level=1):
     """Create the wrapper manually to control the wrapper stack."""
     base = envs.get_environment('safe_goal_point', level=level)
@@ -468,7 +483,117 @@ class TestVisionNetworks:
 
 
 # ===========================================================================
-# 10. Error handling
+# 10. GPU (MJWarp) multi-camera rendering
+# ===========================================================================
+
+class TestGpuMultiCamera:
+    """Multi-camera support of GpuPixelObservationWrapper.
+
+    MJWarp's ray tracer only runs on CUDA, so every test here skips on
+    machines without a GPU. The wrapper also needs an ALREADY-VECTORIZED
+    env (its render context is statically sized), so we build the stack
+    manually instead of going through `envs.get_environment(vision=True)`.
+    """
+
+    NUM_ENVS = 2
+
+    def _make_gpu_env(self, wrap_for_training=False, **vision_kwargs):
+        _skip_without_gpu()
+        from crax.envs.wrappers.pixel_observation_gpu import (
+            GpuPixelObservationWrapper,
+        )
+
+        if wrap_for_training:
+            # Episode -> Vmap -> AutoReset, exactly what training builds.
+            inner = envs.create(
+                'safe_goal_point', level=1, backend='mjx',
+                episode_length=5, action_repeat=1, auto_reset=True,
+                batch_size=self.NUM_ENVS,
+            )
+        else:
+            base = envs.get_environment(
+                'safe_goal_point', level=1, backend='mjx',
+            )
+            inner = training.VmapWrapper(base, batch_size=self.NUM_ENVS)
+        vk = dict(height=64, width=64, obs_mode='pixels')
+        vk.update(vision_kwargs)
+        return GpuPixelObservationWrapper(
+            inner, num_envs=self.NUM_ENVS, **vk,
+        )
+
+    def test_single_camera_back_compat(self):
+        """`camera='vision'` still yields exactly one pixel observation."""
+        env = self._make_gpu_env(camera='vision', frame_stack=2)
+        state = env.reset(jax.random.PRNGKey(0))
+        pixel_keys = [k for k in state.obs if k.startswith('pixels/')]
+        assert pixel_keys == ['pixels/vision']
+        assert state.obs['pixels/vision'].shape == (self.NUM_ENVS, 64, 64, 6)
+        assert env.observation_size['pixels/vision'] == (64, 64, 6)
+
+    def test_two_cameras_shapes(self):
+        """`cameras=('vision', 'track')` yields one key per camera."""
+        env = self._make_gpu_env(cameras=('vision', 'track'), frame_stack=2)
+        state = env.reset(jax.random.PRNGKey(0))
+        for key in ('pixels/vision', 'pixels/track'):
+            assert key in state.obs
+            assert state.obs[key].shape == (self.NUM_ENVS, 64, 64, 6)
+            assert env.observation_size[key] == (64, 64, 6)
+
+        action = jnp.zeros((self.NUM_ENVS, env.action_size))
+        next_state = env.step(state, action)
+        for key in ('pixels/vision', 'pixels/track'):
+            assert next_state.obs[key].shape == (self.NUM_ENVS, 64, 64, 6)
+
+    def test_cameras_render_different_views(self):
+        """Guards against every camera rendering the same local index."""
+        env = self._make_gpu_env(cameras=('vision', 'track'))
+        state = env.reset(jax.random.PRNGKey(0))
+        vision = np.asarray(state.obs['pixels/vision'])
+        track = np.asarray(state.obs['pixels/track'])
+        assert vision.shape == track.shape
+        assert not np.array_equal(vision, track)
+
+    def test_duplicate_cameras_deduplicated(self):
+        env = self._make_gpu_env(cameras=('vision', 'track', 'vision'))
+        state = env.reset(jax.random.PRNGKey(0))
+        pixel_keys = sorted(k for k in state.obs if k.startswith('pixels/'))
+        assert pixel_keys == ['pixels/track', 'pixels/vision']
+
+    def test_missing_camera_raises(self):
+        with pytest.raises(ValueError, match="Camera .* not found"):
+            self._make_gpu_env(cameras=('vision', 'nonexistent_camera'))
+
+    def test_frame_buffers_reset_on_done(self):
+        """Both cameras' stacks reset together, but hold their own frames."""
+        env = self._make_gpu_env(
+            wrap_for_training=True, cameras=('vision', 'track'), frame_stack=2,
+        )
+        keys = ['_gpu_pixel_buffer/vision', '_gpu_pixel_buffer/track']
+        state = env.reset(jax.random.PRNGKey(0))
+        for key in keys:
+            assert key in state.info
+
+        action = jnp.zeros((self.NUM_ENVS, env.action_size))
+        # episode_length=5 -> the 5th step sets done for every world.
+        for _ in range(5):
+            state = env.step(state, action)
+        assert bool(jnp.all(state.done > 0))
+
+        for key in keys:
+            buf = state.info[key]
+            # On done the stack is re-initialised from the current frame,
+            # so both halves of the stack are identical again.
+            assert np.array_equal(
+                np.asarray(buf[..., :3]), np.asarray(buf[..., 3:])
+            )
+        # ... but the two cameras still hold their own, differing frames.
+        assert not np.array_equal(
+            np.asarray(state.info[keys[0]]), np.asarray(state.info[keys[1]])
+        )
+
+
+# ===========================================================================
+# 11. Error handling
 # ===========================================================================
 
 class TestErrorHandling:
