@@ -4,6 +4,7 @@ Benchmark script for Safety Gymnasium with parallel environments.
 Benchmarks Safety Gymnasium using SafetyAsyncVectorEnv for parallel execution.
 """
 
+import argparse
 import csv
 import os
 import time
@@ -33,12 +34,14 @@ except ImportError as e:
     exit(1)
 
 
-def measure_safety_gymnasium_throughput(num_envs: int, num_steps: int = 100_000) -> Dict:
+def measure_safety_gymnasium_throughput(num_envs: int, num_steps: int = 100_000,
+                                        env_id: str = 'SafetyPointGoal1-v0') -> Dict:
     """Measure Safety-Gymnasium throughput with parallel environments.
     
     Args:
         num_envs: Number of parallel environments.
         num_steps: Total environment steps across all environments.
+        env_id: Safety-Gymnasium environment id.
     
     Returns:
         Dictionary with benchmark metrics.
@@ -52,11 +55,11 @@ def measure_safety_gymnasium_throughput(num_envs: int, num_steps: int = 100_000)
     # Create environment(s) first
     if num_envs == 1:
         # Single environment (no overhead)
-        env = safety_gymnasium.make('SafetyPointGoal1-v0')
+        env = safety_gymnasium.make(env_id)
         use_vector = False
     else:
         # Parallel environments using SafetyAsyncVectorEnv
-        env_fns = [lambda: safety_gymnasium.make('SafetyPointGoal1-v0') for _ in range(num_envs)]
+        env_fns = [lambda: safety_gymnasium.make(env_id) for _ in range(num_envs)]
         env = SafetyAsyncVectorEnv(env_fns, shared_memory=True)
         use_vector = True
 
@@ -215,6 +218,7 @@ def measure_safety_gymnasium_throughput(num_envs: int, num_steps: int = 100_000)
 
     return {
         'framework': 'Safety-Gymnasium',
+        'env': env_id,
         'num_envs': num_envs,
         'steps_per_second': sps,
         'cpu_memory_mb': mem_used,
@@ -386,8 +390,17 @@ def main():
     print("=" * 60)
 
     # Configuration
-    num_envs_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # Powers of 2 up to 16
-    output_dir = Path(f"safety_gym_benchmark_results_{time.strftime('%Y%m%d_%H%M%S')}")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--env', type=str, default='SafetyPointGoal1-v0', help='Safety-Gymnasium env id.')
+    parser.add_argument('--num_envs', type=int, nargs='+',
+                        default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048])
+    parser.add_argument('--num_steps', type=int, default=500_000,
+                        help='Total env steps per measurement, across all parallel envs.')
+    parser.add_argument('--output_root', type=str, default='.', help='Parent dir for the results folder.')
+    args = parser.parse_args()
+
+    num_envs_list = args.num_envs
+    output_dir = Path(args.output_root) / f"safety_gym_benchmark_results_{args.env}_{time.strftime('%Y%m%d_%H%M%S')}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n📁 Output directory: {output_dir}")
@@ -404,8 +417,7 @@ def main():
     for num_envs in num_envs_list:
         try:
             # Use consistent number of steps across all benchmarks (same as SafeBrax for fair comparison)
-            num_steps = 500_000  # Total steps across all environments
-            result = measure_safety_gymnasium_throughput(num_envs, num_steps=num_steps)
+            result = measure_safety_gymnasium_throughput(num_envs, num_steps=args.num_steps, env_id=args.env)
             if result:
                 results.append(result)
 
