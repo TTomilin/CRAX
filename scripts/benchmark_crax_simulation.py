@@ -11,9 +11,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 # Force unbuffered output for real-time logging
@@ -250,297 +249,38 @@ def measure_crax_throughput(num_envs: int, num_steps: int = 1_000_000, env_name:
     }
 
 
-def plot_results(results: List[Dict], output_dir: Path):
-    """Generate comparison plots."""
-    if not results:
-        print("No results to plot")
-        return
 
-    # Set style
-    plt.style.use('seaborn-v0_8-paper')
-
-    # Prepare data
-    crax_results = [r for r in results if r['framework'] == 'CRAX']
-
-    if not crax_results:
-        print("No CRAX results to plot")
-        return
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-
-    # 1. Throughput scaling
-    ax = axes[0, 0]
-    x = [r['num_envs'] for r in crax_results]
-    y = [r['steps_per_second'] for r in crax_results]
-    ax.plot(x, y, 'o-', label='CRAX', linewidth=2, markersize=8, color='C0')
-
-    ax.set_xlabel('Number of Parallel Environments')
-    ax.set_ylabel('Steps Per Second')
-    ax.set_title('Training Throughput')
-    ax.set_xscale('log', base=2)
-    ax.set_yscale('log')
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-    # 2. Scaling efficiency
-    ax = axes[0, 1]
-    if len(crax_results) > 0:
-        baseline = crax_results[0]['steps_per_second']
-        x = [r['num_envs'] for r in crax_results]
-        y = [r['steps_per_second'] / baseline for r in crax_results]
-        ax.plot(x, y, 'o-', label='CRAX', linewidth=2, markersize=8, color='C0')
-
-        # Ideal scaling line
-        ax.plot(x, x, 'k--', alpha=0.5, label='Ideal scaling')
-
-    ax.set_xlabel('Number of Parallel Environments')
-    ax.set_ylabel('Speedup Factor')
-    ax.set_title('Scaling Efficiency')
-    ax.set_xscale('log', base=2)
-    ax.set_yscale('log', base=2)
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-    # 3. CPU Utilization
-    ax = axes[1, 0]
-    if 'cpu_percent_avg' in crax_results[0]:
-        x = [r['num_envs'] for r in crax_results]
-        y_avg = [r.get('cpu_percent_avg', 0) for r in crax_results]
-        y_max = [r.get('cpu_percent_max', 0) for r in crax_results]
-        cpu_count = crax_results[0].get('cpu_count', 1)
-
-        ax.plot(x, y_avg, 'o-', label='Average CPU %', linewidth=2, markersize=8, color='C2')
-        ax.plot(x, y_max, 's--', label='Peak CPU %', linewidth=2, markersize=6, color='C3', alpha=0.7)
-
-        # Mark CPU saturation (100% line)
-        ax.axhline(y=100, color='r', linestyle=':', alpha=0.5, label='CPU Saturation')
-
-        # Mark available cores
-        ax.axhline(y=100 * cpu_count, color='g', linestyle=':', alpha=0.3,
-                   label=f'Max ({cpu_count} cores × 100%)')
-
-        ax.set_xlabel('Number of Parallel Environments')
-        ax.set_ylabel('CPU Utilization (%)')
-        ax.set_title(f'CPU Usage (System has {cpu_count} cores)')
-        ax.set_xscale('log', base=2)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-    # 4. Memory per Environment
-    ax = axes[1, 1]
-    if 'mem_per_env_mb' in crax_results[0]:
-        x = [r['num_envs'] for r in crax_results]
-        y = [r.get('mem_per_env_mb', 0) for r in crax_results]
-        ax.plot(x, y, '^-', label='Memory per Env', linewidth=2, markersize=8, color='C4')
-
-        ax.set_xlabel('Number of Parallel Environments')
-        ax.set_ylabel('Memory per Environment (MB)')
-        ax.set_title('Memory Efficiency')
-        ax.set_xscale('log', base=2)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-    plt.suptitle('CRAX: Parallel Environment Benchmark', fontsize=14)
-    plt.tight_layout()
-
-    output_path = output_dir / 'crax_benchmark.png'
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"\n📈 Plot saved to: {output_path}")
-
-    # Also save as PDF
-    output_path_pdf = output_dir / 'crax_benchmark.pdf'
-    plt.savefig(output_path_pdf, bbox_inches='tight')
-    print(f"📄 PDF saved to: {output_path_pdf}")
-
-
-def generate_latex_table(results: List[Dict], output_dir: Path):
-    """Generate LaTeX table for results."""
-    if not results:
-        return
-
-    crax_results = [r for r in results if r['framework'] == 'CRAX']
-
-    if not crax_results:
-        return
-
-    latex_lines = [
-        r"\begin{table}[H]",
-        r"\centering",
-        r"\caption{CRAX parallel environment benchmark results}",
-        r"\label{tab:crax_benchmark}",
-        r"\begin{tabular}{lrrrrr}",
-        r"\toprule",
-        r"Envs & SPS & CPU Mem (MB) & GPU Mem (MB) & Time (s) & JIT (s) \\",
-        r"\midrule"
-    ]
-
-    # Add results
-    for r in crax_results:
-        latex_lines.append(
-            f"{r['num_envs']} & "
-            f"{r['steps_per_second']:,.0f} & "
-            f"{r['cpu_memory_mb']:.0f} & "
-            f"{r['gpu_memory_mb']:.0f} & "
-            f"{r['total_time']:.1f} & "
-            f"{r['jit_time']:.1f} \\\\"
-        )
-
-    latex_lines.extend([
-        r"\bottomrule",
-        r"\end{tabular}",
-        r"\end{table}"
-    ])
-
-    # Save table
-    table_path = output_dir / 'crax_benchmark_table.tex'
-    with open(table_path, 'w') as f:
-        f.write('\n'.join(latex_lines))
-
-    print(f"📄 LaTeX table saved to: {table_path}")
+# Same folder the plotting scripts read from (results/data/performance), regardless of cwd.
+DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parents[1] / 'results' / 'data' / 'performance'
 
 
 def main():
-    """Run CRAX parallel environment benchmark."""
-    print("=" * 60, flush=True)
-    print("🏁 CRAX Parallel Environment Benchmark", flush=True)
-    print("=" * 60, flush=True)
-    sys.stdout.flush()
-
+    """Measure CRAX throughput for a single (env, num_envs) configuration."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', type=str, default='safe_goal_point', help='CRAX environment name.')
-    parser.add_argument('--num_envs', type=int, nargs='+',
-                        default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    parser.add_argument('--num_envs', type=int, required=True,
+                        help='Number of parallel envs. One value per invocation, so runs can be launched in parallel.')
     parser.add_argument('--num_steps', type=int, default=500_000,
-                        help='Total env steps per measurement, across all parallel envs.')
-    parser.add_argument('--output_root', type=str, default='.', help='Parent dir for the results folder.')
+                        help='Total env steps to run, across all parallel envs.')
+    parser.add_argument('--output_root', type=str, default=str(DEFAULT_OUTPUT_ROOT),
+                        help='Parent dir for the results folder.')
     args = parser.parse_args()
 
-    num_envs_list = args.num_envs
-    output_dir = Path(args.output_root) / f"crax_benchmark_results_{args.env}_{time.strftime('%Y%m%d_%H%M%S')}"
+    output_dir = Path(args.output_root) / (
+        f"crax_benchmark_results_{args.env}_n{args.num_envs}_{time.strftime('%Y%m%d_%H%M%S')}")
+
+    result = measure_crax_throughput(args.num_envs, num_steps=args.num_steps, env_name=args.env)
+    if not result:
+        sys.exit(f"❌ Benchmark failed for env={args.env} num_envs={args.num_envs}")
+
+    # Only create the folder once there is a result, so failed runs leave nothing behind.
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"\n📁 Output directory: {output_dir}", flush=True)
-    print(f"🔢 Testing with num_envs: {num_envs_list}", flush=True)
-    sys.stdout.flush()
-
-    results = []
     csv_path = output_dir / 'benchmark_results.csv'
-
-    # Run benchmarks
-    print("\n" + "=" * 40, flush=True)
-    print("Running CRAX benchmarks...", flush=True)
-    print("=" * 40, flush=True)
-    sys.stdout.flush()
-
-    for num_envs in num_envs_list:
-        try:
-            print(f"\n[{time.strftime('%H:%M:%S')}] Starting benchmark for {num_envs} envs...", flush=True)
-            sys.stdout.flush()
-            # Use consistent number of steps across all benchmarks
-            result = measure_crax_throughput(num_envs, num_steps=args.num_steps, env_name=args.env)
-            if result:
-                results.append(result)
-
-                # Save to CSV incrementally
-                file_exists = csv_path.exists()
-                with open(csv_path, 'a', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=result.keys())
-                    if not file_exists:
-                        writer.writeheader()
-                    writer.writerow(result)
-
-            # Brief pause between benchmarks to allow cleanup
-            if num_envs < num_envs_list[-1]:  # Don't pause after last one
-                time.sleep(0.5)
-        except Exception as e:
-            print(f"  ❌ Failed for num_envs={num_envs}: {e}")
-            import traceback
-            traceback.print_exc()
-
-    # Generate plots and tables
-    print("\n" + "=" * 40)
-    print("Generating plots and tables...")
-    print("=" * 40)
-
-    if results:
-        plot_results(results, output_dir)
-        generate_latex_table(results, output_dir)
-
-    # Print summary
-    print("\n" + "=" * 60)
-    print("📊 Benchmark Summary")
-    print("=" * 60)
-
-    if results:
-        crax_results = [r for r in results if r['framework'] == 'CRAX']
-
-        if crax_results:
-            max_sps = max(r['steps_per_second'] for r in crax_results)
-            best = max(crax_results, key=lambda r: r['steps_per_second'])
-            cpu_count = crax_results[0].get('cpu_count', 1)
-
-            print("\nCRAX:")
-            print(f"  Peak throughput: {max_sps:,.0f} SPS")
-            print(f"  Best config: {best['num_envs']} envs")
-
-            # CPU analysis
-            if 'cpu_percent_avg' in best:
-                cpu_avg = best.get('cpu_percent_avg', 0)
-                cpu_max = best.get('cpu_percent_max', 0)
-                print(f"\n  CPU Utilization (best config):")
-                print(f"    Average: {cpu_avg:.1f}%")
-                print(f"    Peak: {cpu_max:.1f}%")
-                print(f"    Available cores: {cpu_count}")
-
-                # Check if CPU is saturated
-                if cpu_max >= 95:
-                    print(f"    ⚠️  CPU is saturated! Consider using fewer envs or more CPU cores")
-                elif cpu_max < 50:
-                    print(f"    ✓ CPU has headroom - could potentially use more envs")
-                else:
-                    print(f"    ⚠️  CPU is moderately utilized")
-
-            # Memory analysis
-            if 'mem_per_env_mb' in best:
-                mem_per_env = best.get('mem_per_env_mb', 0)
-                total_mem = best.get('cpu_memory_mb', 0)
-                print(f"\n  Memory Usage (best config):")
-                print(f"    Per environment: {mem_per_env:.0f} MB")
-                print(f"    Total: {total_mem:.0f} MB")
-
-            # GPU analysis
-            if 'gpu_memory_mb' in best:
-                gpu_mem = best.get('gpu_memory_mb', 0)
-                print(f"\n  GPU Memory Usage (best config):")
-                print(f"    GPU memory: {gpu_mem:.0f} MB")
-
-            # Scaling analysis
-            if len(crax_results) > 1:
-                single_sps = crax_results[0]['steps_per_second']
-                peak_speedup = max_sps / single_sps
-                print(f"\n  Scaling Performance:")
-                print(f"    Peak speedup: {peak_speedup:.2f}x")
-
-                # Efficiency (how close to linear scaling)
-                ideal_sps = single_sps * best['num_envs']
-                efficiency = max_sps / ideal_sps * 100
-                print(f"    Scaling efficiency: {efficiency:.1f}%")
-
-                # Find where scaling starts to degrade
-                if len(crax_results) >= 3:
-                    speedups = [r['steps_per_second'] / single_sps for r in crax_results]
-                    # Find first point where speedup improvement < 10%
-                    for i in range(1, len(speedups)):
-                        improvement = (speedups[i] - speedups[i - 1]) / speedups[i - 1] * 100
-                        if improvement < 10:
-                            print(f"\n  💡 Scaling Recommendation:")
-                            print(f"    Diminishing returns start at {crax_results[i - 1]['num_envs']} envs")
-                            print(
-                                f"    Optimal likely between {crax_results[i - 1]['num_envs']}-{crax_results[i]['num_envs']} envs")
-                            break
-
-    print("\n✅ Benchmark complete!")
-    print(f"📁 Results saved to: {output_dir}/")
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=result.keys())
+        writer.writeheader()
+        writer.writerow(result)
+    print(f"✓ {args.env} @ {args.num_envs} envs: {result['steps_per_second']:,.0f} SPS -> {csv_path}", flush=True)
 
 
 if __name__ == "__main__":
