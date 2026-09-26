@@ -258,10 +258,8 @@ def main():
     """Measure CRAX throughput for a single (env, num_envs) configuration."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', type=str, default='safe_goal_point', help='CRAX environment name.')
-    parser.add_argument('--num_envs', type=int, required=True,
-                        help='Number of parallel envs. One value per invocation, so runs can be launched in parallel.')
-    parser.add_argument('--num_steps', type=int, default=500_000,
-                        help='Total env steps to run, across all parallel envs.')
+    parser.add_argument('--num_envs', type=int, required=True, help='Number of parallel envs')
+    parser.add_argument('--num_steps', type=int, default=500_000, help='Total env steps to run')
     parser.add_argument('--output_root', type=str, default=str(DEFAULT_OUTPUT_ROOT),
                         help='Parent dir for the results folder.')
     args = parser.parse_args()
