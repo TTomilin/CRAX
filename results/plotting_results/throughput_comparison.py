@@ -1,99 +1,96 @@
-"""Plot performance comparison between CRAX and Safety-Gymnasium."""
+"""Throughput (SPS vs. parallel envs) of CRAX and Safety-Gymnasium across several tasks."""
+import argparse
+import re
+from pathlib import Path
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 from results.common import results_path
 
-# Configure matplotlib
 plt.rcParams.update({
     'font.size': 13,
-    'axes.labelsize': 16,
-    'xtick.labelsize': 13,
-    'ytick.labelsize': 13,
+    'axes.labelsize': 15,
+    'axes.titlesize': 15,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
     'legend.fontsize': 13,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'savefig.bbox': 'tight',
 })
 
-# Data paths
-RESULTS_DIR = results_path("data", "performance")
+# (panel title, CRAX env, Safety-Gymnasium env id)
+TASKS = [
+    ("Point Goal", "safe_goal_point", "SafetyPointGoal1-v0"),
+    ("Ant Velocity", "safe_velocity_ant", "SafetyAntVelocity-v1"),
+    ("Humanoid Velocity", "safe_velocity_humanoid", "SafetyHumanoidVelocity-v1"),
+]
+LEGACY_ENV = {"crax": "safe_goal_point", "safety_gym": "SafetyPointGoal1-v0"}
 
-# Load CRAX data from all sources and combine
-crax_main = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_044133" / "benchmark_results.csv")
-crax_extra = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_032509" / "benchmark_results.csv")
-crax_large = pd.read_csv(RESULTS_DIR / "crax_benchmark_results_20260129_082641" / "benchmark_results.csv")
-crax_df = pd.concat([crax_extra, crax_main, crax_large], ignore_index=True).drop_duplicates(
-    subset=['num_envs']).sort_values('num_envs')
-
-# Load Safety-Gymnasium data
-safety_gym_df = pd.read_csv(RESULTS_DIR / "safety_gym_benchmark_results_20260129_054930" / "benchmark_results.csv")
-
-# Output directory
-OUTPUT_DIR = results_path("figures")
-OUTPUT_DIR.mkdir(exist_ok=True)
+STYLE = {
+    "crax": dict(marker='o', color='#2E86AB', label='CRAX (Ours)'),
+    "safety_gym": dict(marker='s', color='#E94F37', label='Safety-Gymnasium'),
+}
 
 
-def plot_comparison():
-    """Plot throughput comparison and scaling efficiency."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
+def load_runs(data_dir: Path, prefix: str, env: str) -> Optional[pd.DataFrame]:
+    """Merge all `<prefix>_benchmark_results_*` folders that belong to `env`."""
+    pattern = re.compile(rf"^{prefix}_benchmark_results_(?:(?P<env>.+?)_)?(?:n\d+_)?\d{{8}}_\d{{6}}$")
+    frames = []
+    for d in sorted(data_dir.iterdir()):  # sorted by name -> timestamp order within an env
+        m = pattern.match(d.name)
+        csv = d / "benchmark_results.csv"
+        if not m or not csv.exists():
+            continue
+        if (m.group("env") or LEGACY_ENV[prefix]) == env:
+            frames.append(pd.read_csv(csv))
+    if not frames:
+        return None
+    df = pd.concat(frames, ignore_index=True)
+    return df.drop_duplicates(subset=["num_envs"], keep="last").sort_values("num_envs")
 
-    # Left plot: Throughput comparison (log-log)
-    ax1.plot(crax_df['num_envs'], crax_df['steps_per_second'],
-             'o-', color='#2E86AB', linewidth=2.5, markersize=8, label='CRAX (Ours)')
-    ax1.plot(safety_gym_df['num_envs'], safety_gym_df['steps_per_second'],
-             's-', color='#E94F37', linewidth=2.5, markersize=8, label='Safety-Gymnasium')
 
-    ax1.set_xscale('log', base=2)
-    ax1.set_yscale('log')
-    ax1.set_xlabel('Number of Parallel Environments')
-    ax1.set_ylabel('Steps per Second (SPS)')
-    ax1.legend(loc='upper left')
-    ax1.grid(True, alpha=0.3, which='both')
+def plot(data_dir: Path, out_path: Path, tasks: List[tuple]) -> None:
+    fig, axes = plt.subplots(1, len(tasks), figsize=(4.2 * len(tasks), 3.8), sharey=True)
+    axes = [axes] if len(tasks) == 1 else list(axes)
 
-    # Set x-axis ticks for left plot
-    all_envs = sorted(set(crax_df['num_envs']) | set(safety_gym_df['num_envs']))
-    ax1.set_xticks(all_envs)
-    ax1.set_xticklabels([str(int(x)) for x in all_envs], rotation=45)
+    for ax, (title, crax_env, sg_env) in zip(axes, tasks):
+        xs = set()
+        for prefix, env in (("crax", crax_env), ("safety_gym", sg_env)):
+            df = load_runs(data_dir, prefix, env)
+            if df is None:
+                print(f"No {prefix} results for {env!r} in {data_dir}")
+                continue
+            ax.plot(df['num_envs'], df['steps_per_second'], '-', linewidth=2.2, markersize=6, **STYLE[prefix])
+            xs |= set(df['num_envs'])
 
-    # Right plot: Scaling Efficiency
-    # Calculate speedup relative to single env performance
-    crax_base_sps = crax_df[crax_df['num_envs'] == 1]['steps_per_second'].values[0]
-    safety_base_sps = safety_gym_df[safety_gym_df['num_envs'] == 1]['steps_per_second'].values[0]
+        ax.set_title(title)
+        ax.set_xscale('log', base=2)
+        ax.set_yscale('log')
+        ax.set_xlabel('Parallel Environments')
+        ax.grid(True, alpha=0.3, which='both')
+        if xs:
+            ticks = [x for x in sorted(xs) if x in (1, 4, 16, 64, 256, 1024, 4096, 16384)]
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([f"{x // 1024}K" if x >= 1024 else str(x) for x in ticks])
 
-    crax_speedup = crax_df['steps_per_second'] / crax_base_sps
-    safety_speedup = safety_gym_df['steps_per_second'] / safety_base_sps
-
-    ax2.plot(crax_df['num_envs'], crax_speedup,
-             'o-', color='#2E86AB', linewidth=2.5, markersize=8, label='CRAX (Ours)')
-    ax2.plot(safety_gym_df['num_envs'], safety_speedup,
-             's-', color='#E94F37', linewidth=2.5, markersize=8, label='Safety-Gymnasium')
-
-    # Ideal scaling line (linear)
-    max_envs = max(crax_df['num_envs'].max(), safety_gym_df['num_envs'].max())
-    ideal_x = np.array([1, max_envs])
-    ideal_y = ideal_x
-    ax2.plot(ideal_x, ideal_y, '--', color='gray', linewidth=2, alpha=0.7, label='Ideal Scaling')
-
-    ax2.set_xscale('log', base=2)
-    ax2.set_yscale('log', base=2)
-    ax2.set_xlabel('Number of Parallel Environments')
-    ax2.set_ylabel('Speedup Factor')
-    ax2.legend(loc='upper left')
-    ax2.grid(True, alpha=0.3, which='both')
-
-    # Set x-axis ticks for right plot
-    ax2.set_xticks(all_envs)
-    ax2.set_xticklabels([str(int(x)) for x in all_envs], rotation=45)
-
+    axes[0].set_ylabel('Steps per Second (SPS)')
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center', ncol=2, bbox_to_anchor=(0.5, 1.0), frameon=False)
     plt.tight_layout()
-    plt.savefig(OUTPUT_DIR / 'throughput_comparison.pdf')
-    print(f"Saved to {OUTPUT_DIR / 'throughput_comparison.pdf'}")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
+    print(f"Saved to {out_path}")
     plt.show()
     plt.close()
 
 
 if __name__ == "__main__":
-    plot_comparison()
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--data_dir", type=str, default=str(results_path("data", "performance")))
+    p.add_argument("--out", type=str, default=str(results_path("figures", "throughput_multi_env.pdf")))
+    args = p.parse_args()
+    plot(Path(args.data_dir), Path(args.out), TASKS)
