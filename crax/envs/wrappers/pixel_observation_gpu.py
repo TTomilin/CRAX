@@ -8,10 +8,10 @@ No manual body-transform arithmetic. Those pose arrays are bridged into
 MJWarp's warp-native render buffers with zero host copies, so rendering
 stays on the GPU inside the training loop.
 
-Any number of cameras can be rendered per step: every requested camera is
-marked active in the shared render context and all of them are produced by
-a single `mjw.render` call, so multi-camera rendering costs one FFI
-round-trip per step regardless of how many cameras are requested.
+Single-camera runs use the original 1D pose kernel and 3D output. Only
+multi-camera runs (vision-privilege modes) take the multi-camera path,
+where every requested camera is marked active in the shared render context
+and produced by one `mjw.render` call, i.e. one FFI round-trip per step.
 
 IMPORTANT — placement in the wrapper stack:
 MJWarp's renderer needs a *statically* sized render context (`num_envs`
@@ -37,7 +37,6 @@ import jax
 import jax.numpy as jnp
 import mujoco
 import mujoco_warp as mjw
-import numpy as np
 import warp as wp
 from warp.jax_experimental import ffi
 
@@ -45,7 +44,25 @@ from crax.envs.base import Env, State, Wrapper
 
 
 @wp.kernel
-def _write_cam_pose(
+def _write_cam_pose_single(
+        cam_xpos_in: wp.array1d(dtype=wp.vec3f),
+        cam_xmat_in: wp.array1d(dtype=wp.mat33f),
+        cam_id: int,
+        cam_xpos_out: wp.array2d(dtype=wp.vec3f),
+        cam_xmat_out: wp.array2d(dtype=wp.mat33f),
+):
+    """Scatters the (num_envs,) pose of the one camera we render into the
+    (num_envs, ncam) slot MJWarp's Data expects it in. Only the active
+    camera's column is ever read at render time, so other columns are left
+    stale/uninitialized without consequence.
+    """
+    w = wp.tid()
+    cam_xpos_out[w, cam_id] = cam_xpos_in[w]
+    cam_xmat_out[w, cam_id] = cam_xmat_in[w]
+
+
+@wp.kernel
+def _write_cam_pose_multi(
         cam_ids: wp.array1d(dtype=int),
         cam_xpos_in: wp.array2d(dtype=wp.vec3f),
         cam_xmat_in: wp.array2d(dtype=wp.mat33f),
@@ -61,6 +78,10 @@ def _write_cam_pose(
     cam_id = cam_ids[c]
     cam_xpos_out[w, cam_id] = cam_xpos_in[w, c]
     cam_xmat_out[w, cam_id] = cam_xmat_in[w, c]
+
+
+def _to_uint8(rgb: jnp.ndarray) -> jnp.ndarray:
+    return (jnp.clip(rgb, 0.0, 1.0) * 255).astype(jnp.uint8)
 
 
 class GpuPixelObservationWrapper(Wrapper):
@@ -100,12 +121,8 @@ class GpuPixelObservationWrapper(Wrapper):
                 f"obs_mode must be 'pixels', 'pixels+state', or 'state', got '{obs_mode}'"
             )
 
-        camera_names = tuple(cameras) if cameras else (camera,)
         # De-duplicate while preserving the caller's ordering
-        self._cameras: Tuple[str, ...] = tuple(dict.fromkeys(camera_names))
-        self._obs_keys = tuple(f'pixels/{name}' for name in self._cameras)
-        # Kept for backwards compatibility with single-camera callers.
-        self._obs_key = self._obs_keys[0]
+        self._cameras: Tuple[str, ...] = tuple(dict.fromkeys(cameras or (camera,)))
         self._num_envs = num_envs
         self._height = height
         self._width = width
@@ -132,8 +149,10 @@ class GpuPixelObservationWrapper(Wrapper):
                 )
             cam_ids.append(cam_id)
         self._cam_ids: Tuple[int, ...] = tuple(cam_ids)
-        # TODO: this can be removed technically, but needs refactoring to also remove single cam caller
-        self._cam_id = self._cam_ids[0]
+        # MJWarp numbers the active cameras in model order (rc.cam_id_map is
+        # nonzero(cam_active)), so a camera's render-context-local index is
+        # its rank among the active ids. A single camera is always index 0.
+        self._local_cam_indices = tuple(sorted(cam_ids).index(c) for c in cam_ids)
 
         # Scratch MjData purely to seed MJWarp's model/render-context
         # construction (mesh/texture/light setup) — its dynamic fields are
@@ -151,24 +170,6 @@ class GpuPixelObservationWrapper(Wrapper):
             use_shadows=use_shadows,
             cam_active=[i in self._cam_ids for i in range(mj_model.ncam)],
         )
-        try:
-            cam_id_map = np.asarray(self._rc.cam_id_map.numpy()).reshape(-1)
-            self._local_cam_indices = tuple(
-                int(np.nonzero(cam_id_map == cid)[0][0]) for cid in self._cam_ids
-            )
-        except Exception:
-            ordered = sorted(self._cam_ids)
-            self._local_cam_indices = tuple(
-                ordered.index(cid) for cid in self._cam_ids
-            )
-        # TODO: this can be removed technically, but needs refactoring to also remove single cam caller
-        self._local_cam_index = self._local_cam_indices[0]
-
-        # Device side copy of the global camera idsx
-        self._cam_ids_wp = wp.array(
-            np.asarray(self._cam_ids, dtype=np.int32), dtype=int
-        )
-        self._cam_ids_jnp = jnp.asarray(self._cam_ids, dtype=jnp.int32)
 
         # Warm up eagerly (outside any CUDA graph capture) so the render
         # megakernel is already JIT-compiled/loaded on-device before the
@@ -179,50 +180,46 @@ class GpuPixelObservationWrapper(Wrapper):
         mjw.render(self._m, self._d, self._rc)
         wp.synchronize()
 
-        self._render_pixels_fn = self._build_render_fn()
+        # Only vision-privilege modes render more than one camera. Plain runs
+        # keep the original, cheaper single-camera kernel and output layout.
+        if len(self._cameras) > 1:
+            self._render_pixels = self._build_multi_render_fn()
+        else:
+            self._render_pixels = self._build_single_render_fn()
 
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
 
-    def _build_render_fn(self):
+    def _build_single_render_fn(self):
         m, d, rc = self._m, self._d, self._rc
-        cam_ids_wp = self._cam_ids_wp
-        cam_ids_jnp = self._cam_ids_jnp
-        local_cam_indices = self._local_cam_indices
-        cameras = self._cameras
-        n_cameras = len(cameras)
+        (camera,), (cam_id,) = self._cameras, self._cam_ids
         num_envs, height, width = self._num_envs, self._height, self._width
 
         def warp_render(
                 geom_xpos_in: wp.array2d(dtype=wp.vec3f),
                 geom_xmat_in: wp.array2d(dtype=wp.mat33f),
-                cam_xpos_in: wp.array2d(dtype=wp.vec3f),
-                cam_xmat_in: wp.array2d(dtype=wp.mat33f),
-                rgb_out: wp.array4d(dtype=wp.vec3f),
+                cam_xpos_in: wp.array1d(dtype=wp.vec3f),
+                cam_xmat_in: wp.array1d(dtype=wp.mat33f),
+                rgb_out: wp.array3d(dtype=wp.vec3f),
         ):
             wp.copy(d.geom_xpos, geom_xpos_in)
             wp.copy(d.geom_xmat, geom_xmat_in)
             wp.launch(
-                _write_cam_pose, dim=(num_envs, n_cameras),
-                inputs=[cam_ids_wp, cam_xpos_in, cam_xmat_in],
+                _write_cam_pose_single, dim=num_envs,
+                inputs=[cam_xpos_in, cam_xmat_in, cam_id],
                 outputs=[d.cam_xpos, d.cam_xmat],
             )
             mjw.refit_bvh(m, d, rc)
             mjw.render(m, d, rc)
-            # One render pass fills the shared context
-            # read each active camera's image out of it into its slice of the single output.
-            for i in range(n_cameras):
-                rgb_local = wp.zeros((num_envs, height, width), dtype=wp.vec3f)
-                mjw.get_rgb(
-                    rc, camera_index=local_cam_indices[i], rgb_out=rgb_local
-                )
-                wp.copy(rgb_out[i], rgb_local)
+            rgb_local = wp.zeros((num_envs, height, width), dtype=wp.vec3f)
+            mjw.get_rgb(rc, camera_index=0, rgb_out=rgb_local)
+            wp.copy(rgb_out, rgb_local)
 
         render_callable = ffi.jax_callable(
             warp_render,
             num_outputs=1,
-            output_dims={'rgb_out': (n_cameras, num_envs, height, width)},
+            output_dims={'rgb_out': (num_envs, height, width)},
             # GraphMode.JAX (the default) lets XLA try to capture our warp
             # kernel launches as a child node inside its own CUDA graph.
             # Unsupported on at least some driver/arch combos.
@@ -235,37 +232,76 @@ class GpuPixelObservationWrapper(Wrapper):
 
         def render_pixels(pipeline_state) -> Dict[str, jnp.ndarray]:
             """{camera: (num_envs, H, W, 3) uint8} from a BATCHED mjx state."""
-            cam_xpos = pipeline_state.cam_xpos[:, cam_ids_jnp]
-            cam_xmat = pipeline_state.cam_xmat[:, cam_ids_jnp]
             (rgb,) = render_callable(
                 pipeline_state.geom_xpos, pipeline_state.geom_xmat,
-                cam_xpos, cam_xmat,
+                pipeline_state.cam_xpos[:, cam_id],
+                pipeline_state.cam_xmat[:, cam_id],
             )
-            rgb = (jnp.clip(rgb, 0.0, 1.0) * 255).astype(jnp.uint8)
+            return {camera: _to_uint8(rgb)}
+
+        return render_pixels
+
+    def _build_multi_render_fn(self):
+        m, d, rc = self._m, self._d, self._rc
+        cameras, local_cam_indices = self._cameras, self._local_cam_indices
+        n_cameras = len(cameras)
+        num_envs, height, width = self._num_envs, self._height, self._width
+        cam_ids_wp = wp.array(self._cam_ids, dtype=int)
+        cam_ids_jnp = jnp.asarray(self._cam_ids, dtype=jnp.int32)
+
+        def warp_render(
+                geom_xpos_in: wp.array2d(dtype=wp.vec3f),
+                geom_xmat_in: wp.array2d(dtype=wp.mat33f),
+                cam_xpos_in: wp.array2d(dtype=wp.vec3f),
+                cam_xmat_in: wp.array2d(dtype=wp.mat33f),
+                rgb_out: wp.array4d(dtype=wp.vec3f),
+        ):
+            wp.copy(d.geom_xpos, geom_xpos_in)
+            wp.copy(d.geom_xmat, geom_xmat_in)
+            wp.launch(
+                _write_cam_pose_multi, dim=(num_envs, n_cameras),
+                inputs=[cam_ids_wp, cam_xpos_in, cam_xmat_in],
+                outputs=[d.cam_xpos, d.cam_xmat],
+            )
+            mjw.refit_bvh(m, d, rc)
+            mjw.render(m, d, rc)
+            # One render pass fills the shared context; read each active
+            # camera's image out of it into its slice of the single output.
+            rgb_local = wp.zeros((num_envs, height, width), dtype=wp.vec3f)
+            for i, local_index in enumerate(local_cam_indices):
+                mjw.get_rgb(rc, camera_index=local_index, rgb_out=rgb_local)
+                wp.copy(rgb_out[i], rgb_local)
+
+        render_callable = ffi.jax_callable(
+            warp_render,
+            num_outputs=1,
+            output_dims={'rgb_out': (n_cameras, num_envs, height, width)},
+            graph_mode=ffi.GraphMode.WARP,
+        )
+
+        def render_pixels(pipeline_state) -> Dict[str, jnp.ndarray]:
+            """{camera: (num_envs, H, W, 3) uint8} from a BATCHED mjx state."""
+            (rgb,) = render_callable(
+                pipeline_state.geom_xpos, pipeline_state.geom_xmat,
+                pipeline_state.cam_xpos[:, cam_ids_jnp],
+                pipeline_state.cam_xmat[:, cam_ids_jnp],
+            )
+            rgb = _to_uint8(rgb)
             return {name: rgb[i] for i, name in enumerate(cameras)}
 
         return render_pixels
 
-    def _render_pixels(self, pipeline_state) -> Dict[str, jnp.ndarray]:
-        return self._render_pixels_fn(pipeline_state)
-
     def _build_obs(self, state_obs, pixels: Mapping[str, jnp.ndarray]):
-        if self._obs_mode == 'state':
-            return state_obs
         obs: Dict[str, jnp.ndarray] = {
-            f'pixels/{name}': pixels[name] for name in self._cameras
+            f'pixels/{name}': img for name, img in pixels.items()
         }
         if self._obs_mode == 'pixels':
             return obs
         # pixels+state
         if isinstance(state_obs, Mapping):
-            obs['state'] = state_obs.get('state', state_obs)
-        else:
-            obs['state'] = state_obs
+            state_obs = state_obs.get('state', state_obs)
+        obs['state'] = state_obs
         return obs
-
-    def _buffer_key(self, camera: str) -> str:
-        return f'_gpu_pixel_buffer/{camera}'
 
     def _init_frame_buffer(self, pixels):
         if self._frame_stack <= 1:
@@ -305,20 +341,16 @@ class GpuPixelObservationWrapper(Wrapper):
         pixels = self._render_pixels(state.pipeline_state)
 
         if self._frame_stack > 1:
-            pixels_out = {}
-            for name in self._cameras:
-                stacked = self._init_frame_buffer(pixels[name])
-                state.info[self._buffer_key(name)] = stacked
-                pixels_out[name] = stacked
-        else:
-            pixels_out = pixels
+            for name, img in tuple(pixels.items()):
+                pixels[name] = self._init_frame_buffer(img)
+                state.info[f'_gpu_pixel_buffer/{name}'] = pixels[name]
 
         # Stash the inner env's native obs so step() can hand it back down
         # unchanged on the next call. The inner Episode/AutoReset/Vmap chain
         # (below) is never aware we replace `obs` with a pixel dict. Feeding
         # it our dict back in would break its internal action_repeat scan.
         state.info['_orig_state_obs'] = orig_obs
-        return state.replace(obs=self._build_obs(orig_obs, pixels_out))
+        return state.replace(obs=self._build_obs(orig_obs, pixels))
 
     def step(self, state: State, action: jax.Array) -> State:
         inner_state = state.replace(obs=state.info['_orig_state_obs'])
@@ -335,21 +367,15 @@ class GpuPixelObservationWrapper(Wrapper):
             # check whether "first_pipeline_state" is in the info. Without
             # it, a done state is terminal and never stepped again anyway.
             done = state.done if 'first_pipeline_state' in state.info else None
-            pixels_out = {}
-            for name in self._cameras:
-                key = self._buffer_key(name)
-                prev = state.info.get(
-                    key, self._init_frame_buffer(pixels[name])
-                )
-                stacked = self._update_frame_buffer(pixels[name], prev, done)
-                state.info[key] = stacked
-                pixels_out[name] = stacked
-        else:
-            pixels_out = pixels
+            for name, img in tuple(pixels.items()):
+                key = f'_gpu_pixel_buffer/{name}'
+                prev = state.info.get(key, self._init_frame_buffer(img))
+                pixels[name] = self._update_frame_buffer(img, prev, done)
+                state.info[key] = pixels[name]
 
         state.info['_orig_state_obs'] = orig_obs
 
-        return state.replace(obs=self._build_obs(orig_obs, pixels_out))
+        return state.replace(obs=self._build_obs(orig_obs, pixels))
 
     # ------------------------------------------------------------------
     # Observation size
