@@ -1,8 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Light by default; a saved choice from the toggle wins. Runs before paint to avoid a flash.
+    try { var t = localStorage.getItem('crax-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
   <title>CRAX: Fast Safe Reinforcement Learning Benchmarking</title>
   <meta name="description" content="CRAX is a GPU-accelerated safe reinforcement learning benchmark built on MuJoCo XLA (MJX) and JAX: eight tasks, three difficulty levels, seven SafeRL baselines and up to 200x faster training than CPU-based safety benchmarks.">
   <meta property="og:title" content="CRAX: Fast Safe Reinforcement Learning Benchmarking">
@@ -43,11 +48,16 @@
   <nav>
     <a href="#play">Play</a>
     <a href="#environments">Environments</a>
-    <a href="#results">Results</a>
     <a href="#algorithms">Algorithms</a>
+    <a href="#results">Results</a>
     <a href="#start">Get started</a>
     <a href="#citation">Cite</a>
   </nav>
+  <button class="theme-toggle" type="button" role="switch" aria-checked="false" aria-label="Dark mode" title="Toggle light / dark">
+    <svg class="theme-icon theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span class="theme-track"><span class="theme-knob"></span></span>
+    <svg class="theme-icon theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" fill="currentColor"/></svg>
+  </button>
 </header>
 
 <main id="top">
@@ -55,7 +65,7 @@
   <!-- ============================== HERO ============================== -->
   <section class="hero">
     <img class="char char-point" src="static/chars/point.svg" alt="" aria-hidden="true">
-    <p class="eyebrow">Constrained RL Accelerated with JAX</p>
+    <p class="eyebrow eyebrow-acronym"><b>C</b>onstrained <b>R</b>L <b>A</b>ccelerated with JA<b>X</b></p>
     <h1>CRAX: Fast Safe Reinforcement Learning Benchmarking</h1>
     <p class="authors">
       <span>Tristan Tomilin</span>
@@ -66,13 +76,9 @@
     </p>
     <p class="affiliation">Eindhoven University of Technology</p>
     <div class="links">
-      <a class="btn btn-primary" href="https://arxiv.org/abs/2606.20376">
+      <a class="btn btn-primary" href="https://arxiv.org/pdf/2606.20376">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14 2v6h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         Paper
-      </a>
-      <a class="btn" href="arXiv.pdf">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        PDF
       </a>
       <a class="btn" href="https://github.com/TTomilin/CRAX">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a10.9 10.9 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
@@ -104,7 +110,6 @@
 
   <!-- ============================== ABSTRACT ============================== -->
   <section class="section narrow" id="abstract">
-    <img class="char char-humanoid" src="static/chars/humanoid.svg" alt="" aria-hidden="true" loading="lazy">
     <h2>Abstract</h2>
     <p>
       Safety is a core concern for deploying reinforcement learning (RL) agents in real-world domains such as robotics
@@ -120,15 +125,13 @@
 
   <!-- ============================== PLAY ============================== -->
   <section class="section" id="play">
-    <img class="char char-walker" src="static/chars/walker.svg" alt="" aria-hidden="true" loading="lazy">
+    <span class="char char-humanoid" aria-hidden="true"><img src="static/chars/humanoid.svg" alt="" loading="lazy"><span class="thought thought-left">Up for a challenge?</span></span>
     <div class="section-head">
       <h2>Can you beat the agents?</h2>
-      <p class="eyebrow eyebrow-left">Human vs. SafeRL</p>
       <p>
-        Put your own safe policy to the test. Drive the Point agent through a full episode of any navigation suite and
-        see where you land on the leaderboard against the eight baselines from the paper. Collect reward, but watch
-        the <span class="tag tag-cost">cost</span> counter: the agents had to keep it under a budget of <b>25</b>
-        per episode, and so do you.
+        Put your own safe policy to the test. Drive the Point agent through a full episode of a safe navigation task and
+        see where you land on the leaderboard against the eight baselines from the paper. Collect reward, but watch out for
+        the <span class="tag tag-cost">cost</span> counter! You have a safety budget of <b>25</b> per episode.
       </p>
     </div>
 
@@ -195,24 +198,24 @@
           </div>
 
           <div class="env-info" data-env-info="safe_goal_point">
-            <h4>Safe Goal</h4>
-            <p>Reach the green goals (+1 each; they respawn). Hazard discs cost more the closer you are to their centre;
-              tall pillars (levels 2–3) and the outer wall cost 3 per contact.</p>
+            <h4>Point Goal</h4>
+            <p>Reach the green goals (+1 each; they respawn). Hazard discs cost more the closer you are to their centre.
+              Tall pillars (levels 2–3) and the outer wall cost 3 per contact.</p>
           </div>
           <div class="env-info" data-env-info="safe_push_point" hidden>
-            <h4>Safe Push</h4>
+            <h4>Point Push</h4>
             <p>Push the blue block into the green goal. Reward is dense in block-to-goal and agent-to-block distance.
               The goal drifts at levels 2 and 3. Only the agent pays cost for touching hazards.</p>
           </div>
           <div class="env-info" data-env-info="safe_button_point" hidden>
-            <h4>Safe Button</h4>
-            <p>Bump the button under the green marker (+1), then a new one is picked. Pressing a wrong button costs 1;
-              the cubes and the orbiting purple gremlins cost 3 per contact.</p>
+            <h4>Point Button</h4>
+            <p>Bump the button under the green marker (+1), then a new one is picked. Pressing a wrong button costs 1.
+              The cubes and the orbiting purple gremlins cost 3 per contact.</p>
           </div>
           <div class="env-info" data-env-info="safe_circle_point" hidden>
-            <h4>Safe Circle</h4>
+            <h4>Point Circle</h4>
             <p>Run laps around the green circle: reward is tangential speed, damped by distance from the ring. Leaving
-              the yellow boundary costs 0.1 per step; levels 2–3 add hazards inside.</p>
+              the yellow boundary costs 0.1 per step. Levels 2–3 add hazards inside.</p>
           </div>
         </aside>
 
@@ -264,29 +267,29 @@
 
   <!-- ============================== ENVIRONMENTS ============================== -->
   <section class="section" id="environments">
-    <img class="char char-ant" src="static/chars/ant.svg" alt="" aria-hidden="true" loading="lazy">
+    <span class="char char-ant" aria-hidden="true"><img src="static/chars/ant.svg" alt="" loading="lazy"><span class="thought">So many environments to explore!</span></span>
     <div class="section-head">
       <h2>Environments</h2>
       <p>
-        Eight suites, each with a reward and a separate cost signal. Goal, Push, Circle and Velocity descend from
-        Safety-Gymnasium; Pathway, Height, Lift and Reach are new. Five constraint types cover the space:
+        Eight tasks, each with a distinct reward and cost signal. There are five constraint types across the tasks:
         <span class="tag">hazards</span> <span class="tag">velocity</span> <span class="tag">height</span>
         <span class="tag">contact</span> <span class="tag">boundary</span>.
       </p>
     </div>
 
     <div class="env-grid">
-      <figure><img src="static/envs/goal.jpg" alt="Safe Goal" loading="lazy"><figcaption><b>Safe Goal</b>Reach the goal without colliding with the hazards</figcaption></figure>
-      <figure><img src="static/envs/push.jpg" alt="Safe Push" loading="lazy"><figcaption><b>Safe Push</b>Push the block to the goal while avoiding obstacles</figcaption></figure>
-      <figure><img src="static/envs/circle.jpg" alt="Safe Circle" loading="lazy"><figcaption><b>Safe Circle</b>Move along a circular path while avoiding hazards</figcaption></figure>
-      <figure><img src="static/envs/reacher.jpg" alt="Safe Reacher" loading="lazy"><figcaption><b>Safe Reacher</b>Reach the target without touching the hazards</figcaption></figure>
-      <figure><img src="static/envs/lift.jpg" alt="Safe Lift" loading="lazy"><figcaption><b>Safe Lift</b>Move forward while lifting designated legs</figcaption></figure>
-      <figure><img src="static/envs/pathway.jpg" alt="Safe Pathway" loading="lazy"><figcaption><b>Safe Pathway</b>Traverse the path without stepping on the hazards</figcaption></figure>
-      <figure><img src="static/envs/velocity.jpg" alt="Safe Velocity" loading="lazy"><figcaption><b>Safe Velocity</b>Move fast while adhering to a velocity limit</figcaption></figure>
-      <figure><img src="static/envs/height.jpg" alt="Safe Height" loading="lazy"><figcaption><b>Safe Height</b>Move forward under the height bound</figcaption></figure>
+      <figure><img src="static/envs/goal.jpg" alt="Safe Goal" loading="lazy"><figcaption><b>Point Goal</b>Reach the goal without colliding with the hazards</figcaption></figure>
+      <figure><img src="static/envs/push.jpg" alt="Safe Push" loading="lazy"><figcaption><b>Point Push</b>Push the block to the goal while avoiding obstacles</figcaption></figure>
+      <figure><img src="static/envs/circle.jpg" alt="Safe Circle" loading="lazy"><figcaption><b>Point Circle</b>Move along a circular path while avoiding hazards</figcaption></figure>
+      <figure><img src="static/envs/reacher.jpg" alt="Safe Reacher" loading="lazy"><figcaption><b>Reacher Reach</b>Reach the target without touching the hazards</figcaption></figure>
+      <figure><img src="static/envs/lift.jpg" alt="Safe Lift" loading="lazy"><figcaption><b>Spider Lift</b>Move forward while lifting designated legs</figcaption></figure>
+      <figure><img src="static/envs/pathway.jpg" alt="Safe Pathway" loading="lazy"><figcaption><b>Walker Pathway</b>Traverse the path without stepping on the hazards</figcaption></figure>
+      <figure><img src="static/envs/velocity.jpg" alt="Safe Velocity" loading="lazy"><figcaption><b>Ant Velocity</b>Move fast while adhering to a velocity limit</figcaption></figure>
+      <figure><img src="static/envs/height.jpg" alt="Safe Height" loading="lazy"><figcaption><b>Humanoid Height</b>Move forward under the height bound</figcaption></figure>
     </div>
 
-    <h3>Agents &times; tasks</h3>
+    <h3>Agents &times; Tasks</h3>
+    <p class="lead">CRAX tasks support different agent morphologies.</p>
     <div class="table-wrap">
       <table class="matrix">
         <thead>
@@ -309,7 +312,7 @@
 
     <h3>Three difficulty levels</h3>
     <p class="lead">Each suite ramps from a lenient setting most methods can solve to one that leaves ample room for
-      improvement: more and more varied hazards, smaller goals, moving targets, stricter bounds or more restricted limbs.</p>
+      improvement: more varied hazards, smaller goals, moving targets, or stricter bounds.</p>
     <div class="levels" data-levels>
       <div class="seg" role="tablist" aria-label="Suite">
         <button role="tab" data-suite="safe_point_goal" aria-selected="true">Goal</button>
@@ -323,49 +326,112 @@
       <div class="level-row">
         <figure><img data-level="1" src="static/levels/safe_point_goal_level_1.jpg" alt="Level 1" loading="lazy"><figcaption>Level 1</figcaption></figure>
         <figure><img data-level="2" src="static/levels/safe_point_goal_level_2.jpg" alt="Level 2" loading="lazy"><figcaption>Level 2</figcaption></figure>
-        <figure><img data-level="3" src="static/levels/safe_point_goal_level_3.jpg" alt="Level 3" loading="lazy"><figcaption>Level 3</figcaption></figure>
+        <figure class="level-hard"><span class="char char-point-tired" aria-hidden="true"><img src="static/chars/point_tired.svg" alt="" loading="lazy"><span class="thought thought-left">Eh, too difficult!</span></span><img data-level="3" src="static/levels/safe_point_goal_level_3.jpg" alt="Level 3" loading="lazy"><figcaption>Level 3</figcaption></figure>
       </div>
     </div>
 
     <h3>Learning from pixels</h3>
     <p class="lead">Every task exposes an egocentric camera mounted on the agent and an allocentric camera observing it
       from outside. Frames are rendered on the GPU inside the same compiled loop as the simulation, so pixel
-      observations never leave the device.</p>
+      observations never leave the device. Policies trained from pixels receive these views at 64&times;64.</p>
     <div class="views">
-      <figure><div><img src="static/views/point_goal_ego.jpg" alt="" loading="lazy"><img src="static/views/point_goal_allo.jpg" alt="" loading="lazy"></div><figcaption>Point Goal</figcaption></figure>
-      <figure><div><img src="static/views/walker_pathway_ego.jpg" alt="" loading="lazy"><img src="static/views/walker_pathway_allo.jpg" alt="" loading="lazy"></div><figcaption>Walker Pathway</figcaption></figure>
-      <figure><div><img src="static/views/point_circle_ego.jpg" alt="" loading="lazy"><img src="static/views/point_circle_allo.jpg" alt="" loading="lazy"></div><figcaption>Point Circle</figcaption></figure>
+      <figure><div class="view-clip"><video autoplay loop muted playsinline preload="metadata" poster="static/views/point_goal.jpg"><source src="static/views/point_goal.mp4" type="video/mp4"></video><span class="view-tag">Egocentric</span><span class="view-tag view-tag-allo">Allocentric</span></div><figcaption>Point Goal</figcaption></figure>
+      <figure><div class="view-clip"><video autoplay loop muted playsinline preload="metadata" poster="static/views/walker_pathway.jpg"><source src="static/views/walker_pathway.mp4" type="video/mp4"></video><span class="view-tag">Egocentric</span><span class="view-tag view-tag-allo">Allocentric</span></div><figcaption>Walker Pathway</figcaption></figure>
+      <figure><div class="view-clip"><video autoplay loop muted playsinline preload="metadata" poster="static/views/point_circle.jpg"><source src="static/views/point_circle.mp4" type="video/mp4"></video><span class="view-tag">Egocentric</span><span class="view-tag view-tag-allo">Allocentric</span></div><figcaption>Point Circle</figcaption></figure>
     </div>
-    <p class="caption">Egocentric (left of each pair) and allocentric (right) views. Policies receive them at 64&times;64.</p>
+  </section>
+
+  <!-- ============================== ALGORITHMS ============================== -->
+  <section class="section" id="algorithms">
+    <div class="section-head">
+      <h2>Algorithms</h2>
+      <p>All baselines share one fully compiled JAX training loop with hooks for custom losses and constraint handling,
+        so adding a method means writing its loss, not its infrastructure. Select one with <code>--alg</code>.</p>
+    </div>
+    <div class="algo-grid">
+      <div class="algo"><code>ppo</code><b>PPO</b><span>Unconstrained on-policy reference</span></div>
+      <div class="algo"><code>ppo_cost</code><b>PPO-Cost</b><span>Cost folded into the reward as a penalty</span></div>
+      <div class="algo"><code>ppo_lag</code><b>PPO-Lagrangian</b><span>Primal-dual with a learned multiplier</span></div>
+      <div class="algo"><code>ppo_pid</code><b>PPO-PID</b><span>PID-controlled Lagrange multiplier</span></div>
+      <div class="algo"><code>ppo_saute</code><b>PPO-Sauté</b><span>Safety budget augmented into the state</span></div>
+      <div class="algo"><code>p3o</code><b>P3O</b><span>Penalized proximal policy optimization</span></div>
+      <div class="algo"><code>focops</code><b>FOCOPS</b><span>First-order constrained optimization in policy space</span></div>
+      <div class="algo"><code>crpo</code><b>CRPO</b><span>Alternates reward and cost steps, no multiplier</span></div>
+      <div class="algo algo-off"><code>sac</code><b>SAC</b><span>Unconstrained off-policy reference</span></div>
+      <div class="algo algo-off"><code>sac_lag</code><b>SAC-Lagrangian</b><span>Off-policy primal-dual</span></div>
+      <div class="algo algo-off"><code>sac_pid</code><b>SAC-PID</b><span>Off-policy PID Lagrangian</span></div>
+    </div>
   </section>
 
   <!-- ============================== RESULTS ============================== -->
   <section class="section" id="results">
-    <img class="char char-hopper" src="static/chars/hopper.svg" alt="" aria-hidden="true" loading="lazy">
     <div class="section-head">
       <h2>Results</h2>
     </div>
 
-    <div class="result">
+    <div class="result result-speed">
       <div class="result-text">
         <h3>Two orders of magnitude faster</h3>
-        <p>On identical hardware, Safety-Gymnasium saturates at 3K–20K steps per second and runs out of CPU memory past
-          256 environments. CRAX keeps scaling to thousands of parallel environments and peaks at roughly <b>1M SPS</b>
-          on Point Goal and Ant Velocity and 340K SPS on Humanoid Velocity: <b>25–180×</b> the peak of
-          Safety-Gymnasium.</p>
-        <p>The full evaluation suite (algorithms × environments × levels × seeds) is hundreds of runs and trillions of
-          environment steps. CRAX completes it in <b>2 weeks</b> on a single H100; the same study on Safety-Gymnasium
-          would take close to a year.</p>
+        <p>On identical hardware, CRAX runs <b>25–180×</b> faster than the peak of Safety-Gymnasium. Safety-Gymnasium
+          saturates at 3K–20K steps per second and runs out of CPU memory at a few hundrer parallel environments. CRAX
+          keeps scaling to thousands of parallel environments and peaks at roughly <b>1M SPS</b>
+          on Point Goal and Ant Velocity and 340K SPS on Humanoid Velocity. </p>
       </div>
-      <figure class="result-fig"><img src="static/figs/fig6.png" alt="Steps per second of CRAX and Safety-Gymnasium versus number of parallel environments" loading="lazy"></figure>
+      <figure class="result-fig"><span class="char char-ant-run" aria-hidden="true"><img src="static/chars/ant_run.svg" alt="" loading="lazy"><span class="thought">Wow, so fast!</span></span><img src="static/figs/fig6.png" alt="Steps per second of CRAX and Safety-Gymnasium versus number of parallel environments" loading="lazy"></figure>
+      <div class="result-text result-wide">
+        <p>The full CRAX evaluation suite (algorithms × environments × levels × seeds) is hundreds of runs and trillions of
+          environment steps. CRAX completes it in <b>2 weeks</b> on a single H100. The same study on Safety-Gymnasium
+          would take close to a <b>year</b>!</p>
+      </div>
+    </div>
+
+    <h3>Ramp up the seeds</h3>
+    <p class="lead">Few seeds give noisy results, and many seeds used to be too expensive. On Humanoid Height, three seeds
+      leave the methods' confidence bands overlapping. CRAX runs twenty seeds in about six hours, enough for a clear
+      ranking.</p>
+    <div class="seed-compare">
+      <figure class="seed-card seed-bad">
+        <div class="seed-head"><b>3 seeds</b><span class="seed-row" aria-hidden="true"><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""></span><span class="seed-time">~1 h</span></div>
+        <img class="seed-plot" src="static/figs/seeds_1.png" alt="Humanoid Height reward curves of all methods averaged over 3 seeds, with wide overlapping confidence bands" loading="lazy">
+        <figcaption><span class="seed-verdict" aria-hidden="true">&#10007;</span>Very noisy results</figcaption>
+      </figure>
+      <div class="seed-mid">
+        <span class="char char-walker" aria-hidden="true"><img src="static/chars/walker.svg" alt="" loading="lazy"><span class="thought">Seeds are finally cheap!</span></span>
+        <span class="seed-scatter" aria-hidden="true"><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""></span>
+        <div class="seed-arrow"><b>+17&times;</b> seeds</div>
+      </div>
+      <figure class="seed-card seed-good">
+        <div class="seed-head"><b>20 seeds</b><span class="seed-row seed-row-many" aria-hidden="true"><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""><img src="static/chars/seed.svg" alt=""></span><span class="seed-time">~6 h</span></div>
+        <img class="seed-plot" src="static/figs/seeds_2.png" alt="Humanoid Height reward curves of all methods averaged over 20 seeds, with tight separated confidence bands" loading="lazy">
+        <figcaption><span class="seed-verdict" aria-hidden="true">&#10003;</span>A clear ranking of methods</figcaption>
+      </figure>
+    </div>
+
+    <div class="result">
+      <div class="result-text">
+        <h3>How many seeds are enough?</h3>
+        <p>CRAX's throughput lets us achieve reliable results. We run 20 seeds on every task and measure how the 95%
+          confidence interval narrows as seeds are added. Relative to the mean, it shrinks from about 90% at two seeds
+          to 40% at three and 22% at five, after which gains are small.</p>
+        <p>The curves also show that some tasks are far more volatile than others. Point Goal and Point Circle are
+          tight from the start, while Spider Lift and Humanoid Velocity stay wide well past three seeds. A seed count
+          that suffices for one task can mislead on another. <b>10 seeds</b> keep the interval within 30% of the mean
+          on every task.</p>
+      </div>
+      <figure class="result-fig result-fig-sm"><img src="static/figs/fig7.png" alt="Confidence interval width versus number of seeds" loading="lazy"></figure>
     </div>
 
     <div class="result result-stack">
       <div class="result-text">
-        <h3>No method dominates</h3>
-        <p>Seven SafeRL baselines plus unconstrained PPO, trained for 500M steps with 10 seeds each on every Level 1
-          task. P3O and FOCOPS are the strongest overall; PPOLag is the only baseline that satisfies every cost bound on
-          Levels 2 and 3, but at the price of reward. The dashed line marks the cost threshold <i>d</i> = 25.</p>
+        <h3>Evaluation on Level 1</h3>
+        <p>Seven SafeRL baselines plus unconstrained PPO, trained for 500M steps with 10 seeds on every Level 1 task.
+          The dashed line marks the cost threshold <i>d</i> = 25. Methods strike different trade-offs between
+          performance and safety, and none is best everywhere.</p>
+        <p>PPO sets an example of obtainable reward when safety is ignored. The Lagrangian methods keep cost close to
+          the threshold: PPOPID stays within it on every task, PPOLag on all but one. PPOCost settles for a compromise
+          with no guarantee of satisfying the constraint, while PPOSauté is safe on Reacher, Height and Pathway but
+          otherwise behaves much like PPO. FOCOPS is strongest on navigation (Goal, Push) and Reacher, yet weakest on
+          forward locomotion (Lift, Height, Pathway).</p>
       </div>
       <figure class="result-fig"><img src="static/figs/fig4.png" alt="Reward and cost of baselines on Level 1 tasks" loading="lazy"></figure>
     </div>
@@ -390,47 +456,110 @@
       </table>
     </div>
 
-    <div class="result-pair">
-      <div class="result">
-        <div class="result-text">
-          <h3>Safety from pixels is open</h3>
-          <p>Every method earns less reward from egocentric frames than from state vectors, and less still from
-            allocentric frames. No method learns to push the block from allocentric pixels, and on the remaining five
-            environments none learns a meaningful policy from pixels at all.</p>
-        </div>
-        <figure class="result-fig"><img src="static/figs/fig5.png" alt="Reward and cost from vector, egocentric and allocentric observations" loading="lazy"></figure>
+    <div class="result result-pixels">
+      <div class="result-text">
+        <h3>Vision makes learning a safe policy harder</h3>
+        <p>Every method earns less reward from egocentric frames than from state vectors, and less still from
+          allocentric frames. No method learns to push the block from allocentric pixels, and on the remaining five
+          environments none learns a meaningful policy from pixels at all.</p>
       </div>
-      <div class="result">
-        <div class="result-text">
-          <h3>How many seeds are enough?</h3>
-          <p>Throughput makes reliability studies cheap. Relative to the mean, the 95% confidence interval shrinks from
-            about 90% at two seeds to 40% at three and 22% at five, after which gains are small.</p>
-        </div>
-        <figure class="result-fig"><img src="static/figs/fig7.png" alt="Confidence interval width versus number of seeds" loading="lazy"></figure>
-      </div>
+      <figure class="result-fig"><img src="static/figs/fig5.png" alt="Reward and cost from vector, egocentric and allocentric observations" loading="lazy"></figure>
     </div>
-  </section>
 
-  <!-- ============================== ALGORITHMS ============================== -->
-  <section class="section" id="algorithms">
-    <div class="section-head">
-      <h2>Algorithms</h2>
-      <p>All baselines share one fully compiled JAX training loop with hooks for custom losses and constraint handling,
-        so adding a method means writing its loss, not its infrastructure. Select one with <code>--alg</code>.</p>
+    <div class="pixel-scene" aria-hidden="true">
+      <span class="char char-point-puzzled"><img src="static/chars/point_puzzled.svg" alt="" loading="lazy"><span class="thought thought-left">Hmm, where could the goal be?</span></span>
+      <img class="pixel-hazards" src="static/chars/hazard_goal.svg" alt="" loading="lazy">
     </div>
-    <div class="algo-grid">
-      <div class="algo"><code>ppo</code><b>PPO</b><span>Unconstrained on-policy reference</span></div>
-      <div class="algo"><code>ppo_cost</code><b>PPO-Cost</b><span>Cost folded into the reward as a penalty</span></div>
-      <div class="algo"><code>ppo_lag</code><b>PPO-Lagrangian</b><span>Primal-dual with a learned multiplier</span></div>
-      <div class="algo"><code>ppo_pid</code><b>PPO-PID</b><span>PID-controlled Lagrange multiplier</span></div>
-      <div class="algo"><code>ppo_saute</code><b>PPO-Sauté</b><span>Safety budget augmented into the state</span></div>
-      <div class="algo"><code>p3o</code><b>P3O</b><span>Penalized proximal policy optimization</span></div>
-      <div class="algo"><code>focops</code><b>FOCOPS</b><span>First-order constrained optimization in policy space</span></div>
-      <div class="algo"><code>crpo</code><b>CRPO</b><span>Alternates reward and cost steps, no multiplier</span></div>
-      <div class="algo algo-off"><code>sac</code><b>SAC</b><span>Unconstrained off-policy reference</span></div>
-      <div class="algo algo-off"><code>sac_lag</code><b>SAC-Lagrangian</b><span>Off-policy primal-dual</span></div>
-      <div class="algo algo-off"><code>sac_pid</code><b>SAC-PID</b><span>Off-policy PID Lagrangian</span></div>
+
+
+    <div class="result-more">
+      <h3>Varying safety requirements</h3>
+      <p class="lead">Real applications differ in how much risk they tolerate, so CRAX allows the cost bound to be adjustable.
+        We explore the effects of this by training PPOLag on Level 1 with bounds of 15, 25 (the default) and 35.</p>
+
+      <div class="curr-demo bound-demo">
+        <div class="curr-group bound-tight">
+          <p class="curr-kicker">Tight bound: 15</p>
+          <figure class="curr-clip">
+            <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/bounds/bound15.jpg"><source src="static/bounds/bound15.mp4" type="video/mp4"></video></div>
+            <figcaption><b>Point Goal - Level 1</b>The agent steers around the hazards.</figcaption>
+          </figure>
+        </div>
+        <div class="curr-vs" aria-hidden="true">vs</div>
+        <div class="curr-group bound-loose">
+          <p class="curr-kicker">Loose bound: 35</p>
+          <figure class="curr-clip">
+            <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/bounds/bound35.jpg"><source src="static/bounds/bound35.mp4" type="video/mp4"></video></div>
+            <figcaption><b>Point Goal - Level 1</b>The agent often cuts straight through them.</figcaption>
+          </figure>
+        </div>
+        <div class="bound-hopper" aria-hidden="true">
+          <span class="hopper-smug"><img src="static/chars/hopper_smirk.svg" alt="" loading="lazy"><span class="thought">Meh, I have plenty of budget left</span></span>
+          <span class="cost-pop">cost +1</span>
+          <svg class="hazard-disc" viewBox="-30 0 300 78"><path d="M6 74 H262" stroke="#a9dceb" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="2 9"/><ellipse cx="46" cy="30" rx="36" ry="8" fill="#f4a08f" stroke="#00041d" stroke-width="2.6"/><ellipse cx="228" cy="63" rx="36" ry="8" fill="#f4a08f" stroke="#00041d" stroke-width="2.6"/><ellipse cx="120" cy="50" rx="54" ry="11.5" fill="#f4a08f" stroke="#00041d" stroke-width="3"/></svg>
+        </div>
+      </div>
+      <p class="caption">One full Level 1 episode (1000 steps) of PPOLag per bound. Both collect almost the same reward.
+        Only the risk they take differs.</p>
     </div>
+
+    <div class="result result-stack curriculum-results">
+      <div class="result-text">
+        <p>PPOLag tracks each bound closely. Its cost settles on the dotted line every time. The trade-off is
+          <b>not symmetric</b>: tightening the bound from 25 to 15 costs more reward than loosening it to 35 gains,
+          most visibly on Point Push and Reacher Reach.</p>
+      </div>
+      <figure class="result-fig"><img src="static/figs/safety_bounds.png" alt="Reward and cost of PPOLag on Point Goal, Reacher Reach, Point Push and Point Circle under cost bounds of 15, 25 and 35" loading="lazy"></figure>
+    </div>
+
+    <div class="result-more curriculum">
+      <h3>Curriculum learning &amp; safety transfer</h3>
+      <p class="lead">Can easier levels or an unconstrained warm start help on the hardest tasks? We compare three regimes
+        under the same budget of 500M steps: <b>Normal</b> trains on Level 3 from scratch for all 500M steps.
+        <b>Curriculum</b> steps through Levels 1, 2 and 3 with 167M steps each, carrying parameters over.
+        <b>Transfer</b> trains an unconstrained PPO policy on Level 3 for 250M steps, then fine-tunes it with a safe
+        RL method for the remaining 250M.</p>
+
+      <div class="curr-demo">
+        <div class="curr-group curr-group-default">
+          <p class="curr-kicker">Normal: Level 3 directly</p>
+        <figure class="curr-clip">
+          <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/curriculum/default_level3.jpg"><source src="static/curriculum/default_level3.mp4" type="video/mp4"></video></div>
+          <figcaption><b>Level 3 <span class="curr-steps-tag">500M steps</span></b>Too careful!</figcaption>
+        </figure>
+        </div>
+        <div class="curr-vs" aria-hidden="true">vs</div>
+        <div class="curr-group curr-group-curriculum">
+          <p class="curr-kicker">Curriculum: Level 1 &rarr; 2 &rarr; 3</p>
+          <div class="curr-steps">
+            <figure class="curr-clip">
+              <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/curriculum/curriculum_level1.jpg"><source src="static/curriculum/curriculum_level1.mp4" type="video/mp4"></video></div>
+              <figcaption><b>Level 1 <span class="curr-steps-tag">167M steps</span></b>Learns to run with few hazards.</figcaption>
+            </figure>
+            <figure class="curr-clip">
+              <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/curriculum/curriculum_level2.jpg"><source src="static/curriculum/curriculum_level2.mp4" type="video/mp4"></video></div>
+              <figcaption><b>Level 2 <span class="curr-steps-tag">167M steps</span></b>Maintains a good pace while safe.</figcaption>
+            </figure>
+            <figure class="curr-clip curr-final">
+              <div class="curr-video"><video autoplay loop muted playsinline preload="metadata" poster="static/curriculum/curriculum_level3.jpg"><source src="static/curriculum/curriculum_level3.mp4" type="video/mp4"></video></div>
+              <figcaption><b>Level 3 <span class="curr-steps-tag">167M steps</span></b>Earns twice the reward!</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+      <p class="caption">P3O on Walker Pathway. Overlays show the running episode reward and cost; the cost bound is 25.</p>
+    </div>
+
+    <div class="result result-stack curriculum-results">
+      <div class="result-text">
+        <p>Neither curriculum learning nor safety transfer helps everywhere. On Walker Pathway, both raise the reward of PPOLag, PPOPID
+          and P3O while staying under the bound, since direct training leaves much of the safety budget unused. On
+          Reacher Reach, curriculum lifts PPOLag and P3O, but transfer breaks safety for every method except FOCOPS. On
+          Point Goal, direct training remains best.</p>
+      </div>
+      <figure class="result-fig"><img src="static/figs/curriculum_transfer.png" alt="Reward and cost on Level 3 for Normal, Curriculum and Transfer training of PPOLag, PPOPID, P3O and FOCOPS" loading="lazy"></figure>
+    </div>
+
   </section>
 
   <!-- ============================== GET STARTED ============================== -->
@@ -475,7 +604,6 @@ state = reset_fn(rng)
 
   <!-- ============================== CITATION ============================== -->
   <section class="section narrow" id="citation">
-    <img class="char char-ant-flip" src="static/chars/ant_flip.svg" alt="" aria-hidden="true" loading="lazy">
     <h2>Citation</h2>
     <div class="bibtex">
       <button class="copy" data-copy="#bibtex">Copy</button>
@@ -499,6 +627,17 @@ state = reset_fn(rng)
 </footer>
 
 <script>
+  // Light / dark switch.
+  document.querySelectorAll('.theme-toggle').forEach((btn) => {
+    const root = document.documentElement;
+    const sync = () => btn.setAttribute('aria-checked', root.dataset.theme === 'dark');
+    sync();
+    btn.addEventListener('click', () => {
+      root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      try { localStorage.setItem('crax-theme', root.dataset.theme); } catch (e) {}
+      sync();
+    });
+  });
   // Difficulty-level tabs.
   document.querySelectorAll('[data-levels]').forEach((root) => {
     root.querySelectorAll('[data-suite]').forEach((tab) => tab.addEventListener('click', () => {
