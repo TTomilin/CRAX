@@ -199,10 +199,21 @@ def compute_ppo_loss(
     entropy = jnp.mean(parametric_action_distribution.entropy(policy_logits, rng))
     entropy_loss = entropy_cost * -entropy
 
+    # Update-size diagnostics: KL(behaviour || target) via the low-variance
+    # k3 estimator, and the fraction of samples whose ratio was clipped.
+    log_rho = target_action_log_probs - behaviour_action_log_probs
+    approx_kl = jax.lax.stop_gradient(jnp.mean(rho_s - 1 - log_rho))
+    clip_fraction = jax.lax.stop_gradient(
+        jnp.mean((jnp.abs(rho_s - 1) > clipping_epsilon).astype(jnp.float32))
+    )
+
     total_loss = policy_loss + v_loss + entropy_loss
     return total_loss, {
         'total_loss': total_loss,
         'policy_loss': policy_loss,
         'v_loss': v_loss,
         'entropy_loss': entropy_loss,
+        'entropy': jax.lax.stop_gradient(entropy),
+        'approx_kl': approx_kl,
+        'clip_fraction': clip_fraction,
     }
