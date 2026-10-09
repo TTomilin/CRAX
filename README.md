@@ -1,5 +1,7 @@
 # CRAX: Constrained Reinforcement Learning Accelerated with JAX
 
+> 🌐 **Check out the [project page](https://ttomilin.github.io/CRAX/)** to try out CRAX yourself and claim a spot in the leaderboard!
+
 CRAX is a high-performance benchmark for **Constrained Reinforcement Learning (Safe RL)** built on top of [Brax](https://github.com/google/brax) and [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html). It provides GPU/TPU-accelerated environments with safety constraints and a suite of state-of-the-art safe RL algorithms.
 
 <p align="center">
