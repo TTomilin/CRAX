@@ -1,5 +1,5 @@
 """
-Population-based hyperparameter scheduling for PPO: MF-PBT, PBT or random search.
+Population-based hyperparameter scheduling for PPO and PPO-Lagrangian: MF-PBT, PBT or random search.
 
 Implements Multiple-Frequencies PBT (Doulazmi et al., 2025,
 https://arxiv.org/abs/2506.03225; reference code https://github.com/WaelDLZ/MF-PBT)
@@ -13,6 +13,11 @@ Multi-GPU: start one process per GPU with the same arguments plus
 `--pbt_worker_id i --pbt_num_workers N` (see scripts/snellius/). Workers own
 agents `i, i+N, i+2N, ...` and synchronise through `--pbt_dir`. Re-running
 the same command resumes from the last completed round.
+
+`--alg ppo_lag` trains PPO-Lagrangian agents (multiplier inherited on copy,
+`lagrangian_coef_rate` searched by default). Agents whose evaluation cost
+exceeds `--pbt_cost_limit` (default: `--safety_bound`) are penalised in the
+ranking, so the population can't buy reward by breaking the constraint.
 
 Example (single GPU, small smoke test):
     python -m training.train_pbt --env_name safe_velocity_ant --alg ppo --vision \
@@ -36,7 +41,7 @@ from crax import envs
 from crax.envs.limb_colors import colorize_env_limbs
 from training.config import build_base_parser, bool_type, _json_type
 from training.pbt import genetics
-from training.pbt.ppo_population import DYNAMIC_HPARAMS, PPOPopulationTrainer
+from training.pbt.ppo_population import ALGORITHM_HPARAMS, SUPPORTED_ALGORITHMS, PPOPopulationTrainer
 from training.pbt.store import PopulationStore
 from training.run_utils import (
     setup_gpu_environment, make_vision_network_factory, morphology_override, VISION_CAMERA_OVERRIDES,
@@ -44,6 +49,12 @@ from training.run_utils import (
 )
 
 PBT_ALGORITHMS = ('mfpbt', 'pbt', 'random_search')
+# Searched by default per --alg (any of ALGORITHM_HPARAMS[alg] may be passed to --pbt_hparams).
+DEFAULT_PBT_HPARAMS = {
+    'ppo': ['learning_rate', 'entropy_cost', 'clipping_epsilon'],
+    'ppo_lag': ['learning_rate', 'entropy_cost', 'clipping_epsilon', 'lagrangian_coef_rate'],
+}
+CONSTRAINED_ALGORITHMS = ('ppo_lag',)
 
 
 def add_pbt_args(parser):
@@ -62,10 +73,9 @@ def add_pbt_args(parser):
     g.add_argument('--pbt_num_rounds', type=int, default=None,
                    help='Number of rounds; default: ceil(num_timesteps / steps_per_round), i.e. '
                         '--num_timesteps is the per-agent budget.')
-    g.add_argument('--pbt_hparams', type=str, nargs='+',
-                   default=['learning_rate', 'entropy_cost', 'clipping_epsilon'],
-                   help=f'Hyperparameters to search/schedule (subset of {list(DYNAMIC_HPARAMS)}). '
-                        f'The others stay at their --<name> value.')
+    g.add_argument('--pbt_hparams', type=str, nargs='+', default=None,
+                   help=f'Hyperparameters to search/schedule (subset of {dict(ALGORITHM_HPARAMS)} for the '
+                        f'chosen --alg; default {DEFAULT_PBT_HPARAMS}). The others stay at their --<name> value.')
     g.add_argument('--pbt_search_space', type=_json_type, default=None,
                    help='JSON overrides of the default search space (training/pbt/genetics.py), e.g. '
                         '\'{"learning_rate": {"init_low": 3e-5, "init_high": 3e-4}}\'.')
@@ -78,6 +88,13 @@ def add_pbt_args(parser):
                    help="Metric to rank agents by. 'eval/...' keys run an evaluation (--num_eval_envs "
                         "episodes) after every round; 'episodic/...' keys use the training episodes "
                         "finished during the round (free, but noisier and lagging).")
+    g.add_argument('--pbt_cost_limit', type=float, default=None,
+                   help="Episodic cost above which an agent's fitness is penalised (eval/episode_cost for "
+                        "'eval/' fitness keys, episodic/cost otherwise). Default: --safety_bound for "
+                        f"{list(CONSTRAINED_ALGORITHMS)}, no limit for ppo.")
+    g.add_argument('--pbt_cost_penalty', type=float, default=10.0,
+                   help='fitness = score - penalty * max(0, cost - cost_limit). Large values approach a hard '
+                        'constraint (a violating agent ranks below feasible ones); 0 disables the cost term.')
     g.add_argument('--pbt_dir', type=str, default='runs/pbt',
                    help='Shared directory for agent checkpoints, worker barriers and resume state.')
     g.add_argument('--pbt_exp_name', type=str, default=None,
@@ -173,16 +190,26 @@ def build_video_fn(config, env_kwargs, vision_kwargs, episode_length, run_name):
     )
 
 
-def compute_fitness(metrics: Dict[str, float], key: str) -> float:
-    value = metrics.get(key)
-    if value is None or not np.isfinite(value):
-        return float('-inf')
-    return float(value)
+def cost_key_for(fitness_key: str) -> str:
+    return 'eval/episode_cost' if fitness_key.startswith('eval/') else 'episodic/cost'
+
+
+def cost_limit_for(config) -> Optional[float]:
+    if config.pbt_cost_limit is not None:
+        return config.pbt_cost_limit
+    return config.safety_bound if config.alg in CONSTRAINED_ALGORITHMS else None
+
+
+def compute_fitness(metrics: Dict[str, float], key: str, cost_limit: Optional[float] = None,
+                    cost_penalty: float = 0.0) -> float:
+    return genetics.penalised_fitness(
+        metrics.get(key), metrics.get(cost_key_for(key)), cost_limit, cost_penalty,
+    )
 
 
 def initial_hparams(config, search_space, num_agents: int, seed: int) -> List[Dict[str, float]]:
     """Fixed hyperparameters from the CLI; searched ones drawn per agent (identically on every worker)."""
-    base = {h: float(getattr(config, h)) for h in DYNAMIC_HPARAMS}
+    base = {h: float(getattr(config, h)) for h in ALGORITHM_HPARAMS[config.alg]}
     rng = np.random.default_rng(seed)
     draws = {name: spec.sample(rng, num_agents) for name, spec in search_space.items()}
     return [{**base, **{name: float(draws[name][a]) for name in search_space}} for a in range(num_agents)]
@@ -193,6 +220,8 @@ def summarise_population(
         frequencies: List[int],
         search_space: Dict[str, genetics.HyperparameterSpec],
         inheritance: Optional[genetics.Inheritance],
+        cost_key: Optional[str] = None,
+        cost_limit: Optional[float] = None,
 ) -> Dict[str, float]:
     """Flat dict of population-level metrics for wandb (computed on worker 0)."""
     n = len(summaries)
@@ -208,6 +237,9 @@ def summarise_population(
         'fitness/std': float(np.std(f)), 'fitness/num_diverged': int(n - finite.sum()),
         'pbt/best_agent': best,
     })
+    if cost_limit is not None:
+        costs = np.array([s['metrics'].get(cost_key, np.nan) for s in summaries], dtype=np.float64)
+        log['fitness/num_feasible'] = int(np.sum(costs <= cost_limit))
     per_pop = n // len(frequencies)
     for p, freq in enumerate(frequencies):
         pf = fitness[p * per_pop:(p + 1) * per_pop]
@@ -270,8 +302,8 @@ def main():
     parser = add_pbt_args(build_base_parser(description='Population-based training (MF-PBT) for CRAX PPO'))
     config = parser.parse_args()
 
-    if config.alg != 'ppo':
-        raise ValueError(f"train_pbt currently supports --alg ppo only (got '{config.alg}').")
+    if config.alg not in SUPPORTED_ALGORITHMS:
+        raise ValueError(f"train_pbt supports --alg {list(SUPPORTED_ALGORITHMS)} (got '{config.alg}').")
     if config.vision_privilege_mode != 'none':
         raise ValueError("train_pbt does not support --vision_privilege_mode.")
     if config.vision_camera is None:
@@ -286,7 +318,14 @@ def main():
     genetics.check_population_layout(num_agents, frequencies)
     if not 0 <= worker_id < num_workers:
         raise ValueError(f"--pbt_worker_id must be in [0, {num_workers}), got {worker_id}")
+    config.pbt_hparams = config.pbt_hparams or DEFAULT_PBT_HPARAMS[config.alg]
+    unusable = [h for h in config.pbt_hparams if h not in ALGORITHM_HPARAMS[config.alg]]
+    if unusable:
+        raise ValueError(f"--pbt_hparams {unusable} are not used by --alg {config.alg}; "
+                         f"choose from {list(ALGORITHM_HPARAMS[config.alg])}.")
     search_space = genetics.build_search_space(config.pbt_hparams, config.pbt_search_space)
+    cost_limit = cost_limit_for(config)
+    cost_key = cost_key_for(config.pbt_fitness_key)
     if config.pbt_fitness_key.startswith('eval/') and config.num_eval_envs <= 0:
         raise ValueError(f"--pbt_fitness_key {config.pbt_fitness_key} needs --num_eval_envs > 0")
 
@@ -308,6 +347,9 @@ def main():
     trainer_kwargs = dict(network_factory=network_factory) if network_factory else {}
     trainer = PPOPopulationTrainer(
         env,
+        algorithm=config.alg,
+        safety_bound=config.safety_bound,
+        initial_lambda_lagr=config.initial_lambda_lagr,
         steps_per_round=int(config.pbt_steps_per_round),
         episode_length=episode_length,
         num_envs=config.num_envs,
@@ -327,6 +369,9 @@ def main():
     )
     steps_per_round = trainer.steps_per_round
     num_rounds = config.pbt_num_rounds or int(np.ceil(config.num_timesteps / steps_per_round))
+    if cost_limit is not None:
+        print(f"{tag} fitness = {config.pbt_fitness_key} - {config.pbt_cost_penalty} * "
+              f"max(0, {cost_key} - {cost_limit})")
     print(f"{tag} {num_rounds} rounds x {steps_per_round} env steps per agent "
           f"({trainer.num_training_steps_per_round} PPO training steps/round), "
           f"population budget {num_rounds * steps_per_round * num_agents:.3e} env steps")
@@ -338,6 +383,7 @@ def main():
     store.check_or_write_meta(dict(
         num_agents=num_agents, frequencies=frequencies,
         pbt_algorithm=config.pbt_algorithm, hparams=list(search_space), seed=seed,
+        **({'alg': config.alg} if config.alg != 'ppo' else {}),  # absent in pre-ppo_lag stores
         env_name=config.env_name, difficulty=config.difficulty, vision=config.vision,
         steps_per_round=steps_per_round, num_envs=config.num_envs,
     ))
@@ -412,12 +458,13 @@ def main():
                 resume='allow',
                 group=config.wandb_group or f"pbt_{config.env_name}",
                 job_type=f"{config.pbt_algorithm}_{config.alg}",
-                tags=(config.wandb_tags or []) + ['PBT', config.pbt_algorithm.upper()],
+                tags=(config.wandb_tags or []) + ['PBT', config.pbt_algorithm.upper(), config.alg.upper()],
                 config={
                     **vars(config), 'seed': seed, 'episode_length': episode_length,
                     'pbt_effective_frequencies': frequencies, 'pbt_num_rounds_effective': num_rounds,
                     'pbt_steps_per_round_effective': steps_per_round,
                     'pbt_search_space_effective': {k: v.__dict__ for k, v in search_space.items()},
+                    'pbt_cost_limit_effective': cost_limit,
                 },
             )
             wandb.define_metric('pbt/round')
@@ -438,7 +485,7 @@ def main():
             env_steps[a] += steps_per_round
             if config.pbt_fitness_key.startswith('eval/'):
                 metrics.update(trainer.evaluate(states[a], eval_key(round_index)))
-            fitness = compute_fitness(metrics, config.pbt_fitness_key)
+            fitness = compute_fitness(metrics, config.pbt_fitness_key, cost_limit, config.pbt_cost_penalty)
             if not np.isfinite(fitness):
                 print(f"{tag} WARNING: agent {a} has non-finite fitness in round {round_index} "
                       f"('{config.pbt_fitness_key}' = {metrics.get(config.pbt_fitness_key)}); ranking it last.")
@@ -450,8 +497,13 @@ def main():
                 ),
                 state=trainer.export_agent(states[a]),
             )
+            constraint = ""
+            if cost_limit is not None:
+                constraint = f"cost={metrics.get(cost_key, float('nan')):.2f} "
+            if 'training/last_lambda_lagr' in metrics:
+                constraint += f"lambda={metrics['training/last_lambda_lagr']:.3g} "
             print(f"{tag} round {round_index}/{num_rounds - 1} agent {a}: fitness={fitness:.4f} "
-                  f"sps={metrics['training/sps']:.0f} "
+                  f"sps={metrics['training/sps']:.0f} {constraint}"
                   + " ".join(f"{h}={hparams[a][h]:.3g}" for h in search_space))
         train_time = time.time() - round_start
         store.mark_done(round_index)
@@ -462,7 +514,7 @@ def main():
 
         if is_main:
             step = (round_index + 1) * steps_per_round
-            log = summarise_population(summaries, frequencies, search_space, inheritance)
+            log = summarise_population(summaries, frequencies, search_space, inheritance, cost_key, cost_limit)
             log.update({
                 'pbt/round': round_index,
                 'pbt/env_steps_per_agent': step,

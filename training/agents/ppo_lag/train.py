@@ -145,9 +145,8 @@ def train(
     def post_step_fn(training_state: TrainingState, metrics: Metrics) -> Tuple[TrainingState, Metrics]:
         """Updates the Lagrange multiplier based on constraint violation."""
         avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        cost_violation = avg_cost - per_step_safety_bound
-        delta_lambda = cost_violation * lagrangian_coef_rate
-        updated_lambda_lagr = jax.nn.relu(training_state.aux_state + delta_lambda)
+        updated_lambda_lagr, cost_violation = ppo_lag_losses.update_lagrange_multiplier(
+            training_state.aux_state, avg_cost, per_step_safety_bound, lagrangian_coef_rate)
         new_training_state = training_state.replace(aux_state=updated_lambda_lagr)
         return new_training_state, {'lambda_lagr': updated_lambda_lagr, 'cost_violation': cost_violation}
 

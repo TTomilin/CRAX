@@ -189,7 +189,29 @@ DEFAULT_SEARCH_SPACE: Dict[str, HyperparameterSpec] = {
     'discounting': HyperparameterSpec(0.95, 0.997, 0.9, 0.999, space='one_minus'),
     'gae_lambda': HyperparameterSpec(0.9, 0.99, 0.8, 0.999, space='one_minus'),
     'reward_scaling': HyperparameterSpec(0.01, 1.0, 1e-3, 10.0),
+    'lagrangian_coef_rate': HyperparameterSpec(0.1, 30.0, 1e-3, 300.0),
 }
+
+
+def penalised_fitness(
+        score: Optional[float],
+        cost: Optional[float] = None,
+        cost_limit: Optional[float] = None,
+        cost_penalty: float = 0.0,
+) -> float:
+    """Ranking score of one agent: `score - cost_penalty * max(0, cost - cost_limit)`.
+
+    Without a cost limit (or penalty) this is the score itself. A missing or
+    non-finite score ranks last (-inf); so does a missing cost when a limit is
+    set, so a broken cost metric can't make an agent look safe.
+    """
+    if score is None or not np.isfinite(score):
+        return float('-inf')
+    if cost_limit is None or cost_penalty <= 0:
+        return float(score)
+    if cost is None or not np.isfinite(cost):
+        return float('-inf')
+    return float(score - cost_penalty * max(0.0, cost - cost_limit))
 
 
 def build_search_space(names: Sequence[str], overrides: Optional[Mapping[str, Mapping]] = None) -> Dict[str, HyperparameterSpec]:

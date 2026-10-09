@@ -1,4 +1,4 @@
-"""Round-based PPO learner for population-based training.
+"""Round-based PPO / PPO-Lagrangian learner for population-based training.
 
 `training.agents.ppo.train.train` runs one agent end-to-end with its
 hyperparameters baked into the compiled graph as Python constants. PBT instead
@@ -9,6 +9,13 @@ device axis of size 1) with every tunable hyperparameter passed in as a traced
 scalar. One compilation then serves every agent and every hyperparameter
 value: agents share the trainer and only differ in the `TrainingState`, env
 state and hyperparameter dict they pass in.
+
+`algorithm='ppo_lag'` adds the PPO-Lagrangian pieces of
+training/agents/ppo_lag/train.py: a cost critic, the Lagrangian advantage
+`adv - lambda * cost_adv`, and a multiplier update after every training step.
+The multiplier lives in `TrainingState.aux_state`, so an agent that copies
+another's network also inherits its multiplier, and the multiplier's learning
+rate (`lagrangian_coef_rate`) is one more traced hyperparameter.
 
 Agents are trained one after another on the process' GPU. Batching agents
 with `vmap` (as the Brax MF-PBT reference does) is not an option for pixel
@@ -33,6 +40,7 @@ from training.acme import running_statistics
 from training.acme import specs
 from training.agents.ppo import losses as ppo_losses
 from training.agents.ppo import networks as ppo_networks
+from training.agents.ppo_lag import losses as ppo_lag_losses
 from training.agents.ppo.train import (
     TrainingState, _maybe_wrap_env, _random_translate_pixels, _remove_pixels, _strip_weak_type, _unpmap,
 )
@@ -42,6 +50,12 @@ from training.types import PRNGKey
 DYNAMIC_HPARAMS = (
     'learning_rate', 'entropy_cost', 'clipping_epsilon', 'discounting', 'gae_lambda', 'reward_scaling',
 )
+# Per algorithm: every dynamic hyperparameter its compiled round takes.
+ALGORITHM_HPARAMS = {
+    'ppo': DYNAMIC_HPARAMS,
+    'ppo_lag': DYNAMIC_HPARAMS + ('lagrangian_coef_rate',),
+}
+SUPPORTED_ALGORITHMS = tuple(ALGORITHM_HPARAMS)
 
 # Agent state exported to / imported from the population store (numpy, no device axis).
 AgentBlob = Dict[str, Any]
@@ -60,7 +74,10 @@ class PPOPopulationTrainer:
             batch_size: int,
             num_minibatches: int,
             num_updates_per_batch: int,
-            network_factory: types.NetworkFactory[ppo_networks.PPONetworks] = ppo_networks.make_ppo_networks,
+            algorithm: str = 'ppo',
+            safety_bound: float = 0.0,
+            initial_lambda_lagr: float = 0.0,
+            network_factory: Optional[types.NetworkFactory[ppo_networks.PPONetworks]] = None,
             eval_env: Optional[envs.Env] = None,
             num_eval_envs: int = 128,
             deterministic_eval: bool = False,
@@ -73,6 +90,8 @@ class PPOPopulationTrainer:
             seed: int = 0,
             extra_fields: Tuple[str, ...] = ('truncation', 'episode_metrics', 'episode_done'),
     ):
+        if algorithm not in ALGORITHM_HPARAMS:
+            raise ValueError(f"Unsupported algorithm '{algorithm}'; choose from {SUPPORTED_ALGORITHMS}.")
         assert batch_size * num_minibatches % num_envs == 0, (
             f"batch_size * num_minibatches ({batch_size * num_minibatches}) must be divisible by "
             f"num_envs ({num_envs})"
@@ -83,6 +102,18 @@ class PPOPopulationTrainer:
         # What a round actually costs, after rounding up to whole training steps.
         self.steps_per_round = self.num_training_steps_per_round * self.env_step_per_training_step
         self.normalize_observations = normalize_observations
+        self.algorithm = algorithm
+        self.dynamic_hparams = ALGORITHM_HPARAMS[algorithm]
+        constrained = algorithm == 'ppo_lag'
+        self.initial_lambda_lagr = initial_lambda_lagr
+        # Same conversion and cost critic as training/agents/ppo_lag/train.py
+        per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
+        if network_factory is None:
+            network_factory = ppo_networks.make_ppo_networks
+            if constrained:
+                network_factory = functools.partial(network_factory, cost_value_hidden_layer_sizes=(256,) * 5)
+        if constrained and 'cost' not in extra_fields:
+            extra_fields = tuple(extra_fields) + ('cost',)
         self.network_factory = network_factory
 
         key_env, key_eval = jax.random.split(jax.random.PRNGKey(seed))
@@ -110,9 +141,8 @@ class PPOPopulationTrainer:
             self._optimizer = optax.chain(optax.clip_by_global_norm(max_grad_norm), self._optimizer)
         optimizer = self._optimizer
 
-        def loss_fn(params, normalizer_params, data, key, hp):
-            return ppo_losses.compute_ppo_loss(
-                params, normalizer_params, data, key,
+        def loss_fn(params, normalizer_params, data, key, hp, aux_state):
+            common = dict(
                 ppo_network=ppo_network,
                 entropy_cost=hp['entropy_cost'],
                 discounting=hp['discounting'],
@@ -121,20 +151,26 @@ class PPOPopulationTrainer:
                 clipping_epsilon=hp['clipping_epsilon'],
                 normalize_advantage=normalize_advantage,
             )
+            if constrained:
+                return ppo_lag_losses.compute_ppo_lagrange_loss(
+                    params, normalizer_params, data, key,
+                    lambda_lagr=aux_state, safety_bound=per_step_safety_bound, **common,
+                )
+            return ppo_losses.compute_ppo_loss(params, normalizer_params, data, key, **common)
 
         grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
-        def minibatch_step(carry, data: types.Transition, normalizer_params, hp):
+        def minibatch_step(carry, data: types.Transition, normalizer_params, hp, aux_state):
             optimizer_state, params, key = carry
             key, key_loss = jax.random.split(key)
-            (_, metrics), grads = grad_fn(params, normalizer_params, data, key_loss, hp)
+            (_, metrics), grads = grad_fn(params, normalizer_params, data, key_loss, hp, aux_state)
             updates, optimizer_state = optimizer.update(grads, optimizer_state, params)
             updates = jax.tree_util.tree_map(lambda u: -hp['learning_rate'] * u, updates)
             params = optax.apply_updates(params, updates)
             metrics = {**metrics, 'grad_norm': optax.global_norm(grads)}
             return (optimizer_state, params, key), metrics
 
-        def sgd_step(carry, unused_t, data: types.Transition, normalizer_params, hp):
+        def sgd_step(carry, unused_t, data: types.Transition, normalizer_params, hp, aux_state):
             optimizer_state, params, key = carry
             key, key_perm, key_grad = jax.random.split(key, 3)
 
@@ -152,7 +188,7 @@ class PPOPopulationTrainer:
 
             shuffled_data = jax.tree_util.tree_map(convert_data, data)
             (optimizer_state, params, _), metrics = jax.lax.scan(
-                functools.partial(minibatch_step, normalizer_params=normalizer_params, hp=hp),
+                functools.partial(minibatch_step, normalizer_params=normalizer_params, hp=hp, aux_state=aux_state),
                 (optimizer_state, params, key_grad),
                 shuffled_data,
                 length=num_minibatches,
@@ -196,18 +232,31 @@ class PPOPopulationTrainer:
                 training_state.normalizer_params, _remove_pixels(data.observation),
             )
             (optimizer_state, params, _), metrics = jax.lax.scan(
-                functools.partial(sgd_step, data=data, normalizer_params=normalizer_params, hp=hp),
+                functools.partial(
+                    sgd_step, data=data, normalizer_params=normalizer_params, hp=hp,
+                    aux_state=training_state.aux_state,
+                ),
                 (training_state.optimizer_state, training_state.params, key_sgd),
                 (),
                 length=num_updates_per_batch,
             )
+            aux_state = training_state.aux_state
+            extra_metrics = {}
+            if constrained:
+                # As ppo_lag's post_step_fn: the batch's mean per-step cost (last epoch's minibatches).
+                aux_state, cost_violation = ppo_lag_losses.update_lagrange_multiplier(
+                    aux_state, jnp.mean(metrics['mean_cost'][-1]), per_step_safety_bound,
+                    hp['lagrangian_coef_rate'],
+                )
+                extra_metrics = {'lambda_lagr': jnp.mean(aux_state), 'cost_violation': cost_violation}
             new_training_state = training_state.replace(
                 optimizer_state=optimizer_state,
                 params=params,
                 normalizer_params=normalizer_params,
                 env_steps=training_state.env_steps + env_step_per_training_step,
+                aux_state=aux_state,
             )
-            metrics = jax.tree_util.tree_map(jnp.mean, metrics)
+            metrics = {**jax.tree_util.tree_map(jnp.mean, metrics), **extra_metrics}
             return (new_training_state, state, new_key), (metrics, episode_sums, jnp.sum(done))
 
         def training_round(training_state, state, key, hp):
@@ -276,8 +325,15 @@ class PPOPopulationTrainer:
             params=params,
             normalizer_params=running_statistics.init_state(_remove_pixels(self._obs_spec)),
             env_steps=types.UInt64(hi=0, lo=0),
+            aux_state=self._init_aux_state(),
         )
         return self._add_device_axis(training_state)
+
+    def _init_aux_state(self):
+        """Lagrange multiplier for ppo_lag (shape (1,), as in ppo_lag/train.py); None for ppo."""
+        if self.algorithm == 'ppo_lag':
+            return jnp.array([self.initial_lambda_lagr], dtype=jnp.float32)
+        return None
 
     @staticmethod
     def _add_device_axis(tree):
@@ -289,6 +345,7 @@ class PPOPopulationTrainer:
             'params': state.params,
             'normalizer_params': state.normalizer_params,
             'optimizer_state': state.optimizer_state,
+            'aux_state': state.aux_state,
         }
 
     def import_agent(self, blob: AgentBlob, env_steps: int) -> TrainingState:
@@ -298,6 +355,8 @@ class PPOPopulationTrainer:
             params=blob['params'],
             normalizer_params=blob['normalizer_params'],
             env_steps=types.UInt64(hi=int(env_steps) >> 32, lo=int(env_steps) & 0xFFFFFFFF),
+            # Copying an agent copies its Lagrange multiplier along with the networks it was tuned for.
+            aux_state=blob.get('aux_state', self._init_aux_state()),
         )
         return self._add_device_axis(jax.tree_util.tree_map(jnp.asarray, training_state))
 
@@ -311,10 +370,10 @@ class PPOPopulationTrainer:
             key: PRNGKey,
     ) -> Tuple[TrainingState, envs.State, Dict[str, float]]:
         """Trains one agent for `steps_per_round` env steps with the given hyperparameters."""
-        missing = [h for h in DYNAMIC_HPARAMS if h not in hparams]
+        missing = [h for h in self.dynamic_hparams if h not in hparams]
         if missing:
             raise ValueError(f"Missing hyperparameters {missing}")
-        hp = {h: jnp.full((1,), hparams[h], dtype=jnp.float32) for h in DYNAMIC_HPARAMS}
+        hp = {h: jnp.full((1,), hparams[h], dtype=jnp.float32) for h in self.dynamic_hparams}
 
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))

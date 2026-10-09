@@ -12,7 +12,23 @@ from training.agents.ppo.losses import compute_gae
 # Re-export for backward compatibility
 from training.agents.ppo.losses import PPONetworkParams, compute_ppo_loss, with_shared_latent
 
-__all__ = ["PPONetworkParams", "compute_gae", "compute_ppo_loss", "compute_ppo_lagrange_loss"]
+__all__ = [
+    "PPONetworkParams", "compute_gae", "compute_ppo_loss", "compute_ppo_lagrange_loss", "update_lagrange_multiplier",
+]
+
+
+def update_lagrange_multiplier(
+    lambda_lagr: jnp.ndarray,
+    mean_cost: jnp.ndarray,
+    per_step_safety_bound: float,
+    lagrangian_coef_rate: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Projected gradient-ascent step on the Lagrange multiplier.
+
+    Returns the new (non-negative) multiplier and the per-step cost violation.
+    """
+    cost_violation = mean_cost - per_step_safety_bound
+    return jax.nn.relu(lambda_lagr + cost_violation * lagrangian_coef_rate), cost_violation
 
 
 def compute_ppo_lagrange_loss(
