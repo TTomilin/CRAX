@@ -106,6 +106,10 @@ def setup_gpu_environment(vision: bool = False):
     """
     # Configure MuJoCo to use the EGL rendering backend (requires GPU)
     os.environ['MUJOCO_GL'] = 'egl'
+    # EGL otherwise renders on the first GPU it can open, not necessarily the one Slurm allocated, giving blank videos
+    slurm_gpus = os.environ.get('SLURM_STEP_GPUS') or os.environ.get('SLURM_JOB_GPUS')
+    if slurm_gpus and 'MUJOCO_EGL_DEVICE_ID' not in os.environ:
+        os.environ['MUJOCO_EGL_DEVICE_ID'] = slurm_gpus.split(',')[0]
 
     # Tell XLA to use Triton GEMM, this improves steps/sec by ~30% on some GPUs
     xla_flags = os.environ.get('XLA_FLAGS', '')
