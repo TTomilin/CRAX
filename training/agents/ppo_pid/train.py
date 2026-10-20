@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 from crax import base
 from crax import envs
+from training import counterfactual
 from training import types
 from training.agents.ppo import train as ppo_train
 from training.agents.ppo import networks as ppo_networks
@@ -72,6 +73,11 @@ def train(
         restore_value_fn: bool = True,
         pretrained_params: Optional[Any] = None,
         init_cost_value_from: str = 'value',
+        # counterfactual hazard relabelling (see training/counterfactual.py)
+        counterfactual_mode: str = 'none',
+        counterfactual_ratio: float = 0.5,
+        counterfactual_candidates: int = 4,
+        counterfactual_rho_clip: float = 1.0,
 ):
     """PPO-PID Lagrange training."""
     per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
@@ -124,5 +130,7 @@ def train(
         save_checkpoint_path=save_checkpoint_path, restore_checkpoint_path=restore_checkpoint_path,
         restore_params=effective_restore_params, restore_value_fn=restore_value_fn,
         loss_fn=lagrange_loss_fn, post_step_fn=post_step_fn,
-        extra_fields=("truncation", "episode_metrics", "episode_done", "cost"),
-        init_aux_state_fn=init_aux_state_fn)
+        init_aux_state_fn=init_aux_state_fn,
+        **counterfactual.counterfactual_train_kwargs(
+            environment, ("truncation", "episode_metrics", "episode_done", "cost"), action_repeat,
+            counterfactual_mode, counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip))

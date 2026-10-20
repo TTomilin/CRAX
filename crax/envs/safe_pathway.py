@@ -234,30 +234,29 @@ class SafePathway(PipelineEnv, ABC):
 
     # ---------------- Core RL API ----------------
 
+    def sample_hazard_positions(self, key: jax.Array) -> jax.Array:
+        """Samples hazard positions along +x with random gaps and lateral jitter."""
+        n_h = len(self._hazard_mocap_ids)
+        key, k0 = jax.random.split(key)
+        start = jax.random.uniform(k0, (), minval=1.0, maxval=2.0)
+        xs = []
+        cur = start
+        key_loop = key
+        for i in range(n_h):
+            key_loop, kg, ky = jax.random.split(key_loop, 3)
+            gap = jax.random.uniform(kg, (), minval=self._min_gap, maxval=self._max_gap)
+            cur = cur + gap
+            y = jax.random.uniform(ky, (), minval=-self._lateral_jitter, maxval=self._lateral_jitter)
+            xs.append(jp.array([cur, y, self._hazard_height], dtype=jp.float32))
+        return jp.stack(xs) if n_h > 0 else jp.zeros((0, 3), dtype=jp.float32)
+
     def reset(self, rng: jax.Array) -> State:
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
         rng, r1, r2, r_h = jax.random.split(rng, 4)
         q = self.sys.init_q + jax.random.uniform(r1, (self.sys.q_size(),), minval=low, maxval=hi)
         qd = jax.random.uniform(r2, (self.sys.qd_size(),), minval=low, maxval=hi)
 
-        # sample hazard positions along +x with random gaps and lateral jitter
-        n_h = len(self._hazard_mocap_ids)
-
-        def sample_positions(key):
-            key, k0 = jax.random.split(key)
-            start = jax.random.uniform(k0, (), minval=1.0, maxval=2.0)
-            xs = []
-            cur = start
-            key_loop = key
-            for i in range(n_h):
-                key_loop, kg, ky = jax.random.split(key_loop, 3)
-                gap = jax.random.uniform(kg, (), minval=self._min_gap, maxval=self._max_gap)
-                cur = cur + gap
-                y = jax.random.uniform(ky, (), minval=-self._lateral_jitter, maxval=self._lateral_jitter)
-                xs.append(jp.array([cur, y, self._hazard_height], dtype=jp.float32))
-            return jp.stack(xs) if n_h > 0 else jp.zeros((0, 3), dtype=jp.float32)
-
-        hazard_positions = sample_positions(r_h)
+        hazard_positions = self.sample_hazard_positions(r_h)
 
         pipeline_state = self.pipeline_init(q, qd)
 
@@ -279,7 +278,15 @@ class SafePathway(PipelineEnv, ABC):
             "ctrl_cost": zero,
             "cost": zero,
         }
-        info = {"hazard_positions": hazard_positions, "cost": zero}
+        kin = self._cf_kinematics(pipeline_state)
+        info = {
+            "hazard_positions": hazard_positions,
+            "cost": zero,
+            # Hazard-independent kinematics used to relabel transitions under counterfactual hazard layouts
+            "cf_kin": jp.stack([kin, kin]),
+            "cf_feet": self._feet_pos(pipeline_state),
+            "hazard_cost": zero,
+        }
 
         return State(pipeline_state, obs, reward, done, metrics, info)
 
@@ -333,6 +340,9 @@ class SafePathway(PipelineEnv, ABC):
 
         info = dict(state.info)
         info["cost"] = cost
+        info["cf_kin"] = jp.stack([self._cf_kinematics(pipeline_state_prev), self._cf_kinematics(pipeline_state)])
+        info["cf_feet"] = self._feet_pos(pipeline_state)
+        info["hazard_cost"] = hazard_cost
 
         return state.replace(
             pipeline_state=pipeline_state,
@@ -354,8 +364,20 @@ class SafePathway(PipelineEnv, ABC):
             position = position[1:]
 
         obs = jp.concatenate((position, velocity))
+        kin = self._cf_kinematics(pipeline_state)
+        lidar = self.hazard_lidar(kin, hazard_positions)
+        return jp.concatenate([obs, lidar])
 
-        # ---- hazard lidar (fixed size) ----
+    def _cf_kinematics(self, pipeline_state: base.State) -> jax.Array:
+        """Returns (torso_x, torso_y, heading): everything the hazard lidar depends on besides the layout."""
+        torso_xy = pipeline_state.x.pos[self._torso_link_id, :2]
+        return jp.concatenate([torso_xy, pipeline_state.q[2:3]])
+
+    def _feet_pos(self, pipeline_state: base.State) -> jax.Array:
+        return jp.stack([pipeline_state.x.take(fid).pos for fid in self._foot_link_ids], axis=0)
+
+    def hazard_lidar(self, kin: jax.Array, hazard_positions: jax.Array) -> jax.Array:
+        """Fixed-size hazard lidar from (torso_x, torso_y, heading) and a hazard layout."""
         n_h = hazard_positions.shape[0]
         bins = self._lidar_bins
         max_d = jp.asarray(self._lidar_max_dist, dtype=jp.float32)
@@ -363,9 +385,9 @@ class SafePathway(PipelineEnv, ABC):
 
         lidar = jp.zeros((bins,), dtype=jp.float32)
         if n_h == 0:
-            return jp.concatenate([obs, lidar])
+            return lidar
 
-        torso_xy = pipeline_state.x.pos[self._torso_link_id, :2]
+        torso_xy = kin[:2]
         hazards_xy = hazard_positions[:, :2] - torso_xy[None, :]
 
         # Compute distances to all hazards for sorting
@@ -378,7 +400,7 @@ class SafePathway(PipelineEnv, ABC):
         hazards_xy = hazards_xy[closest_idx]
 
         # heading: use torso angle
-        heading = pipeline_state.q[2]
+        heading = kin[2]
         c = jp.cos(heading)
         s = jp.sin(heading)
 
@@ -405,23 +427,32 @@ class SafePathway(PipelineEnv, ABC):
             lidar = lidar.at[b_plus].max(frac * val)
             lidar = lidar.at[b_minus].max((1.0 - frac) * val)
 
-        return jp.concatenate([obs, lidar])
+        return lidar
 
     # ---------------- Safety logic ----------------
 
     def _calculate_safety_cost(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
         """Calculate safety cost with gradient based on distance from hazard center."""
+        return self.hazard_cost_from_feet(self._feet_pos(pipeline_state), hazard_positions)
+
+    def hazard_cost_from_feet(
+            self, feet_pos: jax.Array, hazard_positions: jax.Array, hazard_ids: Optional[jax.Array] = None,
+    ) -> jax.Array:
+        """Hazard cost from (num_feet, 3) foot positions and a hazard layout.
+
+        `hazard_ids` selects the shape of each hazard when `hazard_positions` is a subset of the layout.
+        """
         n_h = hazard_positions.shape[0]
         if n_h == 0:
             return jp.array(0.0, dtype=jp.float32)
+        if hazard_ids is None:
+            hazard_ids = jp.arange(n_h)
 
-        # Get foot positions
-        feet_pos = [pipeline_state.x.take(fid).pos for fid in self._foot_link_ids]
-        feet_xy = jp.stack([fp[:2] for fp in feet_pos], axis=0)  # (num_feet, 2)
+        feet_xy = feet_pos[:, :2]  # (num_feet, 2)
 
         # Check if feet are at ground level
         ground_contact_threshold = self._hazard_height * 2 + 0.08
-        feet_on_ground = jp.stack([fp[2] < ground_contact_threshold for fp in feet_pos], axis=0)
+        feet_on_ground = feet_pos[:, 2] < ground_contact_threshold
 
         centers = hazard_positions[:, :2]
 
@@ -429,7 +460,7 @@ class SafePathway(PipelineEnv, ABC):
         d = jp.sqrt(jp.sum((feet_xy[:, None, :] - centers[None, :, :]) ** 2, axis=2) + 1e-8)
 
         # --- Cylinder hazards: gradient based on distance from center ---
-        radii = self._hazard_radii[None, :]
+        radii = self._hazard_radii[hazard_ids][None, :]
         radii_safe = jp.maximum(radii, 1e-6)
         normalized_cyl_dist = d / radii_safe
         cyl_inside = normalized_cyl_dist <= 1.0
@@ -444,7 +475,7 @@ class SafePathway(PipelineEnv, ABC):
 
         # --- Rect/cube hazards: gradient based on distance from center ---
         dxdy = jp.abs(feet_xy[:, None, :] - centers[None, :, :])
-        half_extents = self._hazard_half_extents[None, :, :]
+        half_extents = self._hazard_half_extents[hazard_ids][None, :, :]
         half_extents_safe = jp.maximum(half_extents, 1e-6)
 
         normalized_rect_dist = dxdy / half_extents_safe
@@ -465,7 +496,7 @@ class SafePathway(PipelineEnv, ABC):
         rect_cost_per_h = jp.max(rect_cost_per_foot, axis=0)
 
         # Combine cylinder and rect costs
-        is_rect = self._hazard_is_rect.astype(jp.float32)
+        is_rect = self._hazard_is_rect[hazard_ids].astype(jp.float32)
         is_cyl = 1.0 - is_rect
         per_hazard_cost = cyl_cost_per_h * is_cyl + rect_cost_per_h * is_rect
 

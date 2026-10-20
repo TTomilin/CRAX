@@ -249,6 +249,10 @@ def train(
         post_step_fn: Optional[PostStepFn] = None,
         extra_fields: Tuple[str, ...] = ('truncation', 'episode_metrics', 'episode_done'),
         init_aux_state_fn: Optional[Callable[[], Any]] = None,
+        # counterfactual relabelling (see training/counterfactual.py)
+        counterfactual_fn: Optional[Callable[[types.Transition, PRNGKey], Tuple[types.Transition, Metrics]]] = None,
+        counterfactual_ratio: float = 0.0,
+        counterfactual_rho_clip: float = 1.0,
 ):
     """PPO training.
 
@@ -330,6 +334,16 @@ def train(
         For constrained RL, add 'cost'.
       init_aux_state_fn: Optional function to initialize aux_state in TrainingState.
         Returns initial aux_state value. Used for Lagrange multipliers, PID state, etc.
+      counterfactual_fn: Optional `(data, key) -> (data, metrics)` that relabels
+        [B, T] transitions under a counterfactual context (observations and
+        costs only; actions, rewards and dynamics must be unchanged). The
+        relabelled copies are appended to every batch, with behaviour
+        log-probs re-anchored at the current policy and truncated importance
+        weights in `state_extras['is_weight']`; `state_extras['is_real']`
+        marks the original transitions. The loss must consume both.
+      counterfactual_ratio: Number of relabelled segments per batch, as a
+        fraction of the real ones.
+      counterfactual_rho_clip: Truncation level of the importance weights.
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -342,6 +356,7 @@ def train(
     _dbg(f"train() called: num_envs={num_envs}, num_timesteps={num_timesteps}, episode_length={episode_length}, augment_pixels={augment_pixels}")
 
     assert batch_size * num_minibatches % num_envs == 0
+    use_counterfactuals = counterfactual_fn is not None and counterfactual_ratio > 0
 
     xt = time.time()
 
@@ -573,6 +588,51 @@ def train(
         )
         return (optimizer_state, params, key), metrics
 
+    if use_counterfactuals and ppo_network.encoder_network is not None:
+        raise ValueError('Counterfactual relabelling does not support shared vision encoders')
+
+    def add_counterfactuals(
+            data: types.Transition,
+            params: ppo_losses.PPONetworkParams,
+            normalizer_params: running_statistics.RunningStatisticsState,
+            key: PRNGKey,
+    ) -> Tuple[types.Transition, Metrics]:
+        """Appends relabelled copies of a random subset of segments to the batch."""
+        # Relabelled segments are appended to the (per-device) batch; keep it divisible into minibatches
+        num_segments = data.discount.shape[0]
+        num_cf = int(counterfactual_ratio * num_segments) // num_minibatches * num_minibatches
+        key_perm, key_cf = jax.random.split(key)
+        idx = jax.random.permutation(key_perm, num_segments)[:num_cf]
+        cf, cf_metrics = counterfactual_fn(jax.tree_util.tree_map(lambda x: x[idx], data), key_cf)
+
+        # The actions were drawn for the real observations: re-anchor the PPO
+        # ratio at the current policy and correct with truncated IS weights.
+        dist = ppo_network.parametric_action_distribution
+        raw_action = cf.extras['policy_extras']['raw_action']
+        logits = ppo_network.policy_network.apply(normalizer_params, params.policy, cf.observation)
+        log_prob = dist.log_prob(logits, raw_action)
+        rho = jnp.exp(log_prob - cf.extras['policy_extras']['log_prob'])
+        is_weight = jnp.minimum(rho, counterfactual_rho_clip)
+
+        def with_extras(d, log_prob, is_weight, is_real):
+            policy_extras = {**d.extras['policy_extras'], 'log_prob': log_prob}
+            state_extras = {**d.extras['state_extras'], 'is_weight': is_weight, 'is_real': is_real}
+            return d._replace(extras={**d.extras, 'policy_extras': policy_extras, 'state_extras': state_extras})
+
+        ones = jnp.ones_like(data.reward)
+        data = with_extras(data, data.extras['policy_extras']['log_prob'], ones, ones)
+        cf = with_extras(cf, log_prob, is_weight, jnp.zeros_like(cf.reward))
+        data = jax.tree_util.tree_map(lambda x, y: jnp.concatenate([x, y], axis=0), data, cf)
+
+        cf_metrics = {
+            **cf_metrics,
+            'cf/is_weight': jnp.mean(is_weight),
+            # Effective sample size of the relabelled data, as a fraction of its size
+            'cf/ess': jnp.mean(is_weight) ** 2 / (jnp.mean(is_weight ** 2) + 1e-8),
+            'cf/log_rho': jnp.mean(jnp.log(rho + 1e-8)),
+        }
+        return data, cf_metrics
+
     def training_step(
             carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
@@ -621,6 +681,11 @@ def train(
             pmap_axis_name=pmap_axis_name,
         )
 
+        cf_metrics = {}
+        if use_counterfactuals:
+            key_cf = jax.random.fold_in(key, 1)
+            data, cf_metrics = add_counterfactuals(data, training_state.params, normalizer_params, key_cf)
+
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(
                 sgd_step, data=data, normalizer_params=normalizer_params, aux_state=training_state.aux_state
@@ -629,6 +694,7 @@ def train(
             (),
             length=num_updates_per_batch,
         )
+        metrics = {**metrics, **cf_metrics}
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,

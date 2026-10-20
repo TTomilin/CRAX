@@ -76,6 +76,9 @@ def compute_ppo_lagrange_loss(
 
     truncation = data.extras['state_extras']['truncation']
     termination = (1 - data.discount) * (1 - truncation)
+    # Counterfactual (relabelled) transitions carry truncated IS weights; real ones are on-policy
+    is_weight = state_extras.get('is_weight')
+    is_real = state_extras.get('is_real', jnp.ones_like(rewards))
 
     target_action_log_probs = parametric_action_distribution.log_prob(
         policy_logits, data.extras['policy_extras']['raw_action']
@@ -86,14 +89,14 @@ def compute_ppo_lagrange_loss(
     vs, advantages = compute_gae(
         truncation=truncation, termination=termination, rewards=rewards,
         values=baseline, bootstrap_value=bootstrap_value,
-        lambda_=gae_lambda, discount=discounting,
+        lambda_=gae_lambda, discount=discounting, importance_weights=is_weight,
     )
 
     # Compute cost advantages and returns
     cost_vs, cost_advantages = compute_gae(
         truncation=truncation, termination=termination, rewards=costs,
         values=cost_baseline, bootstrap_value=bootstrap_cost_value,
-        lambda_=gae_lambda, discount=discounting,
+        lambda_=gae_lambda, discount=discounting, importance_weights=is_weight,
     )
 
     # Modify advantages with Lagrangian term
@@ -109,7 +112,10 @@ def compute_ppo_lagrange_loss(
 
     surrogate_loss1 = rho_s * modified_advantages
     surrogate_loss2 = jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon) * modified_advantages
-    policy_loss = -jnp.mean(jnp.minimum(surrogate_loss1, surrogate_loss2))
+    surrogate = jnp.minimum(surrogate_loss1, surrogate_loss2)
+    if is_weight is not None:
+        surrogate = is_weight * surrogate
+    policy_loss = -jnp.mean(surrogate)
 
     # Value function loss
     v_error = vs - baseline
@@ -123,7 +129,8 @@ def compute_ppo_lagrange_loss(
     entropy = jnp.mean(parametric_action_distribution.entropy(policy_logits, rng))
     entropy_loss = entropy_cost * -entropy
 
-    mean_cost = jnp.mean(costs)
+    # Only real transitions estimate the policy's cost (drives the multiplier update)
+    mean_cost = jnp.sum(costs * is_real) / jnp.maximum(jnp.sum(is_real), 1.0)
 
     # This is to collect metrics for the observation routing ablation in the paper
     # Explained variance of the GAE return targets ssays whether a critic is actually better than predicting the mean

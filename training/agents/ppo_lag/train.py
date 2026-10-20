@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from crax import base
 from crax import envs
+from training import counterfactual
 from training import types
 from training.agents.ppo_lag import losses as ppo_lag_losses
 from training.agents.ppo import networks as ppo_networks
@@ -73,6 +74,11 @@ def train(
         # transfer learning / curriculum support
         pretrained_params: Optional[Any] = None,
         init_cost_value_from: str = 'value',
+        # counterfactual hazard relabelling (see training/counterfactual.py)
+        counterfactual_mode: str = 'none',
+        counterfactual_ratio: float = 0.5,
+        counterfactual_candidates: int = 4,
+        counterfactual_rho_clip: float = 1.0,
 ):
     """PPO-Lagrange training.
 
@@ -128,6 +134,11 @@ def train(
         from an algorithm without cost_value (e.g., PPO). Options:
         - 'value': copy from value network (often works well for transfer)
         - 'random': use random initialization
+      counterfactual_mode: 'none', 'random' or 'optimistic' hazard relabelling
+        of a share of each batch (SafePathway envs only).
+      counterfactual_ratio: relabelled segments per batch, as a fraction of the real ones.
+      counterfactual_candidates: layouts sampled per segment in 'optimistic' mode.
+      counterfactual_rho_clip: truncation level of the importance weights.
 
     Returns:
       Tuple of (make_policy function, network params, metrics, eval_env)
@@ -219,6 +230,8 @@ def train(
         # Constrained RL hooks
         loss_fn=lagrange_loss_fn,
         post_step_fn=post_step_fn,
-        extra_fields=extra_fields,
         init_aux_state_fn=init_aux_state_fn,
+        **counterfactual.counterfactual_train_kwargs(
+            environment, extra_fields, action_repeat, counterfactual_mode,
+            counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip),
     )

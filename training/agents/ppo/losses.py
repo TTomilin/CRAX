@@ -78,6 +78,7 @@ def compute_gae(
     bootstrap_value: jnp.ndarray,
     lambda_: float = 1.0,
     discount: float = 0.99,
+    importance_weights: Optional[jnp.ndarray] = None,
 ):
     """Calculates the Generalized Advantage Estimation (GAE).
 
@@ -89,6 +90,9 @@ def compute_gae(
       bootstrap_value: A float32 of shape [B] with value estimate at time T.
       lambda_: Mix between 1-step (lambda_=0) and n-step (lambda_=1).
       discount: TD discount.
+      importance_weights: Optional [T, B] truncated importance weights for
+        off-policy data. Scales the TD errors and (capped at 1) the traces, as
+        in V-trace. None is equivalent to all ones.
 
     Returns:
       A float32 tensor of shape [T, B] for value targets.
@@ -100,19 +104,24 @@ def compute_gae(
     )
     deltas = rewards + discount * (1 - termination) * values_t_plus_1 - values
     deltas *= truncation_mask
+    if importance_weights is None:
+        traces = jnp.ones_like(deltas)
+    else:
+        deltas *= importance_weights
+        traces = jnp.minimum(importance_weights, 1.0)
 
     acc = jnp.zeros_like(bootstrap_value)
 
     def compute_vs_minus_v_xs(carry, target_t):
         lambda_, acc = carry
-        truncation_mask, delta, termination = target_t
-        acc = delta + discount * (1 - termination) * truncation_mask * lambda_ * acc
+        truncation_mask, delta, termination, trace = target_t
+        acc = delta + discount * (1 - termination) * truncation_mask * lambda_ * trace * acc
         return (lambda_, acc), acc
 
     (_, _), vs_minus_v_xs = jax.lax.scan(
         compute_vs_minus_v_xs,
         (lambda_, acc),
-        (truncation_mask, deltas, termination),
+        (truncation_mask, deltas, termination, traces),
         length=int(truncation_mask.shape[0]),
         reverse=True,
     )
