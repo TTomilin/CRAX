@@ -105,7 +105,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--max_devices_per_host", type=int, default=None, help="Limit devices per host")
 
     # --- Training Scale / Rollout ---
-    parser.add_argument("--num_timesteps", type=float, default=100_000_000, help="Total training timesteps")
+    parser.add_argument("--num_timesteps", type=float, default=500_000_000, help="Total training timesteps")
     parser.add_argument("--episode_length", type=int, default=None, help="Episode length; if None, use the task's default")
     parser.add_argument("--num_envs", type=int, default=2048, help="Number of parallel envs")
     parser.add_argument("--unroll_length", type=int, default=8, help="Unroll length")
@@ -191,9 +191,9 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--tau", type=float, default=0.005, help="SAC-Lag: soft target network update coefficient")
     parser.add_argument("--min_replay_size", type=int, default=0,
                         help="SAC-Lag: minimum replay buffer size before training starts")
-    parser.add_argument("--max_replay_size", type=float, default=None,
+    parser.add_argument("--max_replay_size", type=float, default=1_000_000,
                         help="SAC-Lag: maximum replay buffer size before training starts")
-    parser.add_argument("--grad_updates_per_step", type=int, default=1,
+    parser.add_argument("--grad_updates_per_step", type=int, default=32,
                         help="SAC-Lag: gradient updates per environment step")
 
     # --- WandB ---
