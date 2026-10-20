@@ -108,7 +108,13 @@ def compute_ppo_lagrange_loss(
         cadv = cost_advantages
 
     modified_advantages = adv - lambda_lagr * cadv
-    rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
+    log_rho = target_action_log_probs - behaviour_action_log_probs
+    if is_weight is not None:
+        # Relabelled actions can sit far in the tail of the policy at the counterfactual observation, where the
+        # ratio overflows after a few SGD steps; the unselected branch of the PPO minimum then backpropagates
+        # 0 * inf = NaN. The bound is far outside the clipping range, so on-policy samples are unaffected.
+        log_rho = jnp.clip(log_rho, -20.0, 20.0)
+    rho_s = jnp.exp(log_rho)
 
     surrogate_loss1 = rho_s * modified_advantages
     surrogate_loss2 = jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon) * modified_advantages
