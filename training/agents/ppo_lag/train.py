@@ -19,6 +19,14 @@ from training.agents.ppo import train as ppo_train
 
 Metrics = types.Metrics
 
+
+def update_observed_episode_length(
+        metrics: Metrics, prev_length: jnp.ndarray, ema: float) -> jnp.ndarray:
+    """EMA of the length of completed real episodes, from the last SGD epoch's minibatch metrics."""
+    num_done = jnp.sum(metrics['episodes_done'][-1])
+    batch_length = jnp.sum(metrics['episode_length_sum'][-1]) / jnp.maximum(num_done, 1.0)
+    return jnp.where(num_done > 0, ema * prev_length + (1.0 - ema) * batch_length, prev_length)
+
 # Re-export TrainingState for backward compatibility
 TrainingState = ppo_train.TrainingState
 
@@ -57,6 +65,8 @@ def train(
         safety_bound: float = 0.0,
         lagrangian_coef_rate: float = 0.01,
         initial_lambda_lagr: float = 0.0,
+        observed_episode_length_bound: bool = False,
+        episode_length_ema: float = 0.9,
         # eval
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
@@ -115,6 +125,11 @@ def train(
       safety_bound: the safety constraint bound for PPO-Lagrange (episodic)
       lagrangian_coef_rate: learning rate for Lagrange multiplier updates
       initial_lambda_lagr: initial value for the Lagrange multiplier
+      observed_episode_length_bound: convert the episodic bound to a per-step one with
+        the observed (EMA) length of completed episodes instead of `episode_length`.
+        Per-step cost x episode length estimates episodic cost, so with early
+        terminations the fixed conversion enforces a tighter budget than `safety_bound`.
+      episode_length_ema: EMA coefficient of the observed episode length.
       num_evals: the number of evals to run during the entire training run.
       eval_env: an optional environment for eval only
       num_eval_envs: the number of envs to use for evaluation.
@@ -156,11 +171,21 @@ def train(
     def post_step_fn(training_state: TrainingState, metrics: Metrics) -> Tuple[TrainingState, Metrics]:
         """Updates the Lagrange multiplier based on constraint violation."""
         avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        cost_violation = avg_cost - per_step_safety_bound
+        extra_metrics = {}
+        if observed_episode_length_bound:
+            lambda_lagr, observed_length = training_state.aux_state
+            observed_length = update_observed_episode_length(metrics, observed_length, episode_length_ema)
+            step_bound = safety_bound / observed_length
+            extra_metrics = {'observed_episode_length': observed_length, 'per_step_safety_bound': step_bound}
+        else:
+            lambda_lagr, step_bound = training_state.aux_state, per_step_safety_bound
+        cost_violation = avg_cost - step_bound
         delta_lambda = cost_violation * lagrangian_coef_rate
-        updated_lambda_lagr = jax.nn.relu(training_state.aux_state + delta_lambda)
-        new_training_state = training_state.replace(aux_state=updated_lambda_lagr)
-        return new_training_state, {'lambda_lagr': updated_lambda_lagr, 'cost_violation': cost_violation}
+        updated_lambda_lagr = jax.nn.relu(lambda_lagr + delta_lambda)
+        aux_state = (updated_lambda_lagr, observed_length) if observed_episode_length_bound else updated_lambda_lagr
+        new_training_state = training_state.replace(aux_state=aux_state)
+        return new_training_state, {
+            'lambda_lagr': updated_lambda_lagr, 'cost_violation': cost_violation, **extra_metrics}
 
     # Define the custom loss function for PPO-Lagrange
     def lagrange_loss_fn(params, normalizer_params, data, rng, aux_state=None,
@@ -169,6 +194,8 @@ def train(
                          normalize_advantage=True):
         """PPO-Lagrange loss function."""
         lambda_lagr = aux_state if aux_state is not None else jnp.array([0.0])
+        if observed_episode_length_bound:
+            lambda_lagr = lambda_lagr[0]
         return ppo_lag_losses.compute_ppo_lagrange_loss(
             params=params, normalizer_params=normalizer_params, data=data, rng=rng,
             ppo_network=ppo_network, lambda_lagr=lambda_lagr, safety_bound=per_step_safety_bound,
@@ -177,7 +204,11 @@ def train(
 
     # Initialize aux_state with the initial Lagrange multiplier
     def init_aux_state_fn():
-        return jnp.array([initial_lambda_lagr], dtype=jnp.float32)
+        lambda_lagr = jnp.array([initial_lambda_lagr], dtype=jnp.float32)
+        if observed_episode_length_bound:
+            # Starts at the fixed conversion; tracks completed episodes from the first update
+            return lambda_lagr, jnp.asarray(episode_length, dtype=jnp.float32)
+        return lambda_lagr
 
     # Extra fields to collect during rollout (including cost)
     extra_fields = ('truncation', 'episode_metrics', 'episode_done', 'cost')

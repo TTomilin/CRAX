@@ -143,8 +143,14 @@ def compute_ppo_lagrange_loss(
     cost_value_ev = 1.0 - jnp.var(cost_v_error) / (jnp.var(cost_vs) + 1e-8)
     value_ev = 1.0 - jnp.var(v_error) / (jnp.var(vs) + 1e-8)
 
+    # Completed real episodes in this minibatch, for the observed-episode-length bound
+    episode_done = state_extras.get('episode_done', jnp.zeros_like(rewards)) * is_real
+    episode_length = state_extras.get('episode_metrics', {}).get('length', jnp.zeros_like(rewards))
+
     total_loss = policy_loss + v_loss + cost_v_loss + entropy_loss
     return total_loss, {
+        'episodes_done': jnp.sum(episode_done),
+        'episode_length_sum': jnp.sum(episode_done * episode_length),
         'total_loss': total_loss,
         'policy_loss': policy_loss,
         'v_loss': v_loss,

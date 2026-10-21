@@ -140,6 +140,11 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--safety_bound", type=float, default=25.0, help="Episodic safety constraint bound")
     parser.add_argument("--lagrangian_coef_rate", type=float, default=10.0, help="Lagrange multiplier LR")
     parser.add_argument("--initial_lambda_lagr", type=float, default=0.0, help="Initial lambda value")
+    parser.add_argument("--observed_episode_length_bound", type=bool_type, nargs="?", const=True, default=False,
+                        help="PPO-Lag/PID: per-step bound = safety_bound / observed (EMA) length of completed "
+                             "episodes instead of / episode_length (fixes a tighter budget under early terminations)")
+    parser.add_argument("--episode_length_ema", type=float, default=0.9,
+                        help="EMA coefficient of the observed episode length")
 
     # --- PPO-PID Lagrange ---
     parser.add_argument("--pid_kp", type=float, default=10.0, help="PID: proportional gain")

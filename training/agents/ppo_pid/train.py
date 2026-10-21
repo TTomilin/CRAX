@@ -15,6 +15,7 @@ from training import types
 from training.agents.ppo import train as ppo_train
 from training.agents.ppo import networks as ppo_networks
 from training.agents.ppo_lag import losses as ppo_lag_losses
+from training.agents.ppo_lag.train import update_observed_episode_length
 
 Metrics = types.Metrics
 TrainingState = ppo_train.TrainingState
@@ -58,6 +59,8 @@ def train(
         pid_integral_clip: float = 1.0,
         pid_lambda_clip: float = 1e6,
         pid_deriv_ema_beta: float = 0.95,
+        observed_episode_length_bound: bool = False,
+        episode_length_ema: float = 0.9,
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
         num_eval_envs: int = 128,
@@ -88,15 +91,26 @@ def train(
                 obs_size, action_size, cost_value_hidden_layer_sizes=(256,) * 5, **kwargs)
 
     def post_step_fn(training_state, metrics):
-        lambda_lagr, integral, prev_v, deriv_ema = training_state.aux_state
+        lambda_lagr, integral, prev_v, deriv_ema = training_state.aux_state[:4]
         avg_cost = jnp.mean(metrics["mean_cost"][-1])
-        v = (avg_cost - per_step_safety_bound).reshape((1,))
+        extra_metrics = {}
+        step_bound = per_step_safety_bound
+        if observed_episode_length_bound:
+            # See ppo_lag.train: per-step bound from the observed length of completed episodes
+            observed_length = update_observed_episode_length(
+                metrics, training_state.aux_state[4], episode_length_ema)
+            step_bound = safety_bound / observed_length
+            extra_metrics = {"observed_episode_length": observed_length, "per_step_safety_bound": step_bound}
+        v = (avg_cost - step_bound).reshape((1,))
         new_integral = jnp.clip(integral + v, -pid_integral_clip, pid_integral_clip)
         new_deriv_ema = pid_deriv_ema_beta * deriv_ema + (1.0 - pid_deriv_ema_beta) * (v - prev_v)
         pid_output = pid_kp * v + pid_ki * new_integral + pid_kd * new_deriv_ema
         updated_lambda = jnp.clip(jax.nn.relu(lambda_lagr + pid_output), 0.0, pid_lambda_clip)
-        new_state = training_state.replace(aux_state=(updated_lambda, new_integral, v, new_deriv_ema))
-        return new_state, {"lambda_lagr": updated_lambda, "pid/violation": v}
+        aux_state = (updated_lambda, new_integral, v, new_deriv_ema)
+        if observed_episode_length_bound:
+            aux_state = aux_state + (observed_length,)
+        new_state = training_state.replace(aux_state=aux_state)
+        return new_state, {"lambda_lagr": updated_lambda, "pid/violation": v, **extra_metrics}
 
     def lagrange_loss_fn(params, normalizer_params, data, rng, aux_state=None,
                          ppo_network=None, entropy_cost=1e-4, discounting=0.9,
@@ -110,7 +124,10 @@ def train(
             gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
 
     def init_aux_state_fn():
-        return (jnp.array([initial_lambda_lagr]), jnp.zeros((1,)), jnp.zeros((1,)), jnp.zeros((1,)))
+        aux_state = (jnp.array([initial_lambda_lagr]), jnp.zeros((1,)), jnp.zeros((1,)), jnp.zeros((1,)))
+        if observed_episode_length_bound:
+            aux_state = aux_state + (jnp.asarray(episode_length, dtype=jnp.float32),)
+        return aux_state
 
     effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
 
