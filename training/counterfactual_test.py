@@ -80,6 +80,23 @@ class CounterfactualTest(absltest.TestCase):
     self.assertGreater(costs['random'], 0)
     self.assertLess(costs['optimistic'], costs['random'])
 
+    # 'adaptive' interpolates between the two through the optimistic share
+    relabel = jax.jit(counterfactual.make_hazard_relabel_fn(self.env, mode='adaptive', num_candidates=8))
+    shares, adaptive_costs = [], []
+    for p in (0.0, 1.0):
+      _, metrics = relabel(data, jax.random.PRNGKey(4), p)
+      shares.append(float(metrics['cf/optimistic_share']))
+      adaptive_costs.append(float(metrics['cf/hazard_cost']))
+    self.assertEqual(shares, [0.0, 1.0])
+    self.assertGreater(adaptive_costs[0], adaptive_costs[1])
+    np.testing.assert_allclose(adaptive_costs[1], costs['optimistic'], rtol=1e-5)
+
+  def testSlackGate(self):
+    gate = counterfactual.make_slack_gate(lambda aux_state: 0.01, sharpness=10.0)
+    self.assertAlmostEqual(float(gate(None, 0.01)), 0.5, places=5)
+    self.assertGreater(float(gate(None, 0.0)), 0.99)
+    self.assertLess(float(gate(None, 0.02)), 0.01)
+
 
 if __name__ == '__main__':
   absltest.main()

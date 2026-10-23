@@ -89,6 +89,7 @@ def train(
         counterfactual_ratio: float = 0.5,
         counterfactual_candidates: int = 4,
         counterfactual_rho_clip: float = 1.0,
+        counterfactual_gate_sharpness: float = 10.0,
 ):
     """PPO-Lagrange training.
 
@@ -149,11 +150,13 @@ def train(
         from an algorithm without cost_value (e.g., PPO). Options:
         - 'value': copy from value network (often works well for transfer)
         - 'random': use random initialization
-      counterfactual_mode: 'none', 'random' or 'optimistic' hazard relabelling
-        of a share of each batch (SafePathway envs only).
+      counterfactual_mode: 'none', 'random', 'optimistic' or 'adaptive' hazard
+        relabelling of a share of each batch (SafePathway envs only).
       counterfactual_ratio: relabelled segments per batch, as a fraction of the real ones.
-      counterfactual_candidates: layouts sampled per segment in 'optimistic' mode.
+      counterfactual_candidates: layouts sampled per segment in 'optimistic' / 'adaptive' mode.
       counterfactual_rho_clip: truncation level of the importance weights.
+      counterfactual_gate_sharpness: 'adaptive' mode: slope of the optimistic share
+        in the relative constraint violation of the real batch.
 
     Returns:
       Tuple of (make_policy function, network params, metrics, eval_env)
@@ -201,6 +204,9 @@ def train(
             ppo_network=ppo_network, lambda_lagr=lambda_lagr, safety_bound=per_step_safety_bound,
             entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
             gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
+
+    def step_bound_fn(aux_state):
+        return safety_bound / aux_state[1] if observed_episode_length_bound else per_step_safety_bound
 
     # Initialize aux_state with the initial Lagrange multiplier
     def init_aux_state_fn():
@@ -264,5 +270,6 @@ def train(
         init_aux_state_fn=init_aux_state_fn,
         **counterfactual.counterfactual_train_kwargs(
             environment, extra_fields, action_repeat, counterfactual_mode,
-            counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip),
+            counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip,
+            counterfactual_gate_sharpness, step_bound_fn),
     )

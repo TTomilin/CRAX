@@ -81,6 +81,7 @@ def train(
         counterfactual_ratio: float = 0.5,
         counterfactual_candidates: int = 4,
         counterfactual_rho_clip: float = 1.0,
+        counterfactual_gate_sharpness: float = 10.0,
 ):
     """PPO-PID Lagrange training."""
     per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
@@ -111,6 +112,9 @@ def train(
             aux_state = aux_state + (observed_length,)
         new_state = training_state.replace(aux_state=aux_state)
         return new_state, {"lambda_lagr": updated_lambda, "pid/violation": v, **extra_metrics}
+
+    def step_bound_fn(aux_state):
+        return safety_bound / aux_state[4] if observed_episode_length_bound else per_step_safety_bound
 
     def lagrange_loss_fn(params, normalizer_params, data, rng, aux_state=None,
                          ppo_network=None, entropy_cost=1e-4, discounting=0.9,
@@ -150,4 +154,5 @@ def train(
         init_aux_state_fn=init_aux_state_fn,
         **counterfactual.counterfactual_train_kwargs(
             environment, ("truncation", "episode_metrics", "episode_done", "cost"), action_repeat,
-            counterfactual_mode, counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip))
+            counterfactual_mode, counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip,
+            counterfactual_gate_sharpness, step_bound_fn))

@@ -250,9 +250,10 @@ def train(
         extra_fields: Tuple[str, ...] = ('truncation', 'episode_metrics', 'episode_done'),
         init_aux_state_fn: Optional[Callable[[], Any]] = None,
         # counterfactual relabelling (see training/counterfactual.py)
-        counterfactual_fn: Optional[Callable[[types.Transition, PRNGKey], Tuple[types.Transition, Metrics]]] = None,
+        counterfactual_fn: Optional[Callable[..., Tuple[types.Transition, Metrics]]] = None,
         counterfactual_ratio: float = 0.0,
         counterfactual_rho_clip: float = 1.0,
+        counterfactual_gate_fn: Optional[Callable[[Any, jnp.ndarray], jnp.ndarray]] = None,
 ):
     """PPO training.
 
@@ -344,6 +345,9 @@ def train(
       counterfactual_ratio: Number of relabelled segments per batch, as a
         fraction of the real ones.
       counterfactual_rho_clip: Truncation level of the importance weights.
+      counterfactual_gate_fn: Optional `(aux_state, mean_cost) -> p` passed to
+        `counterfactual_fn` as its third argument, from the mean per-step cost
+        of the real batch (e.g. the share of optimistic relabels).
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -595,6 +599,7 @@ def train(
             data: types.Transition,
             params: ppo_losses.PPONetworkParams,
             normalizer_params: running_statistics.RunningStatisticsState,
+            aux_state: Any,
             key: PRNGKey,
     ) -> Tuple[types.Transition, Metrics]:
         """Appends relabelled copies of a random subset of segments to the batch."""
@@ -603,7 +608,13 @@ def train(
         num_cf = int(counterfactual_ratio * num_segments) // num_minibatches * num_minibatches
         key_perm, key_cf = jax.random.split(key)
         idx = jax.random.permutation(key_perm, num_segments)[:num_cf]
-        cf, cf_metrics = counterfactual_fn(jax.tree_util.tree_map(lambda x: x[idx], data), key_cf)
+        gate_args = ()
+        if counterfactual_gate_fn is not None:
+            mean_cost = jnp.mean(data.extras['state_extras']['cost'])
+            if pmap_axis_name:
+                mean_cost = jax.lax.pmean(mean_cost, axis_name=pmap_axis_name)
+            gate_args = (counterfactual_gate_fn(aux_state, mean_cost),)
+        cf, cf_metrics = counterfactual_fn(jax.tree_util.tree_map(lambda x: x[idx], data), key_cf, *gate_args)
 
         # The actions were drawn for the real observations: re-anchor the PPO
         # ratio at the current policy and correct with truncated IS weights.
@@ -684,7 +695,8 @@ def train(
         cf_metrics = {}
         if use_counterfactuals:
             key_cf = jax.random.fold_in(key, 1)
-            data, cf_metrics = add_counterfactuals(data, training_state.params, normalizer_params, key_cf)
+            data, cf_metrics = add_counterfactuals(
+                data, training_state.params, normalizer_params, training_state.aux_state, key_cf)
 
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(
