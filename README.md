@@ -5,7 +5,7 @@
 CRAX is a high-performance benchmark for **Constrained Reinforcement Learning (Safe RL)** built on top of [Brax](https://github.com/google/brax) and [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html). It provides GPU/TPU-accelerated environments with safety constraints and a suite of state-of-the-art safe RL algorithms.
 
 <p align="center">
-  <img src="assets/envs/envs.gif" alt="CRAX Environments: Goal, Push, Reacher, Lift, Pathway and Height tasks" width="100%" />
+  <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/envs.gif" alt="CRAX Environments: Goal, Push, Reacher, Lift, Pathway and Height tasks" width="100%" />
 </p>
 
 ## Features
@@ -34,7 +34,7 @@ CRAX includes efficient JAX implementations of the following, selected with the
 | **SAC-Lagrange** | `sac_lag` | SAC with Lagrangian relaxation for constraints | |
 | **SAC-PID** | `sac_pid` | SAC with PID-controlled Lagrange multiplier | |
 
-All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods. The registry lives in `get_algorithm_train_fn` in `training/run_utils.py`; each algorithm adds its own CLI section in `training/config.py` (`--safety_bound`, `--pid_kp`, `--nu_lr`, `--tau`, ...), and irrelevant arguments are filtered out per algorithm by `filter_kwargs_for_fn`.
+All algorithms share a common training infrastructure with hooks for custom loss functions and constraint handling, making it easy to implement new methods. The registry lives in `get_algorithm_train_fn` in `crax/training/run_utils.py`; each algorithm adds its own CLI section in `crax/training/config.py` (`--safety_bound`, `--pid_kp`, `--nu_lr`, `--tau`, ...), and irrelevant arguments are filtered out per algorithm by `filter_kwargs_for_fn`.
 
 ## Environments
 
@@ -58,15 +58,25 @@ Every environment offers three difficulty levels that progressively increase con
 
 | Environment | Level 1 | Level 2 | Level 3 |
 |:-----------:|:-------:|:-------:|:-------:|
-| **Goal** | <img src="assets/envs/safe_point_goal_level_1.png" width="100%" /> | <img src="assets/envs/safe_point_goal_level_2.png" width="100%" /> | <img src="assets/envs/safe_point_goal_level_3.png" width="100%" /> |
-| **Circle** | <img src="assets/envs/safe_point_circle_level_1.png" width="100%" /> | <img src="assets/envs/safe_point_circle_level_2.png" width="100%" /> | <img src="assets/envs/safe_point_circle_level_3.png" width="100%" /> |
-| **Push** | <img src="assets/envs/safe_block_push_level_1.png" width="100%" /> | <img src="assets/envs/safe_block_push_level_2.png" width="100%" /> | <img src="assets/envs/safe_block_push_level_3.png" width="100%" /> |
-| **Reacher** | <img src="assets/envs/safe_reacher_level_1.png" width="100%" /> | <img src="assets/envs/safe_reacher_level_2.png" width="100%" /> | <img src="assets/envs/safe_reacher_level_3.png" width="100%" /> |
-| **Pathway** | <img src="assets/envs/safe_walker_level_1.png" width="100%" /> | <img src="assets/envs/safe_walker_level_2.png" width="100%" /> | <img src="assets/envs/safe_walker_level_3.png" width="100%" /> |
-| **Height** | <img src="assets/envs/safe_height_level_1.png" width="100%" /> | <img src="assets/envs/safe_height_level_2.png" width="100%" /> | <img src="assets/envs/safe_height_level_3.png" width="100%" /> |
-| **Lift** | <img src="assets/envs/safe_spider_level_1.png" width="100%" /> | <img src="assets/envs/safe_spider_level_2.png" width="100%" /> | <img src="assets/envs/safe_spider_level_3.png" width="100%" /> |
+| **Goal** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_goal_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_goal_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_goal_level_3.png" width="100%" /> |
+| **Circle** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_circle_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_circle_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_point_circle_level_3.png" width="100%" /> |
+| **Push** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_block_push_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_block_push_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_block_push_level_3.png" width="100%" /> |
+| **Reacher** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_reacher_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_reacher_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_reacher_level_3.png" width="100%" /> |
+| **Pathway** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_walker_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_walker_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_walker_level_3.png" width="100%" /> |
+| **Height** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_height_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_height_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_height_level_3.png" width="100%" /> |
+| **Lift** | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_spider_level_1.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_spider_level_2.png" width="100%" /> | <img src="https://raw.githubusercontent.com/TTomilin/CRAX/main/assets/envs/safe_spider_level_3.png" width="100%" /> |
 
 ## Installation
+
+CRAX is published on PyPI as `crax-bench` (the import name is `crax`):
+
+```bash
+pip install crax-bench             # environments only
+pip install "crax-bench[train]"    # + the RL algorithms in crax.training
+```
+
+To work on CRAX itself, or to use the scripts in `results/` and `scripts/`,
+install from source:
 
 ```bash
 git clone https://github.com/TTomilin/CRAX.git
@@ -90,7 +100,7 @@ build, step and render environments — no RL dependencies:
 pip install -e .
 ```
 
-To train agents, install the `train` extra, which adds the `training/` package's
+To train agents, install the `train` extra, which adds the `crax.training`
 dependencies (optax, orbax, wandb):
 
 ```bash
@@ -101,27 +111,29 @@ Other extras:
 
 | Extra | Adds | For |
 |---|---|---|
-| `train` | optax, orbax-checkpoint, wandb, imageio, matplotlib | Running the RL algorithms in `training/` |
+| `train` | optax, orbax-checkpoint, wandb, imageio, matplotlib | Running the RL algorithms in `crax.training` |
 | `analysis` | pandas, matplotlib, wandb | Downloading and plotting results (`results/`) |
 | `gym` | gym, dm_env | The Gym/dm_env wrappers in `crax.envs.wrappers` |
 | `torch` | torch | The PyTorch wrapper |
+| `vision` | mujoco-warp, warp-lang | GPU pixel observations (`--vision`) |
+| `play` | pygame | Playing environments with the keyboard (`crax.play`) |
 | `cuda` | `jax[cuda12]` | GPU support on CUDA 12 |
-| `all` | train + analysis + gym | Everything except CUDA and torch |
+| `all` | train + analysis + gym + vision + play | Everything except CUDA and torch |
 
-Extras combine, e.g. a GPU training install:
+Extras combine, e.g. a GPU training install with pixel observations:
 
 ```bash
-pip install -e ".[train,cuda]"
+pip install -e ".[train,vision,cuda]"
 ```
 
-See [SETUP.md](SETUP.md) for pinned installs, GPU/headless configuration, wandb
-and troubleshooting, and [docs/VISION_TRAINING.md](docs/VISION_TRAINING.md) for
+See [SETUP.md](https://github.com/TTomilin/CRAX/blob/main/SETUP.md) for pinned installs, GPU/headless configuration, wandb
+and troubleshooting, and [docs/VISION_TRAINING.md](https://github.com/TTomilin/CRAX/blob/main/docs/VISION_TRAINING.md) for
 training from pixel observations.
 
 ## Start Here
 
 The quickest way to see CRAX working is
-[`examples/01_run_episode.py`](examples/01_run_episode.py).
+[`examples/01_run_episode.py`](https://github.com/TTomilin/CRAX/blob/main/examples/01_run_episode.py).
 
 ```bash
 python examples/01_run_episode.py --env_name safe_goal_point --level 1
@@ -145,11 +157,11 @@ for _ in range(300):
     reward, cost = float(state.reward), float(state.info['cost'])  # safety cost per step
 ```
 
-See [`examples/README.md`](examples/README.md) for the full list of examples.
+See [`examples/README.md`](https://github.com/TTomilin/CRAX/blob/main/examples/README.md) for the full list of examples.
 
 ### Playing CRAX
 
-Point-agent environments can be played with a keyboard (requires `pygame`):
+Point-agent environments can be played with a keyboard (requires the `play` extra):
 
 ```bash
 python -m crax.play --env_name safe_goal_point --level 2
@@ -159,55 +171,55 @@ W/S thrust, A/D turn, C cycles the camera, R resets, Space pauses, Esc quits.
 
 ### Training from the command line
 
-The training entry points live in the `training/` package and are run as modules:
+The training entry points live in `crax.training` and are run as modules:
 
 ```bash
 # Single environment
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1
 
 # Curriculum across difficulty levels
-python -m training.train_curriculum --env_name safe_goal_point --alg ppo_lag
+python -m crax.training.train_curriculum --env_name safe_goal_point --alg ppo_lag
 
 # Safety transfer: unsafe PPO pre-training, then safe fine-tuning
-python -m training.train_transfer --env_name safe_velocity_ant --alg ppo_lag
+python -m crax.training.train_transfer --env_name safe_velocity_ant --alg ppo_lag
 ```
 
 Installing the package (with the `train` extra) also puts them on your PATH as
 `crax-train`, `crax-train-curriculum` and `crax-train-transfer`. All three share
-the argument set defined in `training/config.py`; run with `--help` for the full
+the argument set defined in `crax/training/config.py`; run with `--help` for the full
 list.
 
 ## Project Structure
 
-The repository is split in two packages: `crax/` holds the simulation and the
-environments, `training/` holds the RL algorithms. `crax/` does not import
-`training/`, so environments can be used on their own with a much smaller
-dependency set (see [Installation](#installation)).
+`crax/` holds the simulation and the environments; its `crax/training/`
+subpackage holds the RL algorithms. Nothing outside `crax.training` imports it,
+so environments can be used on their own with a much smaller dependency set
+(see [Installation](#installation)).
 
 ```
 CRAX/
-├── crax/                        # Environments + simulation (no RL deps)
+├── crax/                        # Environments, simulation and (in training/) RL algorithms
 │   ├── base.py, math.py, ...    # Physics core (Brax/MJX pipelines)
 │   ├── generalized/, positional/, spring/, mjx/
 │   ├── io/                      # MJCF loading, image + HTML export
-│   └── envs/                    # Environment definitions
-│       ├── builder.py           # Modular XML scene builder
-│       ├── difficulty.py        # Difficulty level configurations
-│       ├── hazards.py           # Hazard generation utilities
-│       ├── goals.py             # Goal sampling utilities
-│       └── wrappers/            # Env wrappers (incl. pixel observations)
-├── training/                    # RL algorithms and training infrastructure
-│   ├── agents/                  # Algorithm implementations (PPO, SAC, etc.)
-│   ├── networks.py              # Policy/value network factories
-│   ├── acting.py                # Rollout and evaluation loops
-│   ├── curriculum.py            # Curriculum training loop
-│   ├── transfer.py              # Transfer learning loop
-│   ├── checkpoint.py            # Checkpoint save/load
-│   ├── config.py                # Shared CLI argument definitions
-│   ├── run_utils.py             # Shared training helpers
-│   ├── train_env.py             # Entry point: single environment training
-│   ├── train_curriculum.py      # Entry point: progressive difficulty training
-│   └── train_transfer.py        # Entry point: safety transfer learning
+│   ├── envs/                    # Environment definitions
+│   │   ├── builder.py           # Modular XML scene builder
+│   │   ├── difficulty.py        # Difficulty level configurations
+│   │   ├── hazards.py           # Hazard generation utilities
+│   │   ├── goals.py             # Goal sampling utilities
+│   │   └── wrappers/            # Env wrappers (incl. pixel observations)
+│   └── training/                # RL algorithms and training infrastructure
+│       ├── agents/              # Algorithm implementations (PPO, SAC, etc.)
+│       ├── networks.py          # Policy/value network factories
+│       ├── acting.py            # Rollout and evaluation loops
+│       ├── curriculum.py        # Curriculum training loop
+│       ├── transfer.py          # Transfer learning loop
+│       ├── checkpoint.py        # Checkpoint save/load
+│       ├── config.py            # Shared CLI argument definitions
+│       ├── run_utils.py         # Shared training helpers
+│       ├── train_env.py         # Entry point: single environment training
+│       ├── train_curriculum.py  # Entry point: progressive difficulty training
+│       └── train_transfer.py    # Entry point: safety transfer learning
 ├── results/                     # Result download + plotting pipeline
 ├── examples/                    # Small self-contained usage examples
 ├── scripts/                     # Utility & visualization scripts
@@ -233,7 +245,7 @@ This design minimizes code duplication and makes it easy to add new algorithms.
 
 ## Contributing
 
-Planned work is tracked in [ROADMAP.md](ROADMAP.md). Contributions are welcome. 
+Planned work is tracked in [ROADMAP.md](https://github.com/TTomilin/CRAX/blob/main/ROADMAP.md). Contributions are welcome. 
 The roadmap flags which items are self-contained enough to pick up directly. 
 For anything substantial, please open an issue first so we can avoid duplicated work.
 
@@ -249,7 +261,7 @@ Using CRAX in your work? Feel free to open a pull request to add your paper to t
 
 CRAX builds on [Brax](https://github.com/google/brax), Google's JAX-based physics and RL library, and on [MuJoCo XLA (MJX)](https://mujoco.readthedocs.io/en/stable/mjx.html)
 and [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp), which power the accelerated simulation and the GPU pixel renderer. We thank the Brax and
-MuJoCo teams for these foundations. [PROVENANCE.md](PROVENANCE.md) outlines which sources come from Brax.
+MuJoCo teams for these foundations. [PROVENANCE.md](https://github.com/TTomilin/CRAX/blob/main/PROVENANCE.md) outlines which sources come from Brax.
 Our navigation and velocity suite tasks are close reimplementations from 
 [Safety Gym](https://openai.com/index/safety-gym/) and [Safety-Gymnasium](https://github.com/PKU-Alignment/safety-gymnasium).
 
