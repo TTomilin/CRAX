@@ -22,7 +22,7 @@ way `crax.envs.training.wrap`'s `VmapWrapper` works) fails: the underlying
 FFI call shape-checks against the unbatched per-example shape before vmap's
 batching rule ever applies. So this wrapper must be applied to an ALREADY
 VECTORIZED env, i.e. *after* `VmapWrapper` / `crax.envs.training.wrap`,
-not before. `training.agents.ppo.train._maybe_wrap_env` does this:
+not before. `crax.training.agents.ppo.train._maybe_wrap_env` does this:
 `wrap_for_training(env, ...)` runs first, then this wrapper is applied to
 the result, using the same `num_envs` (or `num_eval_envs`) already known
 at that point to size the render context.
@@ -36,9 +36,16 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import jax
 import jax.numpy as jnp
 import mujoco
-import mujoco_warp as mjw
-import warp as wp
-from warp.jax_experimental import ffi
+
+try:
+    import mujoco_warp as mjw
+    import warp as wp
+    from warp.jax_experimental import ffi
+except ImportError as e:
+    raise ImportError(
+        "GPU pixel observations need MuJoCo Warp; install the `vision` extra: "
+        "pip install 'crax-bench[vision]'"
+    ) from e
 
 from crax.envs.base import Env, State, Wrapper
 

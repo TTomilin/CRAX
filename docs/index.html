@@ -574,7 +574,7 @@
 cd CRAX
 pip install -e ".[train,cuda]"</code></pre>
         <h4>Train</h4>
-<pre><code>python -m training.train_env \
+<pre><code>python -m crax.training.train_env \
   --env_name safe_goal_point --difficulty 1 \
   --alg ppo_lag</code></pre>
         <h4>Play with the keyboard</h4>
