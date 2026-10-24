@@ -15,7 +15,6 @@ from results.common import (
     nice_grid,
     moving_average,
     legend_ncol,
-    legend_rows,
     BASELINES_COLORS, TRANSLATIONS,
     results_path,
 )
@@ -168,11 +167,16 @@ def plot_metrics(data: Dict[Tuple[str, str, str], List[pd.DataFrame]], args: arg
     if legend_handles:
         labels, handles = zip(*legend_handles.items())
         labels = [TRANSLATIONS.get(lbl, lbl) for lbl in labels]
-        rows = legend_rows(len(args.algos))
-        # A second row grows the legend downwards, clear of the axis labels;
-        # savefig(bbox_inches="tight") expands the canvas to include it.
-        y_anchor = 0.0 + 0.01 * (rows - 1)
-        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, y_anchor),
+        # Hang the legend just below the lowest axis labels, so it never covers them
+        # however many rows the grid has; savefig(bbox_inches="tight") expands the
+        # canvas to include it.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        y_anchor = min(
+            ax.get_tightbbox(renderer).transformed(fig.transFigure.inverted()).y0
+            for ax in axs.flat if ax.axison
+        ) - 0.01
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, y_anchor),
                    ncol=legend_ncol(len(args.algos), len(labels)),
                    fancybox=True, shadow=True)
 
