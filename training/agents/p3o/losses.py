@@ -95,6 +95,9 @@ def compute_p3o_loss(
 
     truncation = data.extras['state_extras']['truncation']
     termination = (1 - data.discount) * (1 - truncation)
+    # Counterfactual (relabelled) transitions carry truncated IS weights; real ones are on-policy
+    is_weight = state_extras.get('is_weight')
+    is_real = state_extras.get('is_real', jnp.ones_like(rewards))
 
     target_action_log_probs = parametric_action_distribution.log_prob(
         policy_logits, data.extras['policy_extras']['raw_action']
@@ -110,6 +113,7 @@ def compute_p3o_loss(
         bootstrap_value=bootstrap_value,
         lambda_=gae_lambda,
         discount=discounting,
+        importance_weights=is_weight,
     )
 
     # Compute cost advantages and returns
@@ -121,6 +125,7 @@ def compute_p3o_loss(
         bootstrap_value=bootstrap_cost_value,
         lambda_=gae_lambda,
         discount=discounting,
+        importance_weights=is_weight,
     )
 
     # Normalize reward advantages only (not cost advantages!)
@@ -133,19 +138,25 @@ def compute_p3o_loss(
     cadv = cost_advantages
 
     # Importance sampling ratio
-    rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
+    log_rho = target_action_log_probs - behaviour_action_log_probs
+    if is_weight is not None:
+        # See ppo_lag.losses: bounds the ratio of relabelled actions far in the policy's tail
+        log_rho = jnp.clip(log_rho, -20.0, 20.0)
+    rho_s = jnp.exp(log_rho)
+    # Per-sample weights of the surrogates (truncated IS weights of relabelled transitions)
+    sample_weight = jnp.ones_like(rho_s) if is_weight is None else is_weight
     rho_clipped = jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon)
 
     # Standard PPO clipped reward loss: L_R^CLIP = -min{r*A, clip(r)*A}
     surrogate_loss_r1 = rho_s * adv
     surrogate_loss_r2 = rho_clipped * adv
-    reward_loss = -jnp.mean(jnp.minimum(surrogate_loss_r1, surrogate_loss_r2))
+    reward_loss = -jnp.mean(sample_weight * jnp.minimum(surrogate_loss_r1, surrogate_loss_r2))
 
     # P3O clipped cost loss: L_C^CLIP = max{r*A_C, clip(r)*A_C} + (1-γ)(J_C - d)
     # Uses max instead of min to be pessimistic about cost reduction
     surrogate_loss_c1 = rho_s * cadv
     surrogate_loss_c2 = rho_clipped * cadv
-    clipped_cost_surrogate = jnp.mean(jnp.maximum(surrogate_loss_c1, surrogate_loss_c2))
+    clipped_cost_surrogate = jnp.mean(sample_weight * jnp.maximum(surrogate_loss_c1, surrogate_loss_c2))
 
     # Use the cost_violation passed in from training loop (computed from episodic costs)
     # This is more accurate than using the value network estimate early in training
@@ -182,13 +193,19 @@ def compute_p3o_loss(
     entropy = jnp.mean(parametric_action_distribution.entropy(policy_logits, rng))
     entropy_loss = entropy_cost * -entropy
 
-    # Mean cost for metrics
-    mean_cost = jnp.mean(costs)
+    # Only real transitions estimate the policy's cost (drives the constraint handling)
+    mean_cost = jnp.sum(costs * is_real) / jnp.maximum(jnp.sum(is_real), 1.0)
+
+    # Completed real episodes in this minibatch, for the observed-episode-length bound
+    episode_done = state_extras.get('episode_done', jnp.zeros_like(rewards)) * is_real
+    episode_length = state_extras.get('episode_metrics', {}).get('length', jnp.zeros_like(rewards))
     mean_cost_value = jnp.mean(cost_baseline)
 
     total_loss = policy_loss + v_loss + cost_v_loss + entropy_loss
 
     return total_loss, {
+        'episodes_done': jnp.sum(episode_done),
+        'episode_length_sum': jnp.sum(episode_done * episode_length),
         'total_loss': total_loss,
         'policy_loss': policy_loss,
         'reward_loss': reward_loss,

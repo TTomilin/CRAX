@@ -12,8 +12,10 @@ import jax.numpy as jnp
 
 from crax import base
 from crax import envs
+from training import counterfactual
 from training import types
 from training.agents.ppo import train as ppo_train
+from training.agents.ppo_lag.train import update_observed_episode_length
 from training.agents.ppo import networks as ppo_networks
 from training.agents.p3o import losses as p3o_losses
 
@@ -56,6 +58,8 @@ def train(
         initial_kappa: float = 0.01,
         kappa_increase_factor: float = 1.1,
         kappa_max: float = 1000.0,
+        observed_episode_length_bound: bool = False,
+        episode_length_ema: float = 0.9,
         # Eval params
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
@@ -72,8 +76,17 @@ def train(
         restore_value_fn: bool = True,
         pretrained_params: Optional[Any] = None,
         init_cost_value_from: str = 'value',
+        # counterfactual hazard relabelling (see training/counterfactual.py)
+        counterfactual_mode: str = 'none',
+        counterfactual_ratio: float = 0.5,
+        counterfactual_candidates: int = 4,
+        counterfactual_rho_clip: float = 1.0,
+        counterfactual_gate_sharpness: float = 10.0,
 ):
-    """P3O training."""
+    """P3O training.
+
+    `observed_episode_length_bound` and the counterfactual arguments are as in ppo_lag.train.
+    """
     per_step_safety_bound = safety_bound / episode_length if episode_length else safety_bound
 
     if network_factory is None:
@@ -81,12 +94,20 @@ def train(
             return ppo_networks.make_ppo_networks(
                 obs_size, action_size, cost_value_hidden_layer_sizes=(256,) * 5, **kwargs)
 
-    # P3O stores (kappa, cost_violation) in aux_state
+    # P3O stores (kappa, cost_violation) in aux_state, plus the observed episode length if the
+    # per-step bound tracks it
     def post_step_fn(training_state, metrics):
         """Updates kappa based on constraint violation."""
-        kappa, _ = training_state.aux_state
+        kappa = training_state.aux_state[0]
         avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        cost_violation = jnp.array([avg_cost - per_step_safety_bound])
+        extra_metrics = {}
+        step_bound = per_step_safety_bound
+        if observed_episode_length_bound:
+            observed_length = update_observed_episode_length(
+                metrics, training_state.aux_state[2], episode_length_ema)
+            step_bound = safety_bound / observed_length
+            extra_metrics = {'observed_episode_length': observed_length, 'per_step_safety_bound': step_bound}
+        cost_violation = jnp.array([avg_cost - step_bound])
         constraint_violated = cost_violation[0] > 0.0
 
         # Increase kappa when violated, decrease slowly when satisfied
@@ -95,15 +116,18 @@ def train(
             jnp.minimum(kappa * kappa_increase_factor, kappa_max),
             jnp.maximum(kappa * 0.9, initial_kappa),
         )
-        new_state = training_state.replace(aux_state=(updated_kappa, cost_violation))
-        return new_state, {'kappa': updated_kappa, 'cost_violation': cost_violation[0]}
+        aux_state = (updated_kappa, cost_violation)
+        if observed_episode_length_bound:
+            aux_state = aux_state + (observed_length,)
+        new_state = training_state.replace(aux_state=aux_state)
+        return new_state, {'kappa': updated_kappa, 'cost_violation': cost_violation[0], **extra_metrics}
 
     def p3o_loss_fn(params, normalizer_params, data, rng, aux_state=None,
                     ppo_network=None, entropy_cost=1e-4, discounting=0.99,
                     reward_scaling=1.0, gae_lambda=0.95, clipping_epsilon=0.2,
                     normalize_advantage=True):
         """P3O loss function."""
-        kappa, cost_violation = aux_state if aux_state else (jnp.array([initial_kappa]), jnp.array([0.0]))
+        kappa, cost_violation = aux_state[:2] if aux_state else (jnp.array([initial_kappa]), jnp.array([0.0]))
         return p3o_losses.compute_p3o_loss(
             params=params, normalizer_params=normalizer_params, data=data, rng=rng,
             ppo_network=ppo_network, kappa=kappa, cost_violation=cost_violation,
@@ -111,8 +135,15 @@ def train(
             entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
             gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
 
+    def step_bound_fn(aux_state):
+        return safety_bound / aux_state[2] if observed_episode_length_bound else per_step_safety_bound
+
     def init_aux_state_fn():
-        return (jnp.array([initial_kappa], dtype=jnp.float32), jnp.array([0.0], dtype=jnp.float32))
+        aux_state = (jnp.array([initial_kappa], dtype=jnp.float32), jnp.array([0.0], dtype=jnp.float32))
+        if observed_episode_length_bound:
+            # Starts at the fixed conversion; tracks completed episodes from the first update
+            aux_state = aux_state + (jnp.asarray(episode_length, dtype=jnp.float32),)
+        return aux_state
 
     effective_restore_params = pretrained_params if pretrained_params is not None else restore_params
 
@@ -132,5 +163,8 @@ def train(
         save_checkpoint_path=save_checkpoint_path, restore_checkpoint_path=restore_checkpoint_path,
         restore_params=effective_restore_params, restore_value_fn=restore_value_fn,
         loss_fn=p3o_loss_fn, post_step_fn=post_step_fn,
-        extra_fields=('truncation', 'episode_metrics', 'episode_done', 'cost'),
-        init_aux_state_fn=init_aux_state_fn)
+        init_aux_state_fn=init_aux_state_fn,
+        **counterfactual.counterfactual_train_kwargs(
+            environment, ('truncation', 'episode_metrics', 'episode_done', 'cost'), action_repeat,
+            counterfactual_mode, counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip,
+            counterfactual_gate_sharpness, step_bound_fn))

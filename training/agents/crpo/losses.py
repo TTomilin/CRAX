@@ -95,6 +95,9 @@ def compute_crpo_loss(
 
     truncation = data.extras['state_extras']['truncation']
     termination = (1 - data.discount) * (1 - truncation)
+    # Counterfactual (relabelled) transitions carry truncated IS weights; real ones are on-policy
+    is_weight = state_extras.get('is_weight')
+    is_real = state_extras.get('is_real', jnp.ones_like(rewards))
 
     target_action_log_probs = parametric_action_distribution.log_prob(
         policy_logits, data.extras['policy_extras']['raw_action']
@@ -110,6 +113,7 @@ def compute_crpo_loss(
         bootstrap_value=bootstrap_value,
         lambda_=gae_lambda,
         discount=discounting,
+        importance_weights=is_weight,
     )
 
     # Compute cost advantages and returns
@@ -121,6 +125,7 @@ def compute_crpo_loss(
         bootstrap_value=bootstrap_cost_value,
         lambda_=gae_lambda,
         discount=discounting,
+        importance_weights=is_weight,
     )
 
     if normalize_advantage:
@@ -130,19 +135,25 @@ def compute_crpo_loss(
         adv = advantages
         cadv = cost_advantages
 
-    rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
+    log_rho = target_action_log_probs - behaviour_action_log_probs
+    if is_weight is not None:
+        # See ppo_lag.losses: bounds the ratio of relabelled actions far in the policy's tail
+        log_rho = jnp.clip(log_rho, -20.0, 20.0)
+    rho_s = jnp.exp(log_rho)
+    # Per-sample weights of the surrogates (truncated IS weights of relabelled transitions)
+    sample_weight = jnp.ones_like(rho_s) if is_weight is None else is_weight
     rho_clipped = jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon)
 
     # Reward-objective clipped surrogate (standard PPO)
     reward_surrogate1 = rho_s * adv
     reward_surrogate2 = rho_clipped * adv
-    reward_policy_loss = -jnp.mean(jnp.minimum(reward_surrogate1, reward_surrogate2))
+    reward_policy_loss = -jnp.mean(sample_weight * jnp.minimum(reward_surrogate1, reward_surrogate2))
 
     # Cost-objective clipped surrogate: maximize -cost, i.e. minimize cost
     neg_cadv = -cadv
     cost_surrogate1 = rho_s * neg_cadv
     cost_surrogate2 = rho_clipped * neg_cadv
-    cost_policy_loss = -jnp.mean(jnp.minimum(cost_surrogate1, cost_surrogate2))
+    cost_policy_loss = -jnp.mean(sample_weight * jnp.minimum(cost_surrogate1, cost_surrogate2))
 
     # Rectified switch: pure reward step if feasible, pure cost step otherwise
     regime_scalar = regime[0] if regime.ndim > 0 else regime
@@ -160,11 +171,18 @@ def compute_crpo_loss(
     entropy = jnp.mean(parametric_action_distribution.entropy(policy_logits, rng))
     entropy_loss = entropy_cost * -entropy
 
-    mean_cost = jnp.mean(costs)
+    # Only real transitions estimate the policy's cost (drives the constraint handling)
+    mean_cost = jnp.sum(costs * is_real) / jnp.maximum(jnp.sum(is_real), 1.0)
+
+    # Completed real episodes in this minibatch, for the observed-episode-length bound
+    episode_done = state_extras.get('episode_done', jnp.zeros_like(rewards)) * is_real
+    episode_length = state_extras.get('episode_metrics', {}).get('length', jnp.zeros_like(rewards))
 
     total_loss = policy_loss + v_loss + cost_v_loss + entropy_loss
 
     return total_loss, {
+        'episodes_done': jnp.sum(episode_done),
+        'episode_length_sum': jnp.sum(episode_done * episode_length),
         'total_loss': total_loss,
         'policy_loss': policy_loss,
         'reward_policy_loss': reward_policy_loss,

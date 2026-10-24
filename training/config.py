@@ -141,7 +141,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--lagrangian_coef_rate", type=float, default=10.0, help="Lagrange multiplier LR")
     parser.add_argument("--initial_lambda_lagr", type=float, default=0.0, help="Initial lambda value")
     parser.add_argument("--observed_episode_length_bound", type=bool_type, nargs="?", const=True, default=False,
-                        help="PPO-Lag/PID: per-step bound = safety_bound / observed (EMA) length of completed "
+                        help="PPO-Lag/PID, CRPO, P3O: per-step bound = safety_bound / observed (EMA) length of completed "
                              "episodes instead of / episode_length (fixes a tighter budget under early terminations)")
     parser.add_argument("--episode_length_ema", type=float, default=0.9,
                         help="EMA coefficient of the observed episode length")
@@ -154,7 +154,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--pid_lambda_clip", type=float, default=1e6, help="PID: clamp for lambda")
     parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
 
-    # --- Counterfactual hazard relabelling (PPO-Lag / PPO-PID on Pathway) ---
+    # --- Counterfactual hazard relabelling (PPO-Lag / PPO-PID / CRPO / P3O on Pathway) ---
     parser.add_argument("--counterfactual_mode", type=str, choices=["none", "random", "optimistic", "adaptive"],
                         default="none", help="Relabel a share of each batch under fresh hazard layouts "
                                              "('adaptive': optimistic while under the cost bound, random above it)")

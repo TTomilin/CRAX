@@ -10,6 +10,12 @@ import numpy as np
 from crax import envs
 from training import acting
 from training import counterfactual
+from training import types
+from training.agents.crpo import losses as crpo_losses
+from training.agents.p3o import losses as p3o_losses
+from training.agents.ppo import losses as ppo_losses
+from training.agents.ppo import networks as ppo_networks
+from training.agents.ppo_lag import losses as ppo_lag_losses
 
 
 def _random_policy(action_size):
@@ -96,6 +102,69 @@ class CounterfactualTest(absltest.TestCase):
     self.assertAlmostEqual(float(gate(None, 0.01)), 0.5, places=5)
     self.assertGreater(float(gate(None, 0.0)), 0.99)
     self.assertLess(float(gate(None, 0.02)), 0.01)
+
+
+class ConstrainedLossesTest(absltest.TestCase):
+  """Constrained PPO losses on a batch of real and relabelled segments."""
+
+  def _batch(self):
+    num_real, num_cf, t, obs_size, action_size = 4, 4, 5, 6, 2
+    b = num_real + num_cf
+    k_obs, k_act = jax.random.split(jax.random.PRNGKey(0))
+    is_real = jnp.concatenate([jnp.ones((num_real, t)), jnp.zeros((num_cf, t))])
+    # Relabelled actions far in the tail: their log-ratio would overflow without the bound
+    log_prob = jnp.where(is_real > 0, -1.0, -1e3)
+    episode_done = jnp.zeros((b, t)).at[:, -1].set(1.0)
+    data = types.Transition(
+        observation=jax.random.normal(k_obs, (b, t, obs_size)),
+        action=jnp.zeros((b, t, action_size)),
+        reward=jnp.ones((b, t)),
+        discount=jnp.ones((b, t)),
+        next_observation=jax.random.normal(k_obs, (b, t, obs_size)),
+        extras={
+            'policy_extras': {
+                'raw_action': jax.random.normal(k_act, (b, t, action_size)),
+                'log_prob': log_prob,
+            },
+            'state_extras': {
+                'truncation': jnp.zeros((b, t)),
+                # Real cost 1, relabelled cost 100: the cost estimate must ignore the latter
+                'cost': jnp.where(is_real > 0, 1.0, 100.0),
+                'episode_done': episode_done,
+                'episode_metrics': {'length': jnp.full((b, t), 7.0)},
+                'is_real': is_real,
+                'is_weight': jnp.where(is_real > 0, 1.0, 0.5),
+            },
+        })
+    network = ppo_networks.make_ppo_networks(
+        obs_size, action_size, policy_hidden_layer_sizes=(8,), value_hidden_layer_sizes=(8,),
+        cost_value_hidden_layer_sizes=(8,))
+    keys = jax.random.split(jax.random.PRNGKey(1), 3)
+    params = ppo_losses.PPONetworkParams(
+        policy=network.policy_network.init(keys[0]),
+        value=network.value_network.init(keys[1]),
+        cost_value=network.cost_value_network.init(keys[2]))
+    return data, network, params, num_real
+
+  def testRealOnlyCostAndFiniteGradients(self):
+    data, network, params, num_real = self._batch()
+    common = dict(normalizer_params=None, data=data, rng=jax.random.PRNGKey(2), ppo_network=network)
+    losses = {
+        'ppo_lag': lambda p: ppo_lag_losses.compute_ppo_lagrange_loss(
+            params=p, lambda_lagr=jnp.array([1.0]), **common),
+        'crpo_reward': lambda p: crpo_losses.compute_crpo_loss(params=p, regime=jnp.array([1.0]), **common),
+        'crpo_cost': lambda p: crpo_losses.compute_crpo_loss(params=p, regime=jnp.array([0.0]), **common),
+        'p3o': lambda p: p3o_losses.compute_p3o_loss(
+            params=p, kappa=jnp.array([1.0]), cost_violation=jnp.array([0.5]), **common),
+    }
+    for name, loss_fn in losses.items():
+      grads, metrics = jax.grad(loss_fn, has_aux=True)(params)
+      self.assertAlmostEqual(float(metrics['mean_cost']), 1.0, places=5, msg=name)
+      self.assertEqual(float(metrics['episodes_done']), num_real, msg=name)
+      self.assertAlmostEqual(float(metrics['episode_length_sum']), 7.0 * num_real, places=4, msg=name)
+      for leaf in jax.tree_util.tree_leaves(grads):
+        self.assertTrue(bool(jnp.all(jnp.isfinite(leaf))), msg=name)
+
 
 
 if __name__ == '__main__':

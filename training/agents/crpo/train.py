@@ -14,10 +14,12 @@ import jax.numpy as jnp
 
 from crax import base
 from crax import envs
+from training import counterfactual
 from training import types
 from training.agents.crpo import losses as crpo_losses
 from training.agents.ppo import networks as ppo_networks
 from training.agents.ppo import train as ppo_train
+from training.agents.ppo_lag.train import update_observed_episode_length
 
 Metrics = types.Metrics
 
@@ -58,6 +60,8 @@ def train(
         # CRPO specific params
         safety_bound: float = 0.0,
         crpo_eta: float = 0.0,
+        observed_episode_length_bound: bool = False,
+        episode_length_ema: float = 0.9,
         # eval
         num_evals: int = 0,
         eval_env: Optional[envs.Env] = None,
@@ -75,6 +79,12 @@ def train(
         # transfer learning / curriculum support
         pretrained_params: Optional[Any] = None,
         init_cost_value_from: str = 'value',
+        # counterfactual hazard relabelling (see training/counterfactual.py)
+        counterfactual_mode: str = 'none',
+        counterfactual_ratio: float = 0.5,
+        counterfactual_candidates: int = 4,
+        counterfactual_rho_clip: float = 1.0,
+        counterfactual_gate_sharpness: float = 10.0,
 ):
     """CRPO training.
 
@@ -113,6 +123,9 @@ def train(
         constraint is satisfied. The reward objective is optimized whenever
         avg_cost <= per_step_safety_bound + crpo_eta; otherwise the cost
         objective is optimized instead for that training step.
+      observed_episode_length_bound: convert the episodic bound to a per-step one with
+        an EMA of the observed length of completed episodes (see ppo_lag.train).
+      episode_length_ema: EMA coefficient of the observed episode length.
       num_evals: the number of evals to run during the entire training run.
       eval_env: an optional environment for eval only
       num_eval_envs: the number of envs to use for evaluation.
@@ -132,6 +145,13 @@ def train(
         from an algorithm without cost_value (e.g., PPO). Options:
         - 'value': copy from value network (often works well for transfer)
         - 'random': use random initialization
+      counterfactual_mode: 'none', 'random', 'optimistic' or 'adaptive' hazard
+        relabelling of a share of each batch (SafePathway envs only).
+      counterfactual_ratio: relabelled segments per batch, as a fraction of the real ones.
+      counterfactual_candidates: layouts sampled per segment in 'optimistic' / 'adaptive' mode.
+      counterfactual_rho_clip: truncation level of the importance weights.
+      counterfactual_gate_sharpness: 'adaptive' mode: slope of the optimistic share
+        in the relative constraint violation of the real batch.
 
     Returns:
       Tuple of (make_policy function, network params, metrics, eval_env)
@@ -145,14 +165,25 @@ def train(
             return ppo_networks.make_ppo_networks(
                 obs_size, action_size, cost_value_hidden_layer_sizes=(256,) * 5, **kwargs)
 
-    # CRPO stores the current regime (1.0 = optimize reward, 0.0 = optimize cost) in aux_state
+    # CRPO stores the current regime (1.0 = optimize reward, 0.0 = optimize cost) in aux_state,
+    # paired with the observed episode length if the per-step bound tracks it
     def post_step_fn(training_state: TrainingState, metrics: Metrics) -> Tuple[TrainingState, Metrics]:
         """Rectifies the objective based on the constraint's current violation."""
         avg_cost = jnp.mean(metrics['mean_cost'][-1])
-        cost_violation = avg_cost - per_step_safety_bound
+        extra_metrics = {}
+        step_bound = per_step_safety_bound
+        if observed_episode_length_bound:
+            observed_length = update_observed_episode_length(
+                metrics, training_state.aux_state[1], episode_length_ema)
+            step_bound = safety_bound / observed_length
+            extra_metrics = {'observed_episode_length': observed_length, 'per_step_safety_bound': step_bound}
+        cost_violation = avg_cost - step_bound
         updated_regime = jnp.where(cost_violation > crpo_eta, 0.0, 1.0)
-        new_training_state = training_state.replace(aux_state=jnp.array([updated_regime]))
-        return new_training_state, {'regime': updated_regime, 'cost_violation': cost_violation}
+        aux_state = jnp.array([updated_regime])
+        if observed_episode_length_bound:
+            aux_state = (aux_state, observed_length)
+        new_training_state = training_state.replace(aux_state=aux_state)
+        return new_training_state, {'regime': updated_regime, 'cost_violation': cost_violation, **extra_metrics}
 
     # Define the custom loss function for CRPO
     def crpo_loss_fn(params, normalizer_params, data, rng, aux_state=None,
@@ -161,15 +192,24 @@ def train(
                      normalize_advantage=True):
         """CRPO loss function."""
         regime = aux_state if aux_state is not None else jnp.array([1.0])
+        if observed_episode_length_bound:
+            regime = regime[0]
         return crpo_losses.compute_crpo_loss(
             params=params, normalizer_params=normalizer_params, data=data, rng=rng,
             ppo_network=ppo_network, regime=regime,
             entropy_cost=entropy_cost, discounting=discounting, reward_scaling=reward_scaling,
             gae_lambda=gae_lambda, clipping_epsilon=clipping_epsilon, normalize_advantage=normalize_advantage)
 
+    def step_bound_fn(aux_state):
+        return safety_bound / aux_state[1] if observed_episode_length_bound else per_step_safety_bound
+
     # Initialize aux_state assuming the constraint starts out satisfied
     def init_aux_state_fn():
-        return jnp.array([1.0], dtype=jnp.float32)
+        regime = jnp.array([1.0], dtype=jnp.float32)
+        if observed_episode_length_bound:
+            # Starts at the fixed conversion; tracks completed episodes from the first update
+            return regime, jnp.asarray(episode_length, dtype=jnp.float32)
+        return regime
 
     # Extra fields to collect during rollout (including cost)
     extra_fields = ('truncation', 'episode_metrics', 'episode_done', 'cost')
@@ -222,6 +262,9 @@ def train(
         # Constrained RL hooks
         loss_fn=crpo_loss_fn,
         post_step_fn=post_step_fn,
-        extra_fields=extra_fields,
         init_aux_state_fn=init_aux_state_fn,
+        **counterfactual.counterfactual_train_kwargs(
+            environment, extra_fields, action_repeat, counterfactual_mode,
+            counterfactual_ratio, counterfactual_candidates, counterfactual_rho_clip,
+            counterfactual_gate_sharpness, step_bound_fn),
     )
