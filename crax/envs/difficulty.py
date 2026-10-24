@@ -142,6 +142,9 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         1: {"max_gap": 6.0},
         2: {"max_gap": 4.0},
         3: {"max_gap": 2.0},
+        # Hazards 0.75-1.25 m apart (vs 1-2 m); 150 of them keep the track (~150 m) longer than
+        # the ~90 m unconstrained PPO covers in an L3 episode
+        4: {"min_gap": 0.75, "max_gap": 1.25, "num_hazards": 150},
     },
 
     # Height task - maintain head below height threshold

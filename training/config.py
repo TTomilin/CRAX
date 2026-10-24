@@ -91,7 +91,8 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
         help="Agent for safe_velocity env",
     )
     parser.add_argument(
-        "--difficulty", type=int, choices=[1, 2, 3], default=1, help="Difficulty level (1=easy, 2=medium, 3=hard)"
+        "--difficulty", type=int, choices=[1, 2, 3, 4], default=1,
+        help="Difficulty level (1=easy, 2=medium, 3=hard; 4=extra hard, safe_pathway_walker2d only)"
     )
     parser.add_argument(
         "--env_kwargs",
