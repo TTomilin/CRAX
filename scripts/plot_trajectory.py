@@ -50,8 +50,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 
 # Checkpoint config file -> module providing `load_policy`.
 _CHECKPOINT_LOADERS = {
-    "ppo_network_config.json": "training.agents.ppo.checkpoint",
-    "sac_network_config.json": "training.agents.sac.checkpoint",
+    "ppo_network_config.json": "crax.training.agents.ppo.checkpoint",
+    "sac_network_config.json": "crax.training.agents.sac.checkpoint",
 }
 
 
@@ -110,7 +110,7 @@ def algorithm_from_run_name(path: Path) -> str:
 def load_policy(path: Path, module: str, deterministic: bool, vision: Optional[Dict]) -> Callable:
     kwargs = {}
     if vision is not None:
-        from training.run_utils import make_vision_network_factory
+        from crax.training.run_utils import make_vision_network_factory
 
         state_key = "state" if vision["obs_mode"] == "pixels+state" else ""
         kwargs["network_factory"] = make_vision_network_factory(

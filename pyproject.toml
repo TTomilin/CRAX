@@ -1,13 +1,20 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "crax"
-version = "0.1.0"
+# Distribution name `crax-bench`. The import name is `crax`.
+name = "crax-bench"
+dynamic = ["version"]
 description = "A GPU-accelerated benchmark and algorithm suite for Safe RL."
 authors = [
-    { name = "CRAX Authors" },
+    { name = "Tristan Tomilin", email = "t.tomilin@tue.nl" },
+    { name = "Mourad Boustani" },
+    { name = "Mickey Beurskens" },
+    { name = "Thiago D. Simão" },
+]
+maintainers = [
+    { name = "Tristan Tomilin", email = "t.tomilin@tue.nl" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -21,6 +28,18 @@ keywords = [
     "rigidbody",
     "physics",
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 # Core dependencies: everything needed to build, step and render an
 # environment. Deliberately kept lean so `import crax` stays cheap; the
 # training stack lives in the `train` extra.
@@ -28,21 +47,18 @@ dependencies = [
     "absl-py",
     "etils",
     "flax",
-    "jax>=0.4.6",
-    "jaxlib>=0.4.6",
+    "jax>=0.6.0",
     "jaxopt",
     "ml_collections",
-    "mujoco==3.11.0",
-    "mujoco-mjx==3.11.0",
-    "mujoco-warp==3.11.0",
-    "warp-lang==1.16.0",
+    "mujoco>=3.11.0,<3.12",
+    "mujoco-mjx>=3.11.0,<3.12",
     "numpy",
     "Pillow",
     "typing-extensions",
 ]
 
 [project.optional-dependencies]
-# The `training` package: RL algorithms, networks, checkpointing, logging.
+# `crax.training`: RL algorithms, networks, checkpointing, logging.
 train = [
     "optax",
     "orbax-checkpoint",
@@ -63,26 +79,64 @@ gym = [
 ]
 torch = [
     "torch",
+    "gym>=0.26.0",
+]
+# GPU pixel observations (`--vision`), rendered with MuJoCo Warp.
+vision = [
+    "mujoco-warp>=3.11.0,<3.12",
+    "warp-lang>=1.16.0",
+]
+# Keyboard play (`python -m crax.play`).
+play = [
+    "pygame",
 ]
 cuda = [
-    "jax[cuda12]>=0.4.6",
+    "jax[cuda12]>=0.6.0",
 ]
 develop = [
-    "crax[train,analysis,gym]",
+    "crax-bench[train,analysis,gym]",
     "pytest",
 ]
 # Everything except the CUDA and torch stacks.
 all = [
-    "crax[train,analysis,gym]",
+    "crax-bench[train,analysis,gym,vision,play]",
 ]
 
+[project.urls]
+Homepage = "https://ttomilin.github.io/CRAX/"
+Repository = "https://github.com/TTomilin/CRAX"
+Paper = "https://arxiv.org/abs/2606.20376"
+Issues = "https://github.com/TTomilin/CRAX/issues"
+
 [project.scripts]
-crax-train = "training.train_env:main"
-crax-train-curriculum = "training.train_curriculum:main"
-crax-train-transfer = "training.train_transfer:main"
+crax-train = "crax.training.train_env:main"
+crax-train-curriculum = "crax.training.train_curriculum:main"
+crax-train-transfer = "crax.training.train_transfer:main"
+
+[tool.hatch.version]
+path = "crax/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["crax", "training"]
+packages = ["crax"]
+exclude = [
+    "*_test.py",
+    "crax/test_utils.py",
+    "crax/test_data",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/crax",
+    "/README.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/PROVENANCE.md",
+]
+exclude = [
+    "*_test.py",
+    "/crax/test_utils.py",
+    "/crax/test_data",
+]
 
 [tool.isort]
 force_single_line = true

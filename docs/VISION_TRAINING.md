@@ -4,24 +4,30 @@ CRAX supports training agents from pixel observations in addition to the default
 
 ## Quick Start
 
+The GPU renderer needs the `vision` extra (MuJoCo Warp) on top of `train`:
+
+```bash
+pip install "crax-bench[train,vision,cuda]"   # or: pip install -e ".[train,vision,cuda]"
+```
+
 Yes, it is as simple as adding `--vision`:
 
 ```bash
 # State-based training (default, unchanged)
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1
 
 # Vision-based training — just add --vision
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 --vision
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 --vision
 ```
 
 This works with all training scripts:
 
 ```bash
 # Curriculum training with vision
-python -m training.train_curriculum --env_name safe_goal_point --alg ppo_lag --vision
+python -m crax.training.train_curriculum --env_name safe_goal_point --alg ppo_lag --vision
 
 # Transfer learning with vision
-python -m training.train_transfer --env_name safe_goal_point --vision
+python -m crax.training.train_transfer --env_name safe_goal_point --vision
 ```
 
 All on-policy algorithms — plain PPO and the safe RL variants PPO-Lag, PPO-PID, FOCOPS, P3O, PPO-Saute, CRPO — work with vision out of the box.
@@ -81,7 +87,7 @@ Related video flags (vision runs only):
 ### Default Camera
 
 If `--vision_camera` is not passed, it is picked from the environment name by
-substring match (`VISION_CAMERA_OVERRIDES` in `training/run_utils.py`):
+substring match (`VISION_CAMERA_OVERRIDES` in `crax/training/run_utils.py`):
 
 | Substring in `--env_name` | Camera |
 |---------------------------|--------|
@@ -99,7 +105,7 @@ substring match (`VISION_CAMERA_OVERRIDES` in `training/run_utils.py`):
 Frame stacking provides temporal information (a single image has no velocity info):
 
 ```bash
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision --vision_frame_stack 3
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --vision --vision_frame_stack 3
 ```
 
 With `frame_stack=3`, the pixel observation has shape `(64, 64, 9)` — three RGB frames concatenated along the channel dimension. Frames are stacked in `state.info['_gpu_pixel_buffer']` and shifted each step.
@@ -124,11 +130,11 @@ SAC, SAC-Lag, and SAC-PID are off-policy: they keep a replay buffer of past tran
 
 ```bash
 # Off-policy safe RL
-python -m training.train_env --env_name safe_goal_point --alg sac_lag --difficulty 1 --vision \
+python -m crax.training.train_env --env_name safe_goal_point --alg sac_lag --difficulty 1 --vision \
     --max_replay_size 50000
 
 # Off-policy, unconstrained
-python -m training.train_env --env_name safe_goal_point --alg sac --difficulty 1 --vision \
+python -m crax.training.train_env --env_name safe_goal_point --alg sac --difficulty 1 --vision \
     --max_replay_size 50000
 ```
 
@@ -147,7 +153,7 @@ Levers, in rough order of impact:
 - Set `--video_every_steps 0` (or `--skip_video`) to drop periodic clip rendering.
 
 ```bash
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision \
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --vision \
     --num_envs 512 \
     --vision_height 64 --vision_width 64
 ```
@@ -205,7 +211,7 @@ don't hand them the `vision=True` env built above:
 
 ```python
 from crax import envs
-from training.run_utils import make_vision_network_factory
+from crax.training.run_utils import make_vision_network_factory
 
 env = envs.get_environment('safe_goal_point', level=1, backend='mjx')
 
@@ -220,7 +226,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from training.agents.ppo_lag import train as ppo_lag
+from crax.training.agents.ppo_lag import train as ppo_lag
 ppo_lag.train(
     environment=env,
     network_factory=network_factory,
@@ -242,7 +248,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from training.agents.sac import train as sac
+from crax.training.agents.sac import train as sac
 sac.train(
     environment=env,
     network_factory=network_factory,
@@ -259,7 +265,7 @@ network_factory = make_vision_network_factory(
     value_obs_key=obs_key,
 )
 
-from training.agents.sac_lag import train as sac_lag
+from crax.training.agents.sac_lag import train as sac_lag
 sac_lag.train(
     environment=env,
     network_factory=network_factory,

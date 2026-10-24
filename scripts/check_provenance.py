@@ -6,7 +6,7 @@ honest: it downloads the upstream Brax source distribution, compares it against
 the working tree file by file, and regenerates PROVENANCE.md from what it finds.
 
 Files are compared with comments, blank lines and indentation removed, and with
-the CRAX renamings undone (`crax` -> `brax`, top-level `training` ->
+the CRAX renaming undone (`crax` -> `brax`, which also maps `crax.training` to
 `brax.training`), so that a file which differs only by the rename is reported as
 verbatim rather than as a modification.
 
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import difflib
-import re
 import subprocess
 import sys
 import tarfile
@@ -30,7 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 BRAX_VERSION = "0.12.3"
 OUTPUT = "PROVENANCE.md"
-PACKAGES = ("crax", "training")
+PACKAGES = ("crax",)
 
 # Changed-line count at or below which a modification is called "trivial".
 TRIVIAL_THRESHOLD = 12
@@ -54,8 +53,6 @@ def significant_lines(path: Path, undo_rename: bool = False) -> List[str]:
     """Reads a file as comparable lines: no comments, blanks or indentation."""
     text = path.read_text(errors="replace")
     if undo_rename:
-        text = re.sub(r"\bfrom training\b", "from brax.training", text)
-        text = re.sub(r"\bimport training\b", "import brax.training", text)
         text = text.replace("crax", "brax").replace("CRAX", "BRAX").replace("Crax", "Brax")
     return [
         line.strip()
@@ -68,8 +65,6 @@ def upstream_path(rel: str, brax: Path) -> Optional[Path]:
     """Maps a CRAX path to the Brax path it would have come from."""
     if rel.startswith("crax/"):
         return brax / rel[len("crax/"):]
-    if rel.startswith("training/"):
-        return brax / "training" / rel[len("training/"):]
     return None
 
 
@@ -144,8 +139,7 @@ def render(buckets: Dict[str, List[Tuple[str, int, int]]]) -> str:
     w("")
     w("Lines of code exclude comments and blank lines. Files are compared "
       "against the upstream Brax source with the CRAX renamings undone, so a "
-      "file that differs only because `brax` was renamed to `crax`, or because "
-      "`brax.training` became the top-level `training` package, counts as "
+      "file that differs only because `brax` was renamed to `crax` counts as "
       "verbatim.")
     w("")
     w("## Why CRAX vendors Brax rather than depending on it")

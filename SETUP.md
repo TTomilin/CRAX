@@ -27,7 +27,7 @@ the extras table in the [README](README.md#installation).
 
 **Option A: training + CUDA 12 (recommended)**
 ```bash
-pip install -e ".[train,cuda]"
+pip install -e ".[train,vision,cuda]"   # drop `vision` if you only train from state
 ```
 
 **Option B: CPU-only training**
@@ -57,7 +57,7 @@ environments that install dependencies separately from the package.
 
 ```bash
 python -c "from crax import envs; print(sorted(envs._envs))"
-python -c "from training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
+python -c "from crax.training.agents.ppo_lag import train; print('PPO-Lagrange available!')"
 python -c "import jax; print(f'Devices: {jax.devices()}')"
 ```
 
@@ -69,7 +69,7 @@ Vision mode (`--vision`) needs a GPU, since MJWarp renders on CUDA.
 ## 4. First Training Run
 
 ```bash
-python -m training.train_env \
+python -m crax.training.train_env \
   --env_name safe_goal_point \
   --alg ppo_lag \
   --difficulty 1 \
@@ -84,17 +84,17 @@ Other entry points:
 
 ```bash
 # Curriculum training (progressive difficulty)
-python -m training.train_curriculum --env_name safe_goal_point --alg ppo_lag
+python -m crax.training.train_curriculum --env_name safe_goal_point --alg ppo_lag
 
 # Safety transfer (pre-train with PPO, then fine-tune with a safe algorithm)
-python -m training.train_transfer --env_name safe_velocity_ant --alg ppo_lag
+python -m crax.training.train_transfer --env_name safe_velocity_ant --alg ppo_lag
 
 # Pixel observations, rendered on GPU via MJWarp
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --vision
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --vision
 ```
 
 All three scripts share the same argument set, defined in
-`training/config.py` (`build_base_parser`). Run with `--help` for the
+`crax/training/config.py` (`build_base_parser`). Run with `--help` for the
 full list, including the per-algorithm sections (`--safety_bound`, `--pid_kp`,
 `--nu_lr`, `--tau`, ...).
 
@@ -114,10 +114,10 @@ wandb login
 
 ```bash
 # Disable wandb
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --use_wandb false
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --use_wandb false
 
 # Set project, group, and tags
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag \
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag \
   --wandb_project crax-experiments \
   --wandb_group safe_goal_point \
   --wandb_tags tag1 tag2
@@ -137,7 +137,7 @@ Keep `mujoco`, `mujoco-mjx` and `mujoco-warp` on the same version (3.11.0).
 
 Reduce the number of parallel environments:
 ```bash
-python -m training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 \
+python -m crax.training.train_env --env_name safe_goal_point --alg ppo_lag --difficulty 1 \
   --num_envs 32 --num_eval_envs 32
 ```
 
@@ -152,7 +152,7 @@ headroom. Set the variable yourself before launching to override it.
 `setup_gpu_environment` sets `MUJOCO_GL=egl` at startup, which needs a GPU with
 EGL. On a machine without one, use software rendering:
 ```bash
-export MUJOCO_GL=osmesa   # also edit training.run_utils.setup_gpu_environment, which
+export MUJOCO_GL=osmesa   # also edit crax.training.run_utils.setup_gpu_environment, which
                           # currently overwrites MUJOCO_GL unconditionally
 ```
 

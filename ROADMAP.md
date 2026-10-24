@@ -55,7 +55,7 @@ penalty, and rectification methods on PPO plus a small SAC family.
   These are the standard points of comparison in the Safe RL literature and are
   the most-requested gap. The trainer hooks (`loss_fn`, `post_step_fn`,
   `init_aux_state_fn`) do not yet accommodate a constrained line search, so this
-  also requires a small extension of `training/agents/ppo/train.py`.
+  also requires a small extension of `crax/training/agents/ppo/train.py`.
 - 🟡 **More off-policy baselines**: DDPG/TD3 with Lagrangian and PID variants,
   to complement `sac_lag` and `sac_pid`.
 - 🔵 **Safety-critic and shielding methods**: methods that act on the policy at
@@ -67,9 +67,9 @@ penalty, and rectification methods on PPO plus a small SAC family.
 
 ## 4. Safe multi-agent (SafeMARL)
 
-- 🔵 Non-stationary multi-agent safety (like car driving)
+- 🔵 Non-stationary multi-agent safety
 - 🔵 Decentralized SafeMARL
-- 🔵 Compeititve SafeMARL
+- 🔵 Competitive SafeMARL
 
 Reference: https://arxiv.org/pdf/2505.17342v2
 
@@ -81,32 +81,16 @@ GPU pixel observations already work through `GpuPixelObservationWrapper`
 (`crax/envs/wrappers/pixel_observation_gpu.py`), documented in
 [docs/VISION_TRAINING.md](docs/VISION_TRAINING.md).
 
-- 🟢 Extend vision support to the remaining suites and verify camera placement
-  per agent (`scripts/check_vision_cameras.py`).
-- 🟡 **Lidar / pseudo-lidar observations** matching the Safety-Gym convention, so
-  results transfer between benchmarks without changing the policy architecture.
-- 🟡 **Frame stacking and recurrent policies** for partially observable variants.
 - 🔵 **Depth and segmentation channels** as alternatives to RGB.
-
-## 6. Benchmarking and reproducibility
-
-- 🟢 **Reference results.** The download/aggregation pipeline lives in
-  `results/` (see [results/README.md](results/README.md)). We want a published
-  set of baseline curves for every `(env, level, algorithm)` cell, with seed
-  counts and confidence intervals, so new methods can be compared without
-  re-running the baselines.
 
 ## 6. Performance
 
-- 🟢 Continued MuJoCo Warp integration for both physics and rendering.
 - 🟡 **Hasard overhead.** Hasard-heavy environments become very slow. Investigate 
   ways to reduce the overhead of Hasard's safety checks, e.g. by caching or vectorizing.
 - 🔵 TPU support verification. The code is TPU-compatible in principle but has
   not been tested.
 
 ## 7. Testing and CI
-
-This is the largest engineering gap and the easiest place to contribute.
 
 - 🟡 **Environment smoke tests**: for every registered environment and level,
   assert that `reset`/`step` jit-compile, that shapes are stable, that `cost`
@@ -127,19 +111,6 @@ This is the largest engineering gap and the easiest place to contribute.
 - 🟡 **Contribution guide** (`CONTRIBUTING.md`) with the environment-authoring
   walkthrough: subclass the suite base, add difficulty entries, register in
   `crax/envs/__init__.py`, add tests.
-
-## 9. Ecosystem and packaging
-
-- 🟡 **Gymnasium / Safety-Gymnasium API parity.** Wrappers exist
-  (`crax/envs/wrappers/gym.py`, `dm_env.py`, `torch.py`); we want them tested
-  against the current Gymnasium API and documented, so CRAX environments drop
-  into existing training code.
-- 🟡 **OmniSafe interoperability.** The comparison tooling already exists in
-  `results/download/omnisafe.py`; the environment side should be a supported,
-  tested path rather than benchmark-only glue.
-- 🟡 **PyPI release.** The package is at version `0.0.1` and installs from
-  source only. A tagged release with pinned, tested dependency ranges is a
-  prerequisite for citing a specific version.
 
 ---
 
