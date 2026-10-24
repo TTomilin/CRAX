@@ -155,7 +155,7 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--pid_lambda_clip", type=float, default=1e6, help="PID: clamp for lambda")
     parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
 
-    # --- Counterfactual hazard relabelling (PPO-Lag / PPO-PID / CRPO / P3O on Pathway) ---
+    # --- Counterfactual hazard relabelling (PPO-Lag / PPO-PID / CRPO / P3O on Pathway and Reacher) ---
     parser.add_argument("--counterfactual_mode", type=str, choices=["none", "random", "optimistic", "adaptive"],
                         default="none", help="Relabel a share of each batch under fresh hazard layouts "
                                              "('adaptive': optimistic while under the cost bound, random above it)")

@@ -167,5 +167,70 @@ class ConstrainedLossesTest(absltest.TestCase):
 
 
 
+class ReacherCounterfactualTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.env = envs.get_environment('safe_reacher', level=3)
+    # Short episodes so the unroll crosses auto-resets
+    self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
+
+  def _unroll(self, num_steps, num_envs=2):
+    state = jax.jit(self.wrapped.reset)(jax.random.split(jax.random.PRNGKey(0), num_envs))
+    unroll = jax.jit(
+        lambda s, k: acting.generate_unroll(
+            self.wrapped, s, _random_policy(self.env.action_size), k, num_steps,
+            extra_fields=('truncation', 'cost') + counterfactual.REACHER_CF_EXTRA_FIELDS))
+    _, data = unroll(state, jax.random.PRNGKey(1))
+    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    return state, data
+
+  def testRelabelWithRealLayoutIsIdentity(self):
+    state, data = self._unroll(40)
+    self.assertGreater(float(jnp.sum(data.extras['state_extras']['truncation'])), 0, 'unroll should cross a reset')
+    self.assertGreater(float(jnp.sum(data.extras['state_extras']['cost'])), 0, 'random arm should hit hazards')
+    layouts = state.info['hazard_positions']
+    for i in range(layouts.shape[0]):
+      segment = jax.tree_util.tree_map(lambda x: x[i:i + 1], data)
+      # A fresh relabel_fn per layout: a reused one would replay the first trace
+      relabel = counterfactual.make_reacher_relabel_fn(self.env, mode='random')
+      with mock.patch.object(type(self.env.unwrapped), 'sample_hazard_positions_batched',
+                             lambda env, key, goal, layout=layouts[i]: layout):
+        cf, _ = jax.jit(relabel)(segment, jax.random.PRNGKey(2))
+      np.testing.assert_allclose(cf.observation, segment.observation, atol=1e-5)
+      np.testing.assert_allclose(cf.next_observation, segment.next_observation, atol=1e-5)
+      np.testing.assert_allclose(cf.extras['state_extras']['cost'], segment.extras['state_extras']['cost'], atol=1e-5)
+
+  def testBatchedLayoutsAreValid(self):
+    env = self.env.unwrapped
+    goal = jnp.array([0.1, -0.08])
+    layouts = jax.jit(jax.vmap(lambda k: env.sample_hazard_positions_batched(k, goal)))(
+        jax.random.split(jax.random.PRNGKey(3), 256))
+    rect_r = jnp.sqrt(jnp.sum(env._hazard_half_extents ** 2, axis=1))
+    haz_r = jnp.where(env._hazard_is_rect, rect_r, env._hazard_radii)
+    xy = layouts[..., :2]
+    d = jnp.linalg.norm(xy[:, :, None] - xy[:, None, :], axis=-1)
+    min_d = haz_r[:, None] + haz_r[None, :]
+    off_diag = ~jnp.eye(xy.shape[1], dtype=bool)
+    self.assertTrue(bool(jnp.all(jnp.where(off_diag, d > min_d, True))), 'hazards overlap')
+    self.assertTrue(bool(jnp.all(jnp.linalg.norm(xy - goal, axis=-1) > haz_r + env._goal_radius)))
+    self.assertTrue(bool(jnp.all(jnp.linalg.norm(xy, axis=-1) <= env._hazard_placement_radius)))
+    # Same placement distribution as the env's rejection sampler
+    reference = jax.jit(jax.vmap(lambda k: env.sample_hazard_positions(k, goal)))(
+        jax.random.split(jax.random.PRNGKey(4), 256))
+    np.testing.assert_allclose(jnp.mean(jnp.linalg.norm(xy, axis=-1)),
+                               jnp.mean(jnp.linalg.norm(reference[..., :2], axis=-1)), rtol=0.05)
+
+  def testOptimisticNeverCostlierThanRandom(self):
+    _, data = self._unroll(16, num_envs=64)
+    costs = {}
+    for mode in ('random', 'optimistic'):
+      relabel = counterfactual.make_reacher_relabel_fn(self.env, mode=mode, num_candidates=8)
+      _, metrics = jax.jit(relabel)(data, jax.random.PRNGKey(5))
+      costs[mode] = float(metrics['cf/hazard_cost'])
+    self.assertGreater(costs['random'], 0)
+    self.assertLess(costs['optimistic'], costs['random'])
+
+
 if __name__ == '__main__':
   absltest.main()

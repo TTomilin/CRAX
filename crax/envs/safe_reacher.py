@@ -200,9 +200,101 @@ class SafeReacher(PipelineEnv):
 
         rng_t, sub = jax.random.split(rng_t)
         goal_xy = _sample_goal(sub)
-        goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
 
         # --- 2) place hazards conditioned on goal + non-overlap ---
+        hazards_pos = self.sample_hazard_positions(rng_haz, goal_xy)
+
+        # --- 3) init pipeline, then apply hazard + target mocaps ---
+        pipeline_state = self.pipeline_init(q, qd)
+
+        # set hazards
+        ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
+        mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
+        # set target (mocap sphere)
+        tgt_pos = jp.array([goal_xy[0], goal_xy[1], self._target_z], dtype=jp.float32)
+        mpos = mpos.at[self._target_mocap_id].set(tgt_pos)
+        pipeline_state = pipeline_state.replace(mocap_pos=mpos)
+
+        # compute initial distance-to-goal and store for progress reward
+        tip_pos, _, target_pos = self._tip_target(pipeline_state)
+        dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
+
+        obs = self._get_obs(pipeline_state, hazards_pos)
+        reward, done, zero = jp.zeros(3)
+
+        # Initial per-step cost (zero at reset)
+        metrics = {
+            'reward_dist': zero,
+            'reward_ctrl': zero,
+            'reward_bonus': zero,
+            'cost': zero,
+            'dist': dist,
+        }
+        info = {
+            'hazard_positions': hazards_pos,
+            'min_dist': dist,
+            'cost': zero,
+            # Joint angles the cost was computed from; unlike the observation they
+            # survive auto-resets (see training/counterfactual.py)
+            'cf_theta': pipeline_state.q[:2],
+        }
+
+        return State(pipeline_state, obs, reward, done, metrics, info)
+
+    def step(self, state: State, action: jax.Array) -> State:
+        pipeline_state = self.pipeline_step(state.pipeline_state, action)
+        hazard_positions = state.info['hazard_positions']
+        obs = self._get_obs(pipeline_state, hazard_positions)
+
+        # --- distance to goal ---
+        tip_pos, _, target_pos = self._tip_target(pipeline_state)
+        # Use Euclidean distance for more accurate distance measurement
+        diff_xy = tip_pos[:2] - target_pos[:2]
+        dist = jp.sqrt(jp.sum(diff_xy ** 2) + 1e-8)
+
+        # Reward based on distance to goal with configurable power for non-linear scaling
+        # Higher distance_power = more reward differentiation when close to goal
+        max_dist = jp.asarray(self._arm_reach * 2.0, jp.float32)
+        normalized_closeness = jp.maximum(0.0, 1.0 - dist / max_dist)
+        # Apply power to emphasize closeness (e.g., power=2 makes reward quadratic in closeness)
+        weighted_closeness = normalized_closeness ** self._reward_distance_power
+        reward_dist = jp.asarray(self._reward_scale, jp.float32) * weighted_closeness
+
+        # Bonus reward for reaching the goal (within threshold)
+        goal_reached = dist < self._reward_goal_threshold
+        reward_bonus = jp.where(goal_reached, jp.asarray(self._reward_goal_bonus, jp.float32), 0.0)
+
+        reward = reward_dist + reward_bonus
+
+        # --- safety cost ---
+        cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
+
+        # metrics/info
+        state.metrics.update(
+            dist=dist,
+            cost=cost,
+            reward_dist=reward_dist,
+            reward_bonus=reward_bonus,
+        )
+        info = dict(state.info)
+        info['cost'] = cost
+        info['cf_theta'] = pipeline_state.q[:2]
+
+        return state.replace(
+            pipeline_state=pipeline_state,
+            obs=obs,
+            reward=reward,
+            info=info,
+        )
+
+    # --------------------------- Hazard layout ---------------------------
+
+    def sample_hazard_positions(self, rng_haz: jax.Array, goal_xy: jax.Array) -> jax.Array:
+        """Places the hazards around a goal: no overlap, clear of the goal and the base.
+
+        Rejection sampling with up to 1000 attempts per hazard; returns (n_h, 3) positions.
+        """
+        goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
         n_h = len(self._hazard_mocap_ids)
 
         def _sample_points_in_annulus(key, n, r_min, r_max):
@@ -295,88 +387,45 @@ class SafeReacher(PipelineEnv):
 
         rng_haz, hazards_xy = jax.lax.fori_loop(0, n_h, place_one, (rng_haz, hazards_xy))
 
-        hazards_pos = jp.concatenate(
+        return jp.concatenate(
             [hazards_xy, jp.full((n_h, 1), self._hazard_height, dtype=jp.float32)], axis=1
         )
 
-        # --- 3) init pipeline, then apply hazard + target mocaps ---
-        pipeline_state = self.pipeline_init(q, qd)
+    def sample_hazard_positions_batched(
+            self, key: jax.Array, goal_xy: jax.Array, num_tries: int = 128) -> jax.Array:
+        """`sample_hazard_positions` with a fixed number of vectorised tries per hazard.
 
-        # set hazards
-        ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
-        mpos = pipeline_state.mocap_pos.at[ids].set(hazards_pos)
-        # set target (mocap sphere)
-        tgt_pos = jp.array([goal_xy[0], goal_xy[1], self._target_z], dtype=jp.float32)
-        mpos = mpos.at[self._target_mocap_id].set(tgt_pos)
-        pipeline_state = pipeline_state.replace(mocap_pos=mpos)
+        Keeps the first valid of `num_tries` i.i.d. candidates, which matches the
+        rejection sampler unless all of them fail (then the first is kept, as the
+        rejection sampler does after its last attempt). Cheap enough to call per
+        relabelled segment.
+        """
+        n_h = len(self._hazard_mocap_ids)
+        margin = jp.asarray(0.005, dtype=jp.float32)
+        goal_r = jp.asarray(self._goal_radius, dtype=jp.float32)
+        rect_r = jp.sqrt(jp.sum(self._hazard_half_extents ** 2, axis=1))
+        haz_r = jp.where(self._hazard_is_rect, rect_r, self._hazard_radii)
+        r_max = jp.asarray(self._hazard_placement_radius, jp.float32) - haz_r - margin
+        r_min = haz_r + margin
 
-        # compute initial distance-to-goal and store for progress reward
-        tip_pos, _, target_pos = self._tip_target(pipeline_state)
-        dist = jp.sum(jp.abs(tip_pos[:2] - target_pos[:2]))
+        def place_one(i, carry):
+            key, placed = carry
+            key, k_r, k_a = jax.random.split(key, 3)
+            u = jax.random.uniform(k_r, (num_tries,))
+            rs = jp.sqrt((1.0 - u) * r_min[i] ** 2 + u * r_max[i] ** 2)
+            angs = 2.0 * jp.pi * jax.random.uniform(k_a, (num_tries,))
+            cand = jp.stack([rs * jp.cos(angs), rs * jp.sin(angs)], axis=1)  # (num_tries, 2)
 
-        obs = self._get_obs(pipeline_state, hazards_pos)
-        reward, done, zero = jp.zeros(3)
+            d_prev = jp.sqrt(jp.sum((cand[:, None, :] - placed[None, :, :]) ** 2, axis=-1) + 1e-8)
+            ok_prev = jp.all((jp.arange(n_h) >= i)[None, :] | (d_prev > haz_r[i] + haz_r + margin), axis=1)
+            ok_goal = jp.sqrt(jp.sum((cand - goal_xy) ** 2, axis=1) + 1e-8) > haz_r[i] + goal_r + margin
+            ok_base = jp.sqrt(jp.sum(cand ** 2, axis=1) + 1e-8) > haz_r[i] + margin
+            ok = ok_prev & ok_goal & ok_base
+            # argmax picks the first valid candidate, or the first one if none is valid
+            return key, placed.at[i].set(cand[jp.argmax(ok)])
 
-        # Initial per-step cost (zero at reset)
-        metrics = {
-            'reward_dist': zero,
-            'reward_ctrl': zero,
-            'reward_bonus': zero,
-            'cost': zero,
-            'dist': dist,
-        }
-        info = {
-            'hazard_positions': hazards_pos,
-            'min_dist': dist,
-            'cost': zero,
-        }
-
-        return State(pipeline_state, obs, reward, done, metrics, info)
-
-    def step(self, state: State, action: jax.Array) -> State:
-        pipeline_state = self.pipeline_step(state.pipeline_state, action)
-        hazard_positions = state.info['hazard_positions']
-        obs = self._get_obs(pipeline_state, hazard_positions)
-
-        # --- distance to goal ---
-        tip_pos, _, target_pos = self._tip_target(pipeline_state)
-        # Use Euclidean distance for more accurate distance measurement
-        diff_xy = tip_pos[:2] - target_pos[:2]
-        dist = jp.sqrt(jp.sum(diff_xy ** 2) + 1e-8)
-
-        # Reward based on distance to goal with configurable power for non-linear scaling
-        # Higher distance_power = more reward differentiation when close to goal
-        max_dist = jp.asarray(self._arm_reach * 2.0, jp.float32)
-        normalized_closeness = jp.maximum(0.0, 1.0 - dist / max_dist)
-        # Apply power to emphasize closeness (e.g., power=2 makes reward quadratic in closeness)
-        weighted_closeness = normalized_closeness ** self._reward_distance_power
-        reward_dist = jp.asarray(self._reward_scale, jp.float32) * weighted_closeness
-
-        # Bonus reward for reaching the goal (within threshold)
-        goal_reached = dist < self._reward_goal_threshold
-        reward_bonus = jp.where(goal_reached, jp.asarray(self._reward_goal_bonus, jp.float32), 0.0)
-
-        reward = reward_dist + reward_bonus
-
-        # --- safety cost ---
-        cost = self._calculate_safety_cost(pipeline_state, hazard_positions)
-
-        # metrics/info
-        state.metrics.update(
-            dist=dist,
-            cost=cost,
-            reward_dist=reward_dist,
-            reward_bonus=reward_bonus,
-        )
-        info = dict(state.info)
-        info['cost'] = cost
-
-        return state.replace(
-            pipeline_state=pipeline_state,
-            obs=obs,
-            reward=reward,
-            info=info,
-        )
+        _, hazards_xy = jax.lax.fori_loop(0, n_h, place_one, (key, jp.zeros((n_h, 2), dtype=jp.float32)))
+        return jp.concatenate([hazards_xy, jp.full((n_h, 1), self._hazard_height, dtype=jp.float32)], axis=1)
 
     # --------------------------- Observations ---------------------------
 
@@ -392,7 +441,20 @@ class SafeReacher(PipelineEnv):
         tip_to_target = tip_pos - target_pos
         target_xy = target_pos[:2]
 
-        # ---------------- hazard lidar ----------------
+        lidar = self.hazard_lidar(theta1, hazard_positions)
+
+        # ---------------- final obs ----------------
+        return jp.concatenate([
+            jp.cos(theta),
+            jp.sin(theta),
+            target_xy,  # target x, y from mocap body
+            tip_vel[:2],
+            tip_to_target,
+            lidar,  # (lidar_bins,)
+        ])
+
+    def hazard_lidar(self, theta1: jax.Array, hazard_positions: jax.Array) -> jax.Array:
+        """Hazard lidar bins, agent-centric with theta1 (first joint angle) as the heading."""
         hazards_xy = hazard_positions[:, :2]
         n_h = hazards_xy.shape[0]
 
@@ -439,16 +501,7 @@ class SafeReacher(PipelineEnv):
             return lidar_acc
 
         lidar = jax.lax.fori_loop(0, n_h, body, lidar)
-
-        # ---------------- final obs ----------------
-        return jp.concatenate([
-            jp.cos(theta),
-            jp.sin(theta),
-            target_xy,  # target x, y from mocap body
-            tip_vel[:2],
-            tip_to_target,
-            lidar,  # (lidar_bins,)
-        ])
+        return lidar
 
     def _tip_target(self, pipeline_state: base.State) -> tuple[jax.Array, jax.Array, jax.Array]:
         target_pos = pipeline_state.mocap_pos[self._target_mocap_id]
@@ -463,9 +516,12 @@ class SafeReacher(PipelineEnv):
     # --------------------------- Hazard logic ---------------------------
 
     def _calculate_safety_cost(self, pipeline_state: base.State, hazard_positions: jax.Array) -> jax.Array:
+        return self.hazard_cost_from_angles(pipeline_state.q[:2], hazard_positions)
+
+    def hazard_cost_from_angles(self, theta: jax.Array, hazard_positions: jax.Array) -> jax.Array:
         """Binary per-hazard cost: 1 if any sampled arm point is inside the hazard.
 
-        Sum of per-hazard costs each step.
+        Sum of per-hazard costs each step, from the joint angles `theta` = q[:2].
         Use stored static hazard shapes and current hazard positions.
         """
         n_h = hazard_positions.shape[0]
@@ -475,7 +531,7 @@ class SafeReacher(PipelineEnv):
         centers = hazard_positions[:, :2]  # (N,2)
 
         # --- sample arm points in XY ---
-        theta1, theta2 = pipeline_state.q[0], pipeline_state.q[1]
+        theta1, theta2 = theta[0], theta[1]
         l1 = self._LINK1_LENGTH
         l2 = self._LINK2_LENGTH
 

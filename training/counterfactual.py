@@ -1,11 +1,11 @@
 """Counterfactual hazard relabelling for on-policy safe RL.
 
-Pathway hazards are non-collidable, so the walker's dynamics do not depend on
-where the hazards are. A recorded segment can therefore be replayed exactly
-under a different hazard layout: actions, rewards, terminations and joint
-states stay the same, and only the lidar part of the observation and the hazard
-cost change. Both are recomputed from the kinematics the env stores in
-`info['cf_kin']` / `info['cf_feet']`.
+Pathway and Reacher hazards are non-collidable, so the agent's dynamics do not
+depend on where the hazards are. A recorded segment can therefore be replayed
+exactly under a different hazard layout: actions, rewards, terminations and
+joint states stay the same, and only the lidar part of the observation and the
+hazard cost change. Both are recomputed from kinematics the env stores in its
+info: `cf_kin` / `cf_feet` (Pathway) or `cf_theta` (Reacher).
 
 The relabelled segments are off-policy w.r.t. the observations they now carry,
 so the PPO trainer re-anchors their behaviour log-probs at the current policy
@@ -34,6 +34,7 @@ from training import types
 
 MODES = ('none', 'random', 'optimistic', 'adaptive')
 CF_EXTRA_FIELDS = ('cf_kin', 'cf_feet', 'hazard_cost')
+REACHER_CF_EXTRA_FIELDS = ('cf_theta',)
 
 # Distance (m) the walker may cover within one unroll segment
 _MAX_SEGMENT_TRAVEL = 4.0
@@ -132,6 +133,98 @@ def make_hazard_relabel_fn(
     return relabel_fn
 
 
+def make_reacher_relabel_fn(
+        environment: Any,
+        mode: str = 'optimistic',
+        num_candidates: int = 4,
+) -> Callable[..., Tuple[types.Transition, Dict[str, jax.Array]]]:
+    """`make_hazard_relabel_fn` for SafeReacher.
+
+    Reacher layouts are placed around the goal, so a segment keeps its goal and
+    gets a fresh layout around it (`sample_hazard_positions_batched`). A segment
+    that crosses an episode boundary gets a second layout for the goal it ends
+    with. The joint angles in the observation give the lidar heading, and
+    `info['cf_theta']` (the post-step angles, which survive auto-resets) gives
+    the cost; the reacher cost is entirely hazard cost.
+    """
+    env = environment.unwrapped
+    for attr in ('hazard_lidar', 'hazard_cost_from_angles', 'sample_hazard_positions_batched'):
+        if not hasattr(env, attr):
+            raise ValueError(f"Reacher relabelling needs a SafeReacher env, got {type(env).__name__}")
+    if mode not in MODES[1:]:
+        raise ValueError(f"Unknown counterfactual mode '{mode}', expected one of {MODES[1:]}")
+    bins = env._lidar_bins
+    num_candidates = 1 if mode == 'random' else num_candidates
+    # Observation: [cos(theta) (2), sin(theta) (2), target xy (2), ..., lidar (bins)]
+    goal_slice = slice(4, 6)
+
+    def heading(obs):
+        return jnp.arctan2(obs[..., 2], obs[..., 0])
+
+    def relabel_segment(obs, next_obs, theta, optimistic, key):
+        # obs/next_obs [T, D], theta [T, 2]
+        goal_first, goal_last = obs[0, goal_slice], next_obs[-1, goal_slice]
+
+        def candidate(k):
+            k_first, k_last = jax.random.split(k)
+            return (env.sample_hazard_positions_batched(k_first, goal_first),
+                    env.sample_hazard_positions_batched(k_last, goal_last))
+
+        def layout_for(o, first, last):
+            # Rows of the episode the segment starts in keep its goal
+            same = jnp.all(jnp.abs(o[goal_slice] - goal_first) < 1e-6)
+            return jnp.where(same, first, last)
+
+        def segment_cost(first, last):
+            layouts = jax.vmap(layout_for, in_axes=(0, None, None))(obs, first, last)
+            return jax.vmap(env.hazard_cost_from_angles)(theta, layouts)  # [T]
+
+        firsts, lasts = jax.vmap(candidate)(jax.random.split(key, num_candidates))
+        step_cost = jax.vmap(segment_cost)(firsts, lasts)  # [K, T]
+        # Candidates are i.i.d., so the first one is a random layout
+        best = jnp.where(optimistic, jnp.argmin(step_cost.sum(axis=-1)), 0) if num_candidates > 1 else 0
+        first, last = firsts[best], lasts[best]
+
+        def lidar(o):
+            return env.hazard_lidar(heading(o), layout_for(o, first, last))
+
+        obs = obs.at[:, -bins:].set(jax.vmap(lidar)(obs))
+        next_obs = next_obs.at[:, -bins:].set(jax.vmap(lidar)(next_obs))
+        return obs, next_obs, step_cost[best]
+
+    def relabel_fn(data: types.Transition, key: jax.Array, p_optimistic: jax.Array = 1.0):
+        if not isinstance(data.observation, jax.Array):
+            raise ValueError("Counterfactual relabelling supports flat state observations only")
+        se = data.extras['state_extras']
+        num_segments = data.observation.shape[0]
+        key_gate, key_seg = jax.random.split(key)
+        if mode == 'adaptive':
+            optimistic = jax.random.bernoulli(key_gate, p_optimistic, (num_segments,))
+        else:
+            optimistic = jnp.full((num_segments,), mode == 'optimistic')
+        obs, next_obs, cost = jax.vmap(relabel_segment)(
+            data.observation, data.next_observation, se['cf_theta'], optimistic,
+            jax.random.split(key_seg, num_segments))
+        cf = data._replace(
+            observation=obs, next_observation=next_obs,
+            extras={**data.extras, 'state_extras': {**se, 'cost': cost}})
+        metrics = {
+            'cf/real_hazard_cost': jnp.mean(se['cost']),
+            'cf/hazard_cost': jnp.mean(cost),
+            'cf/optimistic_share': jnp.mean(optimistic),
+        }
+        return cf, metrics
+
+    return relabel_fn
+
+
+def make_relabel_fn(environment: Any, mode: str, num_candidates: int) -> Tuple[Callable[..., Any], Tuple[str, ...]]:
+    """The relabelling function for `environment` and the extra rollout fields it reads."""
+    if hasattr(environment.unwrapped, 'hazard_cost_from_angles'):
+        return make_reacher_relabel_fn(environment, mode, num_candidates), REACHER_CF_EXTRA_FIELDS
+    return make_hazard_relabel_fn(environment, mode, num_candidates), CF_EXTRA_FIELDS
+
+
 def make_slack_gate(
         step_bound_fn: Callable[[Any], jax.Array],
         sharpness: float,
@@ -169,11 +262,11 @@ def counterfactual_train_kwargs(
         return {'extra_fields': extra_fields}
     if action_repeat != 1:
         raise ValueError("Counterfactual relabelling requires action_repeat=1: "
-                         "info['cf_kin'] only holds the last physics sub-step")
+                         "the stored kinematics only hold the last physics sub-step")
+    relabel_fn, cf_fields = make_relabel_fn(environment, counterfactual_mode, counterfactual_candidates)
     kwargs = {
-        'extra_fields': tuple(extra_fields) + CF_EXTRA_FIELDS,
-        'counterfactual_fn': make_hazard_relabel_fn(
-            environment, mode=counterfactual_mode, num_candidates=counterfactual_candidates),
+        'extra_fields': tuple(extra_fields) + cf_fields,
+        'counterfactual_fn': relabel_fn,
         'counterfactual_ratio': counterfactual_ratio,
         'counterfactual_rho_clip': counterfactual_rho_clip,
     }
