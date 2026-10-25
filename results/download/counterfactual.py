@@ -2,7 +2,8 @@
 
 Selects runs tagged COUNTERFACTUAL (submitted by `crax_counterfactual.sh` on
 branch counterfactual-hazards) and stores them by relabelling mode
-(`config.counterfactual_mode`: none / random / optimistic) and by how the
+(`config.counterfactual_mode`: none / random / optimistic / adaptive, the
+latter as `adaptive_k<config.counterfactual_gate_sharpness>`) and by how the
 episodic cost bound is converted to a per-step one
 (`config.observed_episode_length_bound`):
 
@@ -69,6 +70,12 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     canonical_env = next((name for name, aliases in WANDB_ENV_NAME_ALIASES.items() if env in aliases), env)
     algo = config.get("alg", "unknown")
     mode = config.get("counterfactual_mode", "none")
+    if mode in ("adaptive", "gated"):
+        # k=0 is the fixed 50/50 optimistic/random mix, so the gate slope is part of the mode
+        mode = f"adaptive_k{config.get('counterfactual_gate_sharpness', 10.0):g}"
+    if config.get("resample_layouts", False):
+        # Layout-resampling control: fresh layout per episode, with or without relabelling
+        mode = "resample" if mode == "none" else f"{mode}_resample"
     bound = BOUND_FOLDERS[bool(config.get("observed_episode_length_bound", False))]
     level = config.get("difficulty")
 
@@ -101,7 +108,7 @@ def build_args() -> argparse.ArgumentParser:
         levels=[3],
         wandb_tags=["COUNTERFACTUAL"],
     )
-    parser.add_argument("--modes", type=str, nargs="+", default=["none", "random", "optimistic"],
+    parser.add_argument("--modes", type=str, nargs="+", default=["none", "random", "optimistic", "adaptive", "gated"],
                         help="Counterfactual relabelling modes to download")
     parser.add_argument("--bound", type=str, default="all", choices=["all", *BOUND_FOLDERS.values()],
                         help="Per-step bound conversion of the runs to download")

@@ -22,6 +22,11 @@ Modes:
     `make_slack_gate`). Hindsight layouts bias the cost critic low, which helps
     a conservative policy but fights the multiplier once the cost exceeds the
     bound.
+  - 'gated': like 'adaptive', but the non-optimistic segments keep their real
+    layout instead of a random one, so a violating policy trains on real data
+    only. On Reacher a random layout is pessimistic (the policy dodges its own
+    layout, not a fresh one), and feeding it to a violating PPO-Lag policy
+    drives the multiplier up without bound.
 """
 
 import math
@@ -32,7 +37,9 @@ import jax.numpy as jnp
 
 from training import types
 
-MODES = ('none', 'random', 'optimistic', 'adaptive')
+MODES = ('none', 'random', 'optimistic', 'adaptive', 'gated')
+# Modes whose optimistic share comes from the slack gate
+GATED_MODES = ('adaptive', 'gated')
 CF_EXTRA_FIELDS = ('cf_kin', 'cf_feet', 'hazard_cost')
 REACHER_CF_EXTRA_FIELDS = ('cf_theta',)
 
@@ -51,6 +58,21 @@ def _sample_layout_x(env, key: jax.Array) -> Tuple[jax.Array, jax.Array]:
     return xs, ys
 
 
+def _optimistic_flags(mode: str, key: jax.Array, p_optimistic: jax.Array, num_segments: int) -> jax.Array:
+    """Per-segment flags for keeping the lowest-cost layout."""
+    if mode in GATED_MODES:
+        return jax.random.bernoulli(key, p_optimistic, (num_segments,))
+    return jnp.full((num_segments,), mode == 'optimistic')
+
+
+def _keep_real(keep: jax.Array, relabelled: Any, real: Any) -> Any:
+    """Per segment, the `real` arrays where `keep` and the `relabelled` ones elsewhere."""
+    def select(x, r):
+        return jnp.where(keep.reshape(keep.shape + (1,) * (x.ndim - 1)), r, x)
+
+    return jax.tree_util.tree_map(select, relabelled, real)
+
+
 def make_hazard_relabel_fn(
         environment: Any,
         mode: str = 'optimistic',
@@ -59,7 +81,8 @@ def make_hazard_relabel_fn(
     """Builds `relabel_fn(data, key, p_optimistic=1.0) -> (data, metrics)` for [B, T] pathway transitions.
 
     `p_optimistic` is the share of segments that keep the lowest-cost layout
-    in 'adaptive' mode; the rest keep the first candidate, a random layout.
+    in 'adaptive' / 'gated' mode; the rest keep the first candidate, a random
+    layout ('adaptive'), or their real layout ('gated').
     """
     env = environment.unwrapped
     for attr in ('hazard_lidar', 'hazard_cost_from_feet', '_lidar_bins'):
@@ -111,14 +134,15 @@ def make_hazard_relabel_fn(
         se = data.extras['state_extras']
         num_segments = data.observation.shape[0]
         key_gate, key_seg = jax.random.split(key)
-        if mode == 'adaptive':
-            optimistic = jax.random.bernoulli(key_gate, p_optimistic, (num_segments,))
-        else:
-            optimistic = jnp.full((num_segments,), mode == 'optimistic')
+        optimistic = _optimistic_flags(mode, key_gate, p_optimistic, num_segments)
         keys = jax.random.split(key_seg, num_segments)
         obs, next_obs, cost, hazard_cost = jax.vmap(relabel_segment)(
             data.observation, data.next_observation, se['cost'], se['hazard_cost'],
             se['cf_kin'], se['cf_feet'], optimistic, keys)
+        if mode == 'gated':
+            obs, next_obs, cost, hazard_cost = _keep_real(
+                ~optimistic, (obs, next_obs, cost, hazard_cost),
+                (data.observation, data.next_observation, se['cost'], se['hazard_cost']))
         new_se = {**se, 'cost': cost, 'hazard_cost': hazard_cost}
         cf = data._replace(
             observation=obs, next_observation=next_obs,
@@ -198,13 +222,13 @@ def make_reacher_relabel_fn(
         se = data.extras['state_extras']
         num_segments = data.observation.shape[0]
         key_gate, key_seg = jax.random.split(key)
-        if mode == 'adaptive':
-            optimistic = jax.random.bernoulli(key_gate, p_optimistic, (num_segments,))
-        else:
-            optimistic = jnp.full((num_segments,), mode == 'optimistic')
+        optimistic = _optimistic_flags(mode, key_gate, p_optimistic, num_segments)
         obs, next_obs, cost = jax.vmap(relabel_segment)(
             data.observation, data.next_observation, se['cf_theta'], optimistic,
             jax.random.split(key_seg, num_segments))
+        if mode == 'gated':
+            obs, next_obs, cost = _keep_real(
+                ~optimistic, (obs, next_obs, cost), (data.observation, data.next_observation, se['cost']))
         cf = data._replace(
             observation=obs, next_observation=next_obs,
             extras={**data.extras, 'state_extras': {**se, 'cost': cost}})
@@ -233,7 +257,8 @@ def make_slack_gate(
 
     `p = sigmoid(-sharpness * (cost - bound) / bound)` with the per-step cost
     and bound: mostly optimistic while the policy is under the bound (the
-    multiplier is falling, or clamped at 0), mostly random once it violates.
+    multiplier is falling, or clamped at 0), mostly random ('adaptive') or real
+    ('gated') once it violates.
     This is the sign of the Lagrangian update, without its dead zone at 0.
     """
     def gate_fn(aux_state, mean_cost):
@@ -256,7 +281,7 @@ def counterfactual_train_kwargs(
 ) -> Dict[str, Any]:
     """Kwargs for `ppo_train.train` that enable counterfactual relabelling (empty if disabled).
 
-    `step_bound_fn(aux_state)` returns the per-step cost bound; 'adaptive' mode needs it.
+    `step_bound_fn(aux_state)` returns the per-step cost bound; 'adaptive' and 'gated' modes need it.
     """
     if counterfactual_mode in (None, 'none') or counterfactual_ratio <= 0:
         return {'extra_fields': extra_fields}
@@ -270,8 +295,8 @@ def counterfactual_train_kwargs(
         'counterfactual_ratio': counterfactual_ratio,
         'counterfactual_rho_clip': counterfactual_rho_clip,
     }
-    if counterfactual_mode == 'adaptive':
+    if counterfactual_mode in GATED_MODES:
         if step_bound_fn is None:
-            raise ValueError("Adaptive counterfactual relabelling needs the per-step cost bound")
+            raise ValueError(f"'{counterfactual_mode}' counterfactual relabelling needs the per-step cost bound")
         kwargs['counterfactual_gate_fn'] = make_slack_gate(step_bound_fn, counterfactual_gate_sharpness)
     return kwargs

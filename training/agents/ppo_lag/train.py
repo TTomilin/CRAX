@@ -150,12 +150,12 @@ def train(
         from an algorithm without cost_value (e.g., PPO). Options:
         - 'value': copy from value network (often works well for transfer)
         - 'random': use random initialization
-      counterfactual_mode: 'none', 'random', 'optimistic' or 'adaptive' hazard
+      counterfactual_mode: 'none', 'random', 'optimistic', 'adaptive' or 'gated' hazard
         relabelling of a share of each batch (SafePathway and SafeReacher envs only).
       counterfactual_ratio: relabelled segments per batch, as a fraction of the real ones.
-      counterfactual_candidates: layouts sampled per segment in 'optimistic' / 'adaptive' mode.
+      counterfactual_candidates: layouts sampled per segment in 'optimistic' / 'adaptive' / 'gated' mode.
       counterfactual_rho_clip: truncation level of the importance weights.
-      counterfactual_gate_sharpness: 'adaptive' mode: slope of the optimistic share
+      counterfactual_gate_sharpness: 'adaptive' / 'gated' mode: slope of the optimistic share
         in the relative constraint violation of the real batch.
 
     Returns:

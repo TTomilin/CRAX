@@ -4,6 +4,7 @@ Based on mourad_lag.ipynb training approach.
 """
 
 import functools
+import inspect
 import os
 from datetime import datetime
 from pathlib import Path
@@ -276,6 +277,10 @@ def main():
         # Get the appropriate training function
         train_fn_base = get_algorithm_train_fn(alg_name)
         train_kwargs = filter_kwargs_for_fn(train_fn_base, cfg)
+        if config.resample_layouts:
+            if 'wrap_env_fn' not in inspect.signature(train_fn_base).parameters:
+                raise ValueError(f"--resample_layouts is not supported by algorithm '{alg_name}'")
+            train_kwargs['wrap_env_fn'] = functools.partial(envs.training.wrap, resample_layouts=True)
 
         # Inject vision network factory + pixel-obs wrapping kwargs if vision mode is enabled
         if config.vision:

@@ -1,6 +1,6 @@
 """Training curves of counterfactual hazard relabelling.
 
-One line per relabelling mode (none / random / optimistic), mean ± 95% CI across
+One line per relabelling mode (none / random / optimistic / adaptive), mean ± 95% CI across
 seeds, for each per-step bound conversion requested with --bounds. Reads the
 output of `results.download.counterfactual`:
 
@@ -30,11 +30,19 @@ MODE_LABELS = {
     "none": "No relabelling",
     "random": "Random relabelling",
     "optimistic": "Optimistic relabelling",
+    "adaptive_k0": "Fixed 50/50 optimistic/random",
+    "adaptive_k10": "Slack-gated optimistic",
+    "gated_k10": "Slack-gated optimistic, real fallback",
+    "resample": "Layout resampling, no relabelling",
 }
 MODE_COLORS = {
     "none": "#2F2F2F",
     "random": plt.get_cmap("tab10")(0),
     "optimistic": plt.get_cmap("tab10")(1),
+    "adaptive_k0": plt.get_cmap("tab10")(4),
+    "adaptive_k10": plt.get_cmap("tab10")(2),
+    "gated_k10": plt.get_cmap("tab10")(3),
+    "resample": plt.get_cmap("tab10")(7),
 }
 BOUND_LINESTYLES = {
     "observed_length": "-",
@@ -132,7 +140,7 @@ def plot_curves(data: RunStore, args: argparse.Namespace) -> None:
         fig.legend(
             list(legend_handles.values()), list(legend_handles.keys()),
             loc="upper center", bbox_to_anchor=(0.5, 0.02),
-            ncol=min(len(legend_handles), 2), fancybox=True, shadow=True,
+            ncol=min(len(legend_handles), 3), fancybox=True, shadow=True,
         )
 
     out_dir = results_path(args.output_fig_dir)

@@ -97,6 +97,21 @@ class CounterfactualTest(absltest.TestCase):
     self.assertGreater(adaptive_costs[0], adaptive_costs[1])
     np.testing.assert_allclose(adaptive_costs[1], costs['optimistic'], rtol=1e-5)
 
+  def testGatedKeepsRealDataWhenNotOptimistic(self):
+    _, data = self._unroll(16)
+    data = jax.tree_util.tree_map(lambda x: jnp.repeat(x, 8, axis=0), data)
+    relabel = jax.jit(counterfactual.make_hazard_relabel_fn(self.env, mode='gated', num_candidates=4))
+    cf, metrics = relabel(data, jax.random.PRNGKey(4), 0.0)
+    self.assertEqual(float(metrics['cf/optimistic_share']), 0.0)
+    np.testing.assert_array_equal(cf.observation, data.observation)
+    np.testing.assert_array_equal(cf.next_observation, data.next_observation)
+    np.testing.assert_array_equal(cf.extras['state_extras']['cost'], data.extras['state_extras']['cost'])
+    # Optimistic segments match 'adaptive' mode
+    cf, _ = relabel(data, jax.random.PRNGKey(4), 1.0)
+    adaptive = jax.jit(counterfactual.make_hazard_relabel_fn(self.env, mode='adaptive', num_candidates=4))
+    reference, _ = adaptive(data, jax.random.PRNGKey(4), 1.0)
+    np.testing.assert_array_equal(cf.observation, reference.observation)
+
   def testSlackGate(self):
     gate = counterfactual.make_slack_gate(lambda aux_state: 0.01, sharpness=10.0)
     self.assertAlmostEqual(float(gate(None, 0.01)), 0.5, places=5)
@@ -230,6 +245,62 @@ class ReacherCounterfactualTest(absltest.TestCase):
       costs[mode] = float(metrics['cf/hazard_cost'])
     self.assertGreater(costs['random'], 0)
     self.assertLess(costs['optimistic'], costs['random'])
+
+
+  def testGatedKeepsRealDataWhenNotOptimistic(self):
+    _, data = self._unroll(16, num_envs=8)
+    relabel = jax.jit(counterfactual.make_reacher_relabel_fn(self.env, mode='gated', num_candidates=4))
+    cf, metrics = relabel(data, jax.random.PRNGKey(5), 0.0)
+    self.assertEqual(float(metrics['cf/optimistic_share']), 0.0)
+    np.testing.assert_array_equal(cf.observation, data.observation)
+    np.testing.assert_array_equal(cf.next_observation, data.next_observation)
+    np.testing.assert_array_equal(cf.extras['state_extras']['cost'], data.extras['state_extras']['cost'])
+    cf, _ = relabel(data, jax.random.PRNGKey(5), 1.0)
+    adaptive = jax.jit(counterfactual.make_reacher_relabel_fn(self.env, mode='adaptive', num_candidates=4))
+    reference, _ = adaptive(data, jax.random.PRNGKey(5), 1.0)
+    np.testing.assert_array_equal(cf.observation, reference.observation)
+
+
+class LayoutResampleTest(absltest.TestCase):
+
+  def _unroll(self, resample_layouts, num_envs=3, num_steps=40):
+    env = envs.get_environment('safe_reacher', level=3)
+    wrapped = envs.training.wrap(env, episode_length=15, action_repeat=1, resample_layouts=resample_layouts)
+    state = jax.jit(wrapped.reset)(jax.random.split(jax.random.PRNGKey(0), num_envs))
+    unroll = jax.jit(
+        lambda s, k: acting.generate_unroll(
+            wrapped, s, _random_policy(env.action_size), k, num_steps,
+            extra_fields=('truncation', 'cost', 'hazard_positions') + counterfactual.REACHER_CF_EXTRA_FIELDS))
+    final_state, data = unroll(state, jax.random.PRNGKey(1))
+    return env.unwrapped, state, final_state, data
+
+  def testFixedLayoutsByDefault(self):
+    _, state, _, data = self._unroll(False)
+    layouts = data.extras['state_extras']['hazard_positions']  # [T, B, H, 3]
+    np.testing.assert_array_equal(layouts, jnp.broadcast_to(state.info['hazard_positions'], layouts.shape))
+
+  def testFreshLayoutPerEpisode(self):
+    env, state, final_state, data = self._unroll(True)
+    se = data.extras['state_extras']
+    layouts, done = se['hazard_positions'], se['truncation'] > 0  # [T, B, H, 3], [T, B]
+    # Constant within an episode and new at every reset (steps 14 and 29 end episodes); the
+    # reset step's info already holds the next episode's layout
+    np.testing.assert_array_equal(done[:, 0], (jnp.arange(40) % 15) == 14)
+    for t in range(1, 40):
+      changed = jnp.any(layouts[t] != layouts[t - 1], axis=(-2, -1))
+      np.testing.assert_array_equal(changed, done[t])
+    # The goal stays, and the layout keeps clear of it
+    goal = final_state.pipeline_state.mocap_pos[:, env._target_mocap_id, :2]
+    np.testing.assert_array_equal(goal, state.pipeline_state.mocap_pos[:, env._target_mocap_id, :2])
+    self.assertTrue(bool(jnp.all(jnp.linalg.norm(final_state.info['hazard_positions'][..., :2] - goal[:, None], axis=-1)
+                                 > env._goal_radius)))
+    # Observation and cost come from the current layout
+    np.testing.assert_allclose(
+        final_state.obs, jax.vmap(env._get_obs)(final_state.pipeline_state, final_state.info['hazard_positions']),
+        atol=1e-6)
+    # The cost of a step uses the layout it was taken in, which a reset step's info already replaced
+    cost = jax.vmap(jax.vmap(env.hazard_cost_from_angles))(se['cf_theta'], layouts)
+    np.testing.assert_allclose(jnp.where(done, 0, se['cost']), jnp.where(done, 0, cost), atol=1e-6)
 
 
 if __name__ == '__main__':

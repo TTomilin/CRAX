@@ -156,17 +156,21 @@ def add_shared_training_args(parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument("--pid_deriv_ema_beta", type=float, default=0.95, help="PID: derivative EMA smoothing")
 
     # --- Counterfactual hazard relabelling (PPO-Lag / PPO-PID / CRPO / P3O on Pathway and Reacher) ---
-    parser.add_argument("--counterfactual_mode", type=str, choices=["none", "random", "optimistic", "adaptive"],
+    parser.add_argument("--counterfactual_mode", type=str, choices=["none", "random", "optimistic", "adaptive", "gated"],
                         default="none", help="Relabel a share of each batch under fresh hazard layouts "
-                                             "('adaptive': optimistic while under the cost bound, random above it)")
+                                             "('adaptive': optimistic while under the cost bound, random above it; "
+                                             "'gated': optimistic under the bound, real data above it)")
     parser.add_argument("--counterfactual_ratio", type=float, default=0.5,
                         help="Relabelled segments per batch, as a fraction of the real ones")
     parser.add_argument("--counterfactual_candidates", type=int, default=4,
-                        help="Layouts sampled per segment in 'optimistic'/'adaptive' mode (lowest-cost one is kept)")
+                        help="Layouts sampled per segment in 'optimistic'/'adaptive'/'gated' mode (lowest-cost one is kept)")
     parser.add_argument("--counterfactual_gate_sharpness", type=float, default=10.0,
-                        help="'adaptive' mode: optimistic share = sigmoid(-sharpness * (cost - bound) / bound)")
+                        help="'adaptive'/'gated' mode: optimistic share = sigmoid(-sharpness * (cost - bound) / bound)")
     parser.add_argument("--counterfactual_rho_clip", type=float, default=1.0,
                         help="Truncation level of the counterfactual importance weights")
+    parser.add_argument("--resample_layouts", type=bool_type, nargs="?", const=True, default=False,
+                        help="Draw a fresh hazard layout for every training episode instead of keeping each env's "
+                             "first one (SafeReacher only; control for the layout diversity relabelling adds)")
 
     # --- PPO-Saute ---
     parser.add_argument(

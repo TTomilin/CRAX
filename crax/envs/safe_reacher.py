@@ -289,6 +289,23 @@ class SafeReacher(PipelineEnv):
 
     # --------------------------- Hazard layout ---------------------------
 
+    def resample_layout(self, state: State, key: jax.Array) -> State:
+        """`state` with a fresh hazard layout around its goal.
+
+        Used by `LayoutResampleWrapper` to give each training episode a new
+        layout; the arm state and the goal are left as they are.
+        """
+        goal_xy = state.pipeline_state.mocap_pos[self._target_mocap_id, :2]
+        hazards_pos = self.sample_hazard_positions(key, goal_xy)
+        ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
+        pipeline_state = state.pipeline_state.replace(
+            mocap_pos=state.pipeline_state.mocap_pos.at[ids].set(hazards_pos))
+        return state.replace(
+            pipeline_state=pipeline_state,
+            obs=self._get_obs(pipeline_state, hazards_pos),
+            info={**state.info, 'hazard_positions': hazards_pos},
+        )
+
     def sample_hazard_positions(self, rng_haz: jax.Array, goal_xy: jax.Array) -> jax.Array:
         """Places the hazards around a goal: no overlap, clear of the goal and the base.
 

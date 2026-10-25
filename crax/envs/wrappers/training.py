@@ -36,6 +36,7 @@ def wrap(
     randomization_fn: Optional[
         Callable[[System], Tuple[System, System]]
     ] = None,
+    resample_layouts: bool = False,
 ) -> Wrapper:
   """Common wrapper pattern for all training agents.
 
@@ -45,6 +46,8 @@ def wrap(
     action_repeat: how many repeated actions to take per step
     randomization_fn: randomization function that produces a vectorized system
       and in_axes to vmap over
+    resample_layouts: draw a fresh hazard layout for every episode instead of
+      keeping each env's first one (see LayoutResampleWrapper)
 
   Returns:
     An environment that is wrapped with Episode and AutoReset wrappers.  If the
@@ -57,6 +60,8 @@ def wrap(
     env = DomainRandomizationVmapWrapper(env, randomization_fn)
   env = EpisodeWrapper(env, episode_length, action_repeat)
   env = AutoResetWrapper(env)
+  if resample_layouts:
+    env = LayoutResampleWrapper(env)
   return env
 
 
@@ -158,6 +163,38 @@ class AutoResetWrapper(Wrapper):
     )
     obs = jax.tree.map(where_done, state.info['first_obs'], state.obs)
     return state.replace(pipeline_state=pipeline_state, obs=obs)
+
+
+class LayoutResampleWrapper(Wrapper):
+  """Draws a fresh hazard layout for every episode that auto-resets.
+
+  AutoResetWrapper restores each env's first state, so without this wrapper an
+  env keeps the layout of its first episode for the whole run. The base env
+  must implement `resample_layout(state, key) -> state`.
+  """
+
+  def reset(self, rng: jax.Array) -> State:
+    state = self.env.reset(rng)
+    state.info['layout_rng'] = jax.vmap(lambda k: jax.random.fold_in(k, 1))(rng)
+    return state
+
+  def step(self, state: State, action: jax.Array) -> State:
+    state = self.env.step(state, action)
+    resample_layout = jax.vmap(self.env.unwrapped.resample_layout)
+
+    def resample(state):
+      keys = jax.vmap(jax.random.split)(state.info['layout_rng'])
+      new_state = resample_layout(state, keys[:, 1])
+      new_state.info['layout_rng'] = keys[:, 0]
+
+      def where_done(x, y):
+        done = jp.reshape(state.done, [x.shape[0]] + [1] * (len(x.shape) - 1))
+        return jp.where(done, x, y)
+
+      return jax.tree.map(where_done, new_state, state)
+
+    # Fixed-length episodes reset in lockstep, so most steps skip the sampler
+    return jax.lax.cond(jp.any(state.done), resample, lambda s: s, state)
 
 
 @struct.dataclass
