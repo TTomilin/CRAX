@@ -293,10 +293,12 @@ class SafeReacher(PipelineEnv):
         """`state` with a fresh hazard layout around its goal.
 
         Used by `LayoutResampleWrapper` to give each training episode a new
-        layout; the arm state and the goal are left as they are.
+        layout; the arm state and the goal are left as they are. Uses the
+        batched sampler: the rejection sampler always runs all of its attempts,
+        which made training 15x slower.
         """
         goal_xy = state.pipeline_state.mocap_pos[self._target_mocap_id, :2]
-        hazards_pos = self.sample_hazard_positions(key, goal_xy)
+        hazards_pos = self.sample_hazard_positions_batched(key, goal_xy)
         ids = jp.array(self._hazard_mocap_ids, dtype=jp.int32)
         pipeline_state = state.pipeline_state.replace(
             mocap_pos=state.pipeline_state.mocap_pos.at[ids].set(hazards_pos))
