@@ -94,7 +94,7 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
             "placement_extents": (-2.0, -2.0, 2.0, 2.0),
             "buttons_constrained": True,
             "hazard_specs": [
-                {"type": "cylinder", "count": 4, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "cylinder", "count": 4, "size": 0.2, "height": 0.01, "collidable": False, "fixed": False},
                 {"type": "gremlin", "count": 4, "size": 0.1, "height": 0.1, "travel": 0.35, "collidable": True,
                  "fixed": False},
             ],
@@ -104,7 +104,7 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
             "placement_extents": (-2.5, -2.5, 2.5, 2.5),
             "buttons_constrained": True,
             "hazard_specs": [
-                {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "cylinder", "count": 8, "size": 0.2, "height": 0.01, "collidable": False, "fixed": False},
                 {"type": "gremlin", "count": 6, "size": 0.1, "height": 0.1, "travel": 0.35, "collidable": True,
                  "fixed": False},
             ],
@@ -114,7 +114,7 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
             "placement_extents": (-3.0, -3.0, 3.0, 3.0),
             "buttons_constrained": True,
             "hazard_specs": [
-                {"type": "cylinder", "count": 12, "size": 0.2, "height": 0.2, "collidable": True, "fixed": False},
+                {"type": "cylinder", "count": 12, "size": 0.2, "height": 0.01, "collidable": False, "fixed": False},
                 {"type": "gremlin", "count": 8, "size": 0.1, "height": 0.1, "travel": 0.45, "collidable": True,
                  "fixed": False},
             ],

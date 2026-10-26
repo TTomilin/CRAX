@@ -174,11 +174,11 @@ class SafeButton(PipelineEnv, ABC):
         # Add outer walls to hazard specs
         hazard_specs = add_walls_to_specs(hazard_specs, placement_extents)
 
-        # MJX does not support cylinder-box collisions; convert cylinders to cubes
+        # MJX does not support cylinder-box collisions; convert collidable cylinders to cubes
         if backend == "mjx":
             converted_specs = []
             for spec in hazard_specs:
-                if isinstance(spec, dict) and spec.get("type") == "cylinder":
+                if isinstance(spec, dict) and spec.get("type") == "cylinder" and spec.get("collidable", True):
                     spec = dict(spec)
                     spec["type"] = "cube"
                 converted_specs.append(spec)
