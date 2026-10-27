@@ -157,6 +157,8 @@ def load(
     logging.info('restoring from checkpoint %s', path.as_posix())
 
     metadata = ocp.PyTreeCheckpointer().metadata(path)
+    # Newer orbax wraps the tree in a StepMetadata
+    metadata = getattr(metadata, 'item_metadata', metadata)
     restore_args = jax.tree.map(lambda _: ocp.RestoreArgs(restore_type=np.ndarray), metadata)
     orbax_checkpointer = ocp.PyTreeCheckpointer()
     try:
