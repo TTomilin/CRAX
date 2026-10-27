@@ -136,6 +136,11 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         1: {},
     },
 
+    # Gridworld where repeated moves build speed and skip over lava; one level, the constructor defaults
+    "grid_momentum": {
+        1: {},
+    },
+
     # Push task - push a block to a goal
     "push": {
         # Level 1: Stationary goal
@@ -223,6 +228,7 @@ _ENV_TO_TASK: dict[str, str] = {
     "safe_reacher": "reach",
     "safe_grid": "grid",
     "safe_grid_detour": "grid_detour",
+    "safe_grid_momentum": "grid_momentum",
 }
 
 

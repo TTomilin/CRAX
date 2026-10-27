@@ -325,14 +325,14 @@ def make_grid_relabel_fn(
     Layouts are fixed per env, so one lava map serves a whole segment.
     """
     env = environment.unwrapped
-    for attr in ('sample_lava', 'obs_from', 'decode_cells'):
+    for attr in ('sample_lava', 'relabel_obs', 'decode_cells'):
         if not hasattr(env, attr):
             raise ValueError(f"Grid relabelling needs a SafeGrid env, got {type(env).__name__}")
     if mode not in MODES[1:]:
         raise ValueError(f"Unknown counterfactual mode '{mode}', expected one of {MODES[1:]}")
     num_candidates = 1 if mode == 'random' else num_candidates
     size = env._size
-    obs_from = jax.vmap(env.obs_from, in_axes=(0, 0, None))
+    relabel_obs = jax.vmap(env.relabel_obs, in_axes=(0, None))
 
     def relabel_segment(obs, next_obs, cf_pos, optimistic, key):
         # obs/next_obs [T, D], cf_pos [T, 2]
@@ -346,7 +346,7 @@ def make_grid_relabel_fn(
         # Candidates are i.i.d., so the first one is a random layout
         best = jnp.where(optimistic, jnp.argmin(step_cost.sum(axis=-1)), 0) if num_candidates > 1 else 0
         lava = lavas[best]
-        return obs_from(pos, goal, lava), obs_from(next_pos, next_goal, lava), step_cost[best]
+        return relabel_obs(obs, lava), relabel_obs(next_obs, lava), step_cost[best]
 
     def relabel_fn(data: types.Transition, key: jax.Array, p_optimistic: jax.Array = 1.0):
         if not isinstance(data.observation, jax.Array):

@@ -41,6 +41,7 @@ from crax.envs import safe_lift
 from crax.envs import safe_pathway
 from crax.envs import safe_grid
 from crax.envs import safe_grid_detour
+from crax.envs import safe_grid_momentum
 from crax.envs import safe_reacher
 from crax.envs import safe_spider
 from crax.envs import safe_velocity
@@ -106,6 +107,7 @@ _envs = {
     'safe_reacher': safe_reacher.SafeReacher,
     'safe_grid': safe_grid.SafeGrid,
     'safe_grid_detour': safe_grid_detour.SafeGridDetour,
+    'safe_grid_momentum': safe_grid_momentum.SafeGridMomentum,
 }
 
 

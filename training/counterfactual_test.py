@@ -402,6 +402,21 @@ class GridDetourCounterfactualTest(GridCounterfactualTest):
     self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
 
 
+class GridMomentumCounterfactualTest(GridCounterfactualTest):
+  """The SafeGrid relabelling tests on a small SafeGridMomentum, whose observation adds heading and speed."""
+
+  def setUp(self):
+    super().setUp()
+    self.env = envs.get_environment('safe_grid_momentum', size=11, num_strips=6, episode_length=15)
+    self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
+
+  def testMotionKept(self):
+    _, data = self._unroll(16, num_envs=4)
+    cf, _ = jax.jit(counterfactual.make_grid_relabel_fn(self.env, mode='random'))(data, jax.random.PRNGKey(3))
+    np.testing.assert_array_equal(cf.observation[..., -5:], data.observation[..., -5:])
+    self.assertGreater(float(jnp.max(data.observation[..., -1])), 0.5, 'random walk should reach top speed')
+
+
 class LayoutResampleTest(absltest.TestCase):
 
   def _unroll(self, resample_layouts, num_envs=3, num_steps=40):

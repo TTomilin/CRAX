@@ -259,6 +259,11 @@ class SafeGrid(Env):
         window(walls), window(lava), window(goal_map),
     ])
 
+  def relabel_obs(self, obs: jax.Array, lava: jax.Array) -> jax.Array:
+    """`obs` as it would read under the lava map `lava`."""
+    pos, goal = self.decode_cells(obs)
+    return self.obs_from(pos, goal, lava)
+
   def decode_cells(self, obs: jax.Array) -> Tuple[jax.Array, jax.Array]:
     """(agent cell, goal cell) from an observation."""
     cells = jp.round(obs[..., :4] * (self._size - 1)).astype(jp.int32)
