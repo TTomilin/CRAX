@@ -5,8 +5,10 @@ rewarded and respawns elsewhere, with a dense shaping reward for getting
 closer. Lava cells cost 1 per step spent on them but do not block, kill or
 otherwise change the dynamics, so a shortcut through lava trades cost for
 reward. Walls are fixed per level (an open room or four rooms joined by
-doorways); lava comes in random blobs, which can block doorways and force the
-agent to choose between crossing lava and staying in its room.
+doorways); lava comes in random blobs. With `safe_goals` (default) the agent
+and every goal spawn in the largest lava-free region, so each goal can be
+reached without cost and lava is only ever a shortcut; otherwise lava can wall
+a goal off and cost becomes unavoidable.
 
 Observation (all in [0, 1]):
   - agent cell and goal cell, normalised by `size - 1` (2 + 2)
@@ -79,6 +81,7 @@ class GridState:
   pos: jax.Array    # (2,) int32 agent cell (x, y)
   goal: jax.Array   # (2,) int32 goal cell
   lava: jax.Array   # (size, size) bool, indexed [x, y]
+  spawn: jax.Array  # (size, size) bool, cells the agent and goals may spawn on
   rng: jax.Array    # goal respawns
 
 
@@ -112,6 +115,7 @@ class SafeGrid(Env):
       distance_reward: float = 0.1,
       lava_cost: float = 1.0,
       dead_zone: float = 0.25,
+      safe_goals: bool = True,
       **kwargs,
   ):
     walls = open_room(size) if layout == 'open' else parse_layout(LAYOUTS.get(layout, layout))
@@ -127,6 +131,7 @@ class SafeGrid(Env):
     self._distance_reward = distance_reward
     self._lava_cost = lava_cost
     self._dead_zone = dead_zone
+    self._safe_goals = safe_goals
     xs, ys = np.meshgrid(np.arange(self._size), np.arange(self._size), indexing='ij')
     self._cells = jp.asarray(np.stack([xs, ys], axis=-1), dtype=jp.float32)  # [size, size, 2]
     self._interior = jp.asarray(np.argwhere(self._free_np()), dtype=jp.float32)
@@ -151,6 +156,22 @@ class SafeGrid(Env):
       lava &= ~keep_clear
     return lava
 
+  def largest_safe_region(self, lava: jax.Array) -> jax.Array:
+    """Mask of the largest 4-connected region of lava-free floor."""
+    passable = self._free & ~lava
+    big = self._size * self._size
+    labels = jp.where(passable, jp.arange(big).reshape(self._size, self._size), big)
+
+    def spread(_, lab):
+      padded = jp.pad(lab, 1, constant_values=big)
+      neighbours = jp.stack([padded[2:, 1:-1], padded[:-2, 1:-1], padded[1:-1, 2:], padded[1:-1, :-2]])
+      return jp.where(passable, jp.minimum(lab, neighbours.min(axis=0)), big)
+
+    # Every region's minimum label reaches all its cells within as many sweeps as it has cells
+    labels = jax.lax.fori_loop(0, int(self._free_np().sum()), spread, labels)
+    counts = jp.zeros(big + 1).at[labels.reshape(-1)].add(1.0)
+    return passable & (labels == jp.argmax(counts[:big]))
+
   def _sample_free_cell(self, key: jax.Array, blocked: jax.Array) -> jax.Array:
     """A uniformly random cell that is neither wall nor `blocked`."""
     ok = (self._free & ~blocked).reshape(-1)
@@ -167,9 +188,10 @@ class SafeGrid(Env):
   def reset(self, rng: jax.Array) -> State:
     rng, k_lava, k_pos, k_goal = jax.random.split(rng, 4)
     lava = self.sample_lava(k_lava)
-    pos = self._sample_free_cell(k_pos, lava)
-    goal = self._sample_free_cell(k_goal, lava | self._one_hot(pos))
-    grid = GridState(pos=pos, goal=goal, lava=lava, rng=rng)
+    spawn = self.largest_safe_region(lava) if self._safe_goals else self._free & ~lava
+    pos = self._sample_free_cell(k_pos, ~spawn)
+    goal = self._sample_free_cell(k_goal, ~spawn | self._one_hot(pos))
+    grid = GridState(pos=pos, goal=goal, lava=lava, spawn=spawn, rng=rng)
     obs = self.obs_from(pos, goal, lava)
     zero = jp.zeros(())
     metrics = {'reward': zero, 'cost': zero, 'goals': zero, 'on_lava': zero}
@@ -184,7 +206,7 @@ class SafeGrid(Env):
 
     reached = jp.all(pos == grid.goal)
     rng, k_goal = jax.random.split(grid.rng)
-    new_goal = self._sample_free_cell(k_goal, grid.lava | self._one_hot(pos))
+    new_goal = self._sample_free_cell(k_goal, ~grid.spawn | self._one_hot(pos))
     goal = jp.where(reached, new_goal, grid.goal)
 
     dist_before = jp.linalg.norm((grid.goal - grid.pos).astype(jp.float32))
