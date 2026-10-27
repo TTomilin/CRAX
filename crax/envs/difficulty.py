@@ -136,9 +136,10 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         1: {},
     },
 
-    # Gridworld where repeated moves build speed and skip over lava; one level, the constructor defaults
+    # Gridworld where repeated moves build speed and skip over lava; one level: three 2-wide rivers that
+    # take a 3-cell run-up to jump, with gaps alternating between the ends for the walking detour
     "grid_momentum": {
-        1: {},
+        1: {"size": 31, "num_rivers": 3, "max_speed": 3, "episode_length": 400},
     },
 
     # Push task - push a block to a goal
