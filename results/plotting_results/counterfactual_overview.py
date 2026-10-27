@@ -25,6 +25,8 @@ DEFAULT_SETTINGS = [
     "safe_pathway_walker2d:4:crpo",
     "safe_reacher:3:ppo_lag",
     "safe_reacher:3:crpo",
+    "safe_button_point:3:ppo_lag",
+    "safe_button_point:3:crpo",
 ]
 
 
@@ -133,7 +135,7 @@ def build_args() -> argparse.ArgumentParser:
         omit=("envs", "algos"),
         out_name="counterfactual_overview",
         seeds=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        max_cols=4,
+        max_cols=3,
         panel_w=3.2,
         panel_h=2.4,
         smoothing_window=10,
