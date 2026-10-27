@@ -131,6 +131,11 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         3: {"layout": "four_rooms_15", "num_lava_blobs": 10, "lava_radius": 1.5},
     },
 
+    # Gridworld where the lava-free route is a long detour; one level, the constructor defaults
+    "grid_detour": {
+        1: {},
+    },
+
     # Push task - push a block to a goal
     "push": {
         # Level 1: Stationary goal
@@ -217,6 +222,7 @@ _ENV_TO_TASK: dict[str, str] = {
     "safe_lift_spider": "lift_spider",
     "safe_reacher": "reach",
     "safe_grid": "grid",
+    "safe_grid_detour": "grid_detour",
 }
 
 

@@ -373,6 +373,7 @@ class GridCounterfactualTest(absltest.TestCase):
     lava = slice(4 + window, 4 + 2 * window)
     keep = np.ones(cf.observation.shape[-1], dtype=bool)
     keep[lava] = False
+    keep[4 + 3 * window:] = False  # SafeGridDetour's crossing depths
     np.testing.assert_array_equal(cf.observation[..., keep], data.observation[..., keep])
     self.assertGreater(float(jnp.mean(jnp.abs(cf.observation[..., lava] - data.observation[..., lava]))), 0)
     # Goals are never on lava
@@ -390,6 +391,15 @@ class GridCounterfactualTest(absltest.TestCase):
       costs[mode] = float(metrics['cf/hazard_cost'])
     self.assertGreater(costs['random'], 0)
     self.assertLess(costs['optimistic'], costs['random'])
+
+
+class GridDetourCounterfactualTest(GridCounterfactualTest):
+  """The SafeGrid relabelling tests on a small SafeGridDetour, whose observation adds crossing depths."""
+
+  def setUp(self):
+    super().setUp()
+    self.env = envs.get_environment('safe_grid_detour', size=15, num_bands=2, episode_length=15)
+    self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
 
 
 class LayoutResampleTest(absltest.TestCase):

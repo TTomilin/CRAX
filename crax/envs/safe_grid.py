@@ -172,6 +172,10 @@ class SafeGrid(Env):
     counts = jp.zeros(big + 1).at[labels.reshape(-1)].add(1.0)
     return passable & (labels == jp.argmax(counts[:big]))
 
+  def spawn_mask(self, lava: jax.Array) -> jax.Array:
+    """Cells the agent and goals may spawn on under the lava map `lava`."""
+    return self.largest_safe_region(lava) if self._safe_goals else self._free & ~lava
+
   def _sample_free_cell(self, key: jax.Array, blocked: jax.Array) -> jax.Array:
     """A uniformly random cell that is neither wall nor `blocked`."""
     ok = (self._free & ~blocked).reshape(-1)
@@ -188,7 +192,7 @@ class SafeGrid(Env):
   def reset(self, rng: jax.Array) -> State:
     rng, k_lava, k_pos, k_goal = jax.random.split(rng, 4)
     lava = self.sample_lava(k_lava)
-    spawn = self.largest_safe_region(lava) if self._safe_goals else self._free & ~lava
+    spawn = self.spawn_mask(lava)
     pos = self._sample_free_cell(k_pos, ~spawn)
     goal = self._sample_free_cell(k_goal, ~spawn | self._one_hot(pos))
     grid = GridState(pos=pos, goal=goal, lava=lava, spawn=spawn, rng=rng)
