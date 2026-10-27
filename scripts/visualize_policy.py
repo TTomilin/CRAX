@@ -66,7 +66,7 @@ def load_policy(checkpoint_path: str, deterministic: bool = True):
     """Load a trained policy from a checkpoint."""
     root_dir = Path(__file__).parent.parent.resolve()
     path = root_dir / "models" / checkpoint_path
-    return ppo_checkpoint.load_policy(path)
+    return ppo_checkpoint.load_policy(path, deterministic=deterministic)
 
 
 def make_random_policy(action_size: int):
