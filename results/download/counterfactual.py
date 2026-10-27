@@ -2,8 +2,8 @@
 
 Selects runs tagged COUNTERFACTUAL (submitted by `crax_counterfactual.sh` on
 branch counterfactual-hazards) and stores them by relabelling mode
-(`config.counterfactual_mode`: none / random / optimistic / adaptive, the
-latter as `adaptive_k<config.counterfactual_gate_sharpness>`) and by how the
+(`config.counterfactual_mode`: none / random / optimistic / adaptive / gated, the
+last two as `<mode>_k<config.counterfactual_gate_sharpness>`) and by how the
 episodic cost bound is converted to a per-step one
 (`config.observed_episode_length_bound`):
 
@@ -72,7 +72,7 @@ def store_data(run: Run, args: argparse.Namespace) -> None:
     mode = config.get("counterfactual_mode", "none")
     if mode in ("adaptive", "gated"):
         # k=0 is the fixed 50/50 optimistic/random mix, so the gate slope is part of the mode
-        mode = f"adaptive_k{config.get('counterfactual_gate_sharpness', 10.0):g}"
+        mode = f"{mode}_k{config.get('counterfactual_gate_sharpness', 10.0):g}"
     if config.get("resample_layouts", False):
         # Layout-resampling control: fresh layout per episode, with or without relabelling
         mode = "resample" if mode == "none" else f"{mode}_resample"

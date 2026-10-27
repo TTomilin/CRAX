@@ -322,6 +322,17 @@ class SafeButton(PipelineEnv, ABC):
         self._gremlin_indices = jp.array(self._gremlin_indices, dtype=jp.int32) if self._num_gremlins > 0 else jp.array([], dtype=jp.int32)
         self._gremlin_travel_radii = jp.array(self._gremlin_travel_radii, dtype=jp.float32) if self._num_gremlins > 0 else jp.zeros((0,), dtype=jp.float32)
 
+        # Counterfactual relabelling swaps the movable floor hazards and keeps the rest real
+        cf_indices = [i for i, h in enumerate(hazards)
+                      if not (h.collidable or h.fixed or h.hazard_type == "gremlin")]
+        self._cf_hazard_indices = jp.array(cf_indices, dtype=jp.int32)
+        self._cf_other_indices = jp.array(
+            [i for i in range(len(hazards)) if i not in cf_indices], dtype=jp.int32)
+        self._cf_anchor_keepouts = jp.concatenate([
+            jp.full((button_count,), self._button_keepout),
+            self._hazard_keepouts[self._cf_other_indices],
+        ])
+
         # Sensor info
         self._sensor_info = {}
         sensor_found_flags = {name: False for name in self.required_sensors}
@@ -545,6 +556,11 @@ class SafeButton(PipelineEnv, ABC):
         active_button_xy = button_positions[active_button_idx, :2]
         initial_dist_goal = jp.sqrt(jp.sum(jp.square(active_button_xy - agent_xy)) + 1e-8)
 
+        # Buttons and the centres of the kept hazards bound the counterfactual layouts
+        cf_anchors = jp.concatenate([
+            button_positions[:, :2], all_hazard_positions[self._cf_other_indices, :2]
+        ])
+
         # Store gremlin center positions (for motion)
         gremlin_center_positions = all_hazard_positions[self._gremlin_indices] if self._num_gremlins > 0 else jp.zeros((0, 3))
         if self._num_gremlins > 0:
@@ -576,6 +592,10 @@ class SafeButton(PipelineEnv, ABC):
             "done_nan": jp.array(False),
             "done_unhealthy": jp.array(False),
             "layout_attempts": layout_attempts,
+            "hazard_cost": jp.array(0.0),
+            "cf_anchors": cf_anchors,
+            "cf_view": jp.stack([self.cf_view(data), self.cf_view(data)]),
+            "cf_first_view": self.cf_view(data),
         }
 
         obs = self._get_obs(data, info)
@@ -675,6 +695,7 @@ class SafeButton(PipelineEnv, ABC):
         # Costs
         ctrl_cost = jp.sum(jp.square(action)) * self._ctrl_cost_weight
         hazard_cost = self._calculate_safety_cost(data, hazard_positions)
+        floor_hazard_cost = self.cf_hazard_cost(agent_pos[:2], hazard_positions[self._cf_hazard_indices, :2])
         wrong_button_cost = self._calculate_wrong_button_cost(wrong_button_pressed, button_timer)
         cost = hazard_cost + wrong_button_cost
 
@@ -749,6 +770,7 @@ class SafeButton(PipelineEnv, ABC):
             "done_goal": done_goal,
             "done_nan": done_nan,
             "done_unhealthy": done_unhealthy,
+            "hazard_cost": floor_hazard_cost,
         })
 
         # Update goal marker to active button
@@ -757,6 +779,9 @@ class SafeButton(PipelineEnv, ABC):
         mpos = data.mocap_pos
         mpos = mpos.at[self._goal_marker_mocap_id].set(marker_pos)
         data = data.replace(mocap_pos=mpos)
+        # The kinematics behind state.obs and the next obs, read from the pipeline state so
+        # they stay correct after auto-resets (which restore pipeline_state and obs only)
+        new_info["cf_view"] = jp.stack([self.cf_view(state.pipeline_state), self.cf_view(data)])
 
         # Get observation and metrics
         obs = self._get_obs(data, new_info)
@@ -829,44 +854,11 @@ class SafeButton(PipelineEnv, ABC):
         cos_a = jp.cos(agent_z_angle)
         sin_a = jp.sin(agent_z_angle)
 
-        _lidar_num_bins = self._lidar_num_bins
-        _lidar_max_dist = self._lidar_max_dist
-        _lidar_alias = self._lidar_alias
-        bin_size = (2 * jp.pi) / _lidar_num_bins
-
-        def _accumulate_lidar(lidar_init, positions):
-            def process_one(lidar, pos):
-                rel_xy = pos[:2] - agent_pos[:2]
-                rel_x = rel_xy[0] * cos_a + rel_xy[1] * sin_a
-                rel_y = -rel_xy[0] * sin_a + rel_xy[1] * cos_a
-                dist = safe_norm(jp.array([rel_x, rel_y]))
-                angle = jp.arctan2(rel_y, rel_x)
-                angle = (angle + 2 * jp.pi) % (2 * jp.pi)
-                bin_idx_float = angle / bin_size
-                bin_idx = jp.minimum(jp.floor(bin_idx_float), _lidar_num_bins - 1).astype(int)
-                sensor_val = jp.maximum(0.0, _lidar_max_dist - dist) / _lidar_max_dist
-                sensor_val = jp.where(dist > _lidar_max_dist, 0.0, sensor_val)
-                lidar = lidar.at[bin_idx].set(jp.maximum(lidar[bin_idx], sensor_val))
-
-                if _lidar_alias:
-                    alias_factor = bin_idx_float - bin_idx
-                    bin_plus = (bin_idx + 1) % _lidar_num_bins
-                    bin_minus = (bin_idx - 1 + _lidar_num_bins) % _lidar_num_bins
-                    lidar = lidar.at[bin_plus].set(jp.maximum(lidar[bin_plus], alias_factor * sensor_val))
-                    lidar = lidar.at[bin_minus].set(jp.maximum(lidar[bin_minus], (1.0 - alias_factor) * sensor_val))
-                return lidar, None
-
-            lidar_out, _ = jax.lax.scan(process_one, lidar_init, positions)
-            return lidar_out
-
         # Button lidar (all buttons, hidden when timer > 0)
-        def _compute_button_lidar(_):
-            return _accumulate_lidar(jp.zeros(_lidar_num_bins), button_positions)
-
         button_lidar = jax.lax.cond(
             button_timer == 0,
-            _compute_button_lidar,
-            lambda _: jp.zeros(_lidar_num_bins),
+            lambda _: self._lidar(agent_pos[:2], cos_a, sin_a, button_positions),
+            lambda _: jp.zeros(self._lidar_num_bins),
             operand=None
         )
 
@@ -877,47 +869,134 @@ class SafeButton(PipelineEnv, ABC):
         rel_y = -rel_goal_xy[0] * sin_a + rel_goal_xy[1] * cos_a
         button_comp = jp.array([rel_x, rel_y]) / (safe_norm(jp.array([rel_x, rel_y])) + 1e-8)
 
-        # Hazard lidar
-        hazard_lidar = _accumulate_lidar(jp.zeros(_lidar_num_bins), hazard_positions)
-
-        # Hazard compasses (closest k, fixed-size)
-        H = hazard_positions.shape[0]
-        k = int(self._hazard_compass_k)
-        if H == 0:
-            hazard_compasses_flat = jp.zeros((k * 2,))
-        else:
-            rel_xy = hazard_positions[:, :2] - agent_pos[:2]
-            d2 = jp.sum(rel_xy * rel_xy, axis=1)
-            order = jp.argsort(d2)
-            k_eff = min(k, H)
-            closest = order[:k_eff]
-            if k_eff < k:
-                pad = -jp.ones((k - k_eff,), dtype=jp.int32)
-                closest = jp.concatenate([closest, pad], axis=0)
-
-            def compute_compass_for_index(idx):
-                safe_idx = jp.maximum(idx, 0)
-                hazard_pos_3d = hazard_positions[safe_idx]
-                rel_hazard = hazard_pos_3d - agent_pos
-                world_dx = rel_hazard[0]
-                world_dy = rel_hazard[1]
-                agent_centric_dx = world_dx * cos_a + world_dy * sin_a
-                agent_centric_dy = -world_dx * sin_a + world_dy * cos_a
-                rel_vec = jp.array([agent_centric_dx, agent_centric_dy])
-                compass = rel_vec / (safe_norm(rel_vec) + 1e-8)
-                return jp.where(idx >= 0, compass, jp.zeros(2))
-
-            hazard_compasses = jax.vmap(compute_compass_for_index)(closest)
-            hazard_compasses_flat = hazard_compasses.reshape((-1,))
-
         obs = jp.concatenate([
             sensor_obs,
             button_lidar,
             button_comp,
-            hazard_lidar,
-            hazard_compasses_flat,
+            self.hazard_obs(agent_pos[:2], agent_z_angle, hazard_positions),
         ])
         return obs
+
+    def _lidar(self, agent_xy: jp.ndarray, cos_a: jp.ndarray, sin_a: jp.ndarray,
+               positions: jp.ndarray) -> jp.ndarray:
+        """Agent-centric lidar over the xy of `positions`."""
+        num_bins = self._lidar_num_bins
+        max_dist = self._lidar_max_dist
+        bin_size = (2 * jp.pi) / num_bins
+
+        def process_one(lidar, pos):
+            rel_xy = pos[:2] - agent_xy
+            rel_x = rel_xy[0] * cos_a + rel_xy[1] * sin_a
+            rel_y = -rel_xy[0] * sin_a + rel_xy[1] * cos_a
+            dist = safe_norm(jp.array([rel_x, rel_y]))
+            angle = jp.arctan2(rel_y, rel_x)
+            angle = (angle + 2 * jp.pi) % (2 * jp.pi)
+            bin_idx_float = angle / bin_size
+            bin_idx = jp.minimum(jp.floor(bin_idx_float), num_bins - 1).astype(int)
+            sensor_val = jp.maximum(0.0, max_dist - dist) / max_dist
+            sensor_val = jp.where(dist > max_dist, 0.0, sensor_val)
+            lidar = lidar.at[bin_idx].set(jp.maximum(lidar[bin_idx], sensor_val))
+
+            if self._lidar_alias:
+                alias_factor = bin_idx_float - bin_idx
+                bin_plus = (bin_idx + 1) % num_bins
+                bin_minus = (bin_idx - 1 + num_bins) % num_bins
+                lidar = lidar.at[bin_plus].set(jp.maximum(lidar[bin_plus], alias_factor * sensor_val))
+                lidar = lidar.at[bin_minus].set(jp.maximum(lidar[bin_minus], (1.0 - alias_factor) * sensor_val))
+            return lidar, None
+
+        lidar, _ = jax.lax.scan(process_one, jp.zeros(num_bins), positions)
+        return lidar
+
+    def hazard_obs(self, agent_xy: jp.ndarray, heading: jp.ndarray, hazard_positions: jp.ndarray) -> jp.ndarray:
+        """Hazard lidar and the compasses to the closest k hazards (the tail of the observation)."""
+        cos_a = jp.cos(heading)
+        sin_a = jp.sin(heading)
+        hazard_lidar = self._lidar(agent_xy, cos_a, sin_a, hazard_positions)
+
+        H = hazard_positions.shape[0]
+        k = int(self._hazard_compass_k)
+        if H == 0:
+            return jp.concatenate([hazard_lidar, jp.zeros((k * 2,))])
+        rel_xy = hazard_positions[:, :2] - agent_xy
+        d2 = jp.sum(rel_xy * rel_xy, axis=1)
+        order = jp.argsort(d2)
+        k_eff = min(k, H)
+        closest = order[:k_eff]
+        if k_eff < k:
+            pad = -jp.ones((k - k_eff,), dtype=jp.int32)
+            closest = jp.concatenate([closest, pad], axis=0)
+
+        def compute_compass_for_index(idx):
+            safe_idx = jp.maximum(idx, 0)
+            world_dx = hazard_positions[safe_idx, 0] - agent_xy[0]
+            world_dy = hazard_positions[safe_idx, 1] - agent_xy[1]
+            agent_centric_dx = world_dx * cos_a + world_dy * sin_a
+            agent_centric_dy = -world_dx * sin_a + world_dy * cos_a
+            rel_vec = jp.array([agent_centric_dx, agent_centric_dy])
+            compass = rel_vec / (safe_norm(rel_vec) + 1e-8)
+            return jp.where(idx >= 0, compass, jp.zeros(2))
+
+        hazard_compasses = jax.vmap(compute_compass_for_index)(closest)
+        return jp.concatenate([hazard_lidar, hazard_compasses.reshape((-1,))])
+
+    @property
+    def hazard_obs_size(self) -> int:
+        return self._lidar_num_bins + self._hazard_compass_k * 2
+
+    # ------------------------------------------------------------------
+    # Counterfactual relabelling
+    # ------------------------------------------------------------------
+
+    def cf_view(self, data: mjx.Data) -> jp.ndarray:
+        """Agent xy, heading and the xy of the kept hazards: what the hazard obs depends on besides the floor layout."""
+        other = data.mocap_pos[self._hazard_mocap_ids_arr[self._cf_other_indices], :2]
+        return jp.concatenate([
+            data.xpos[self._agent_body][:2], self.get_agent_heading(data)[None], other.reshape(-1)
+        ])
+
+    def cf_hazard_obs(self, view: jp.ndarray, cf_positions: jp.ndarray) -> jp.ndarray:
+        """`hazard_obs` with the floor hazards at `cf_positions` [n_cf, 2]."""
+        other = view[3:].reshape(-1, 2)
+        positions = jp.zeros((self._num_hazards, 2))
+        positions = positions.at[self._cf_hazard_indices].set(cf_positions)
+        positions = positions.at[self._cf_other_indices].set(other)
+        return self.hazard_obs(view[:2], view[2], positions)
+
+    def cf_hazard_cost(self, agent_xy: jp.ndarray, cf_positions: jp.ndarray) -> jp.ndarray:
+        """Proximity cost of the floor hazards at `cf_positions` [n_cf, 2]."""
+        hazards = self._hazard_manager.hazards
+        total = jp.array(0.0)
+        for j, i in enumerate(self._cf_hazard_indices.tolist()):
+            total = total + self._proximity_cost_scaler * hazards[i].proximity_cost(agent_xy, cf_positions[j])
+        return total
+
+    def sample_cf_hazard_positions(self, rng: jax.Array, anchors: jp.ndarray) -> jp.ndarray:
+        """Fresh floor-hazard layout [n_cf, 2] around the buttons and kept hazards (`anchors`).
+
+        One pass of `_sample_layout`'s best-of-candidates placement without the
+        whole-layout retries, so it stays cheap enough to run per segment.
+        """
+        keepouts = self._hazard_keepouts[self._cf_hazard_indices]
+        n_cf = keepouts.shape[0]
+
+        def place_one(carry, i):
+            key, positions = carry
+            key, sample_key = jax.random.split(key)
+            radius = keepouts[i]
+            candidates = sample_candidate_positions(
+                sample_key, self._max_placement_attempts, radius, self._placement_extents
+            )[:, :2]
+            distances = jp.linalg.norm(candidates[:, None, :] - positions[None, :, :], axis=-1)
+            slack = distances - radius - keepouts[None, :] - self._placement_margin
+            slack = jp.min(jp.where(jp.arange(n_cf) < i, slack, jp.inf), axis=-1)
+            anchor_distances = jp.linalg.norm(candidates[:, None, :] - anchors[None, :, :], axis=-1)
+            anchor_slack = anchor_distances - radius - self._cf_anchor_keepouts[None, :] - self._placement_margin
+            slack = jp.minimum(slack, jp.min(anchor_slack, axis=-1))
+            return (key, positions.at[i].set(candidates[jp.argmax(slack)])), None
+
+        (_, positions), _ = jax.lax.scan(place_one, (rng, jp.zeros((n_cf, 2))), jp.arange(n_cf))
+        return positions
 
     def _get_metrics(self, data: mjx.Data, reward: jp.ndarray, cost: jp.ndarray,
                      dist_goal: jp.ndarray, last_dist_goal: jp.ndarray,

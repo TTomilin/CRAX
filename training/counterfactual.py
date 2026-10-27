@@ -1,11 +1,11 @@
 """Counterfactual hazard relabelling for on-policy safe RL.
 
-Pathway and Reacher hazards are non-collidable, so the agent's dynamics do not
+Pathway, Reacher and Button floor hazards are non-collidable, so the agent's dynamics do not
 depend on where the hazards are. A recorded segment can therefore be replayed
 exactly under a different hazard layout: actions, rewards, terminations and
 joint states stay the same, and only the lidar part of the observation and the
 hazard cost change. Both are recomputed from kinematics the env stores in its
-info: `cf_kin` / `cf_feet` (Pathway) or `cf_theta` (Reacher).
+info: `cf_kin` / `cf_feet` (Pathway), `cf_theta` (Reacher) or `cf_view` (Button).
 
 The relabelled segments are off-policy w.r.t. the observations they now carry,
 so the PPO trainer re-anchors their behaviour log-probs at the current policy
@@ -42,6 +42,7 @@ MODES = ('none', 'random', 'optimistic', 'adaptive', 'gated')
 GATED_MODES = ('adaptive', 'gated')
 CF_EXTRA_FIELDS = ('cf_kin', 'cf_feet', 'hazard_cost')
 REACHER_CF_EXTRA_FIELDS = ('cf_theta',)
+BUTTON_CF_EXTRA_FIELDS = ('cf_view', 'cf_first_view', 'cf_anchors', 'hazard_cost')
 
 # Distance (m) the walker may cover within one unroll segment
 _MAX_SEGMENT_TRAVEL = 4.0
@@ -242,10 +243,78 @@ def make_reacher_relabel_fn(
     return relabel_fn
 
 
+def make_button_relabel_fn(
+        environment: Any,
+        mode: str = 'optimistic',
+        num_candidates: int = 4,
+) -> Callable[..., Tuple[types.Transition, Dict[str, jax.Array]]]:
+    """`make_hazard_relabel_fn` for SafeButton.
+
+    Only the floor hazards move: gremlins (collidable and moving), buttons and
+    the wrong-button cost stay real, so the relabelled cost is the real cost
+    with the floor-hazard part swapped. `info['cf_view']` holds the agent pose
+    and kept-hazard positions behind the observation and the next observation,
+    read from the pipeline state. An auto-reset restores the first state, so
+    the next observation of a done step is rebuilt from `cf_first_view`.
+    Layouts are fixed per env, so one layout serves a whole segment.
+    """
+    env = environment.unwrapped
+    for attr in ('cf_hazard_obs', 'cf_hazard_cost', 'sample_cf_hazard_positions'):
+        if not hasattr(env, attr):
+            raise ValueError(f"Button relabelling needs a SafeButton env, got {type(env).__name__}")
+    if mode not in MODES[1:]:
+        raise ValueError(f"Unknown counterfactual mode '{mode}', expected one of {MODES[1:]}")
+    tail = env.hazard_obs_size
+    num_candidates = 1 if mode == 'random' else num_candidates
+    hazard_obs = jax.vmap(env.cf_hazard_obs, in_axes=(0, None))
+    hazard_cost = jax.vmap(env.cf_hazard_cost, in_axes=(0, None))
+
+    def relabel_segment(obs, next_obs, done, view, first_view, anchors, optimistic, key):
+        # obs/next_obs [T, D], done [T], view [T, 2, V], first_view [T, V], anchors [T, A, 2]
+        layouts = jax.vmap(env.sample_cf_hazard_positions, in_axes=(0, None))(
+            jax.random.split(key, num_candidates), anchors[0])  # [K, n_cf, 2]
+        step_cost = jax.vmap(hazard_cost, in_axes=(None, 0))(view[:, 1, :2], layouts)  # [K, T]
+        # Candidates are i.i.d., so the first one is a random layout
+        best = jnp.where(optimistic, jnp.argmin(step_cost.sum(axis=-1)), 0) if num_candidates > 1 else 0
+        layout = layouts[best]
+        next_view = jnp.where(done[:, None], first_view, view[:, 1])
+        obs = obs.at[:, -tail:].set(hazard_obs(view[:, 0], layout))
+        next_obs = next_obs.at[:, -tail:].set(hazard_obs(next_view, layout))
+        return obs, next_obs, step_cost[best]
+
+    def relabel_fn(data: types.Transition, key: jax.Array, p_optimistic: jax.Array = 1.0):
+        if not isinstance(data.observation, jax.Array):
+            raise ValueError("Counterfactual relabelling supports flat state observations only")
+        se = data.extras['state_extras']
+        num_segments = data.observation.shape[0]
+        key_gate, key_seg = jax.random.split(key)
+        optimistic = _optimistic_flags(mode, key_gate, p_optimistic, num_segments)
+        obs, next_obs, floor_cost = jax.vmap(relabel_segment)(
+            data.observation, data.next_observation, data.discount == 0, se['cf_view'], se['cf_first_view'],
+            se['cf_anchors'], optimistic, jax.random.split(key_seg, num_segments))
+        if mode == 'gated':
+            obs, next_obs, floor_cost = _keep_real(
+                ~optimistic, (obs, next_obs, floor_cost), (data.observation, data.next_observation, se['hazard_cost']))
+        cost = se['cost'] - se['hazard_cost'] + floor_cost
+        cf = data._replace(
+            observation=obs, next_observation=next_obs,
+            extras={**data.extras, 'state_extras': {**se, 'cost': cost, 'hazard_cost': floor_cost}})
+        metrics = {
+            'cf/real_hazard_cost': jnp.mean(se['hazard_cost']),
+            'cf/hazard_cost': jnp.mean(floor_cost),
+            'cf/optimistic_share': jnp.mean(optimistic),
+        }
+        return cf, metrics
+
+    return relabel_fn
+
+
 def make_relabel_fn(environment: Any, mode: str, num_candidates: int) -> Tuple[Callable[..., Any], Tuple[str, ...]]:
     """The relabelling function for `environment` and the extra rollout fields it reads."""
     if hasattr(environment.unwrapped, 'hazard_cost_from_angles'):
         return make_reacher_relabel_fn(environment, mode, num_candidates), REACHER_CF_EXTRA_FIELDS
+    if hasattr(environment.unwrapped, 'sample_cf_hazard_positions'):
+        return make_button_relabel_fn(environment, mode, num_candidates), BUTTON_CF_EXTRA_FIELDS
     return make_hazard_relabel_fn(environment, mode, num_candidates), CF_EXTRA_FIELDS
 
 

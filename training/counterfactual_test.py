@@ -261,6 +261,76 @@ class ReacherCounterfactualTest(absltest.TestCase):
     np.testing.assert_array_equal(cf.observation, reference.observation)
 
 
+class ButtonCounterfactualTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.env = envs.get_environment('safe_button_point', level=3)
+    # Short episodes so the unroll crosses auto-resets
+    self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
+
+  def _unroll(self, num_steps, num_envs=2):
+    state = jax.jit(self.wrapped.reset)(jax.random.split(jax.random.PRNGKey(0), num_envs))
+    unroll = jax.jit(
+        lambda s, k: acting.generate_unroll(
+            self.wrapped, s, _random_policy(self.env.action_size), k, num_steps,
+            extra_fields=('truncation', 'cost') + counterfactual.BUTTON_CF_EXTRA_FIELDS))
+    _, data = unroll(state, jax.random.PRNGKey(1))
+    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    return state, data
+
+  def testRelabelWithRealLayoutIsIdentity(self):
+    state, data = self._unroll(40)
+    self.assertGreater(float(jnp.sum(data.extras['state_extras']['truncation'])), 0, 'unroll should cross a reset')
+    env = self.env.unwrapped
+    floors = state.info['hazard_positions'][:, env._cf_hazard_indices, :2]
+    for i in range(floors.shape[0]):
+      segment = jax.tree_util.tree_map(lambda x: x[i:i + 1], data)
+      # A fresh relabel_fn per layout: a reused one would replay the first trace
+      relabel = counterfactual.make_button_relabel_fn(self.env, mode='random')
+      with mock.patch.object(type(env), 'sample_cf_hazard_positions',
+                             lambda env, key, anchors, layout=floors[i]: layout):
+        cf, _ = jax.jit(relabel)(segment, jax.random.PRNGKey(2))
+      np.testing.assert_allclose(cf.observation, segment.observation, atol=1e-5)
+      np.testing.assert_allclose(cf.next_observation, segment.next_observation, atol=1e-5)
+      np.testing.assert_allclose(cf.extras['state_extras']['cost'], segment.extras['state_extras']['cost'], atol=1e-5)
+
+  def testOnlyFloorHazardsMove(self):
+    state, data = self._unroll(16, num_envs=4)
+    env = self.env.unwrapped
+    cf, _ = jax.jit(counterfactual.make_button_relabel_fn(self.env, mode='random'))(data, jax.random.PRNGKey(3))
+    tail = env.hazard_obs_size
+    np.testing.assert_array_equal(cf.observation[..., :-tail], data.observation[..., :-tail])
+    self.assertGreater(float(jnp.mean(jnp.abs(cf.observation[..., -tail:] - data.observation[..., -tail:]))), 0)
+    # Gremlin collisions and wrong buttons are not floor-hazard cost and stay
+    se, cf_se = data.extras['state_extras'], cf.extras['state_extras']
+    np.testing.assert_allclose(cf_se['cost'] - cf_se['hazard_cost'], se['cost'] - se['hazard_cost'], atol=1e-5)
+
+  def testSampledLayoutsKeepClear(self):
+    env = self.env.unwrapped
+    state = jax.jit(env.reset)(jax.random.PRNGKey(4))
+    anchors = state.info['cf_anchors']
+    layouts = jax.jit(jax.vmap(lambda k: env.sample_cf_hazard_positions(k, anchors)))(
+        jax.random.split(jax.random.PRNGKey(5), 256))
+    radii = env._hazard_keepouts[env._cf_hazard_indices]
+    to_anchor = jnp.linalg.norm(layouts[:, :, None] - anchors[None, None], axis=-1)
+    clear = to_anchor >= radii[None, :, None] + env._cf_anchor_keepouts[None, None]
+    self.assertGreater(float(jnp.mean(jnp.all(clear, axis=-1))), 0.99)
+    min_x, min_y, max_x, max_y = env._placement_extents
+    self.assertTrue(bool(jnp.all((layouts[..., 0] >= min_x) & (layouts[..., 0] <= max_x)
+                                 & (layouts[..., 1] >= min_y) & (layouts[..., 1] <= max_y))))
+
+  def testOptimisticNeverCostlierThanRandom(self):
+    _, data = self._unroll(16, num_envs=64)
+    costs = {}
+    for mode in ('random', 'optimistic'):
+      relabel = counterfactual.make_button_relabel_fn(self.env, mode=mode, num_candidates=8)
+      _, metrics = jax.jit(relabel)(data, jax.random.PRNGKey(5))
+      costs[mode] = float(metrics['cf/hazard_cost'])
+    self.assertGreater(costs['random'], 0)
+    self.assertLess(costs['optimistic'], costs['random'])
+
+
 class LayoutResampleTest(absltest.TestCase):
 
   def _unroll(self, resample_layouts, num_envs=3, num_steps=40):
