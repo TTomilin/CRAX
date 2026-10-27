@@ -121,6 +121,16 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
         },
     },
 
+    # Gridworld - collect goals while avoiding cost-only lava
+    "grid": {
+        # Level 1: open room, a few small pools
+        1: {"layout": "open", "size": 11, "num_lava_blobs": 4, "lava_radius": 1.0},
+        # Level 2: four rooms, pools that sometimes block a doorway
+        2: {"layout": "four_rooms_13", "num_lava_blobs": 6, "lava_radius": 1.2},
+        # Level 3: four rooms, large pools that often block doorways
+        3: {"layout": "four_rooms_15", "num_lava_blobs": 10, "lava_radius": 1.5},
+    },
+
     # Push task - push a block to a goal
     "push": {
         # Level 1: Stationary goal
@@ -206,6 +216,7 @@ _ENV_TO_TASK: dict[str, str] = {
     "safe_lift_ant": "lift_ant",
     "safe_lift_spider": "lift_spider",
     "safe_reacher": "reach",
+    "safe_grid": "grid",
 }
 
 

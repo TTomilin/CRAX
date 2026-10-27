@@ -331,6 +331,67 @@ class ButtonCounterfactualTest(absltest.TestCase):
     self.assertLess(costs['optimistic'], costs['random'])
 
 
+class GridCounterfactualTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.env = envs.get_environment('safe_grid', level=3)
+    # Short episodes so the unroll crosses auto-resets
+    self.wrapped = envs.training.wrap(self.env, episode_length=15, action_repeat=1)
+
+  def _unroll(self, num_steps, num_envs=2):
+    state = jax.jit(self.wrapped.reset)(jax.random.split(jax.random.PRNGKey(0), num_envs))
+    unroll = jax.jit(
+        lambda s, k: acting.generate_unroll(
+            self.wrapped, s, _random_policy(self.env.action_size), k, num_steps,
+            extra_fields=('truncation', 'cost') + counterfactual.GRID_CF_EXTRA_FIELDS))
+    _, data = unroll(state, jax.random.PRNGKey(1))
+    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    return state, data
+
+  def testRelabelWithRealLayoutIsIdentity(self):
+    state, data = self._unroll(40)
+    self.assertGreater(float(jnp.sum(data.extras['state_extras']['truncation'])), 0, 'unroll should cross a reset')
+    self.assertGreater(float(jnp.sum(data.extras['state_extras']['cost'])), 0, 'random walk should touch lava')
+    lavas = state.pipeline_state.lava
+    for i in range(lavas.shape[0]):
+      segment = jax.tree_util.tree_map(lambda x: x[i:i + 1], data)
+      # A fresh relabel_fn per layout: a reused one would replay the first trace
+      relabel = counterfactual.make_grid_relabel_fn(self.env, mode='random')
+      with mock.patch.object(type(self.env.unwrapped), 'sample_lava',
+                             lambda env, key, keep_clear=None, lava=lavas[i]: lava):
+        cf, _ = jax.jit(relabel)(segment, jax.random.PRNGKey(2))
+      np.testing.assert_array_equal(cf.observation, segment.observation)
+      np.testing.assert_array_equal(cf.next_observation, segment.next_observation)
+      np.testing.assert_array_equal(cf.extras['state_extras']['cost'], segment.extras['state_extras']['cost'])
+
+  def testOnlyLavaChanges(self):
+    _, data = self._unroll(16, num_envs=4)
+    env = self.env.unwrapped
+    cf, _ = jax.jit(counterfactual.make_grid_relabel_fn(self.env, mode='random'))(data, jax.random.PRNGKey(3))
+    window = (2 * env._view_radius + 1) ** 2
+    lava = slice(4 + window, 4 + 2 * window)
+    keep = np.ones(cf.observation.shape[-1], dtype=bool)
+    keep[lava] = False
+    np.testing.assert_array_equal(cf.observation[..., keep], data.observation[..., keep])
+    self.assertGreater(float(jnp.mean(jnp.abs(cf.observation[..., lava] - data.observation[..., lava]))), 0)
+    # Goals are never on lava
+    pos, goal = env.decode_cells(cf.observation)
+    on_goal = jnp.all(pos == goal, axis=-1)
+    center = 4 + window + window // 2
+    self.assertTrue(bool(jnp.all(jnp.where(on_goal, cf.observation[..., center] == 0, True))))
+
+  def testOptimisticNeverCostlierThanRandom(self):
+    _, data = self._unroll(16, num_envs=64)
+    costs = {}
+    for mode in ('random', 'optimistic'):
+      relabel = counterfactual.make_grid_relabel_fn(self.env, mode=mode, num_candidates=8)
+      _, metrics = jax.jit(relabel)(data, jax.random.PRNGKey(5))
+      costs[mode] = float(metrics['cf/hazard_cost'])
+    self.assertGreater(costs['random'], 0)
+    self.assertLess(costs['optimistic'], costs['random'])
+
+
 class LayoutResampleTest(absltest.TestCase):
 
   def _unroll(self, resample_layouts, num_envs=3, num_steps=40):

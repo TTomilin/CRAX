@@ -52,6 +52,7 @@ TRANSLATIONS = {
     "safe_circle_point": "Point Circle",
     "safe_button_point": "Point Button",
     "safe_reacher": "Reacher Reach",
+    "safe_grid": "Lava Grid",
     "safe_lift_spider": "Spider Lift",
     "safe_lift_ant": "Ant Lift",
     "safe_lift_humanoid": "Humanoid Lift",

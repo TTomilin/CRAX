@@ -39,6 +39,7 @@ from crax.envs import safe_ant
 from crax.envs import safe_height
 from crax.envs import safe_lift
 from crax.envs import safe_pathway
+from crax.envs import safe_grid
 from crax.envs import safe_reacher
 from crax.envs import safe_spider
 from crax.envs import safe_velocity
@@ -102,6 +103,7 @@ _envs = {
     'safe_velocity_walker2d': SafeVelocityWalker2d,
     # Stand-alone tasks
     'safe_reacher': safe_reacher.SafeReacher,
+    'safe_grid': safe_grid.SafeGrid,
 }
 
 
