@@ -140,6 +140,10 @@ _TASK_DIFFICULTY_CONFIGS: dict[str, dict[int, dict[str, Any]]] = {
     # take a 3-cell run-up to jump, with gaps alternating between the ends for the walking detour
     "grid_momentum": {
         1: {"size": 31, "num_rivers": 3, "max_speed": 3, "episode_length": 400},
+        # Level 2: the same rivers, seen only through a 3x3 window and shifted further per layout, so whether
+        # a leap lands clear is unknown until it is taken
+        2: {"size": 31, "num_rivers": 3, "max_speed": 3, "episode_length": 400, "view_radius": 1,
+            "river_shift": 2},
     },
 
     # Push task - push a block to a goal

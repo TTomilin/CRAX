@@ -11,7 +11,9 @@ run, so a careless sprint lands in lava.
 
 The grid is an open room with lava in thin straight strips or, with
 `num_rivers`, in vertical rivers whose gaps alternate between the top and the
-bottom, so walking across means a long detour. With `safe_goals`
+bottom, so walking across means a long detour. A small `view_radius` hides
+what lies beyond the first lava cell, so a leap is taken without knowing
+where it lands. With `safe_goals`
 (default) the agent and goals spawn in the largest lava-free region, so every
 goal can also be reached by walking without cost.
 
@@ -55,6 +57,7 @@ class SafeGridMomentum(SafeGrid):
       num_rivers: int = 0,
       river_width: int = 2,
       river_gap: int = 2,
+      river_shift: int = 1,
       episode_length: int = 300,
       **kwargs,
   ):
@@ -66,9 +69,11 @@ class SafeGridMomentum(SafeGrid):
     self._num_rivers = num_rivers
     self._river_width = river_width
     self._river_gap = river_gap
+    self._river_shift = river_shift
     strip = (size - 2 - num_rivers * river_width) / (num_rivers + 1)
-    if num_rivers and strip < 2:
-      raise ValueError(f"{num_rivers} rivers of width {river_width} do not fit a grid of size {size}")
+    if num_rivers and strip < 2 * river_shift + 1:
+      raise ValueError(f"{num_rivers} rivers of width {river_width} shifted by up to {river_shift} "
+                       f"do not fit a grid of size {size}")
     self._river_x = np.array([1 + round((b + 1) * strip) + b * river_width for b in range(num_rivers)])
 
   # ------------------------------------------------------------------
@@ -86,14 +91,15 @@ class SafeGridMomentum(SafeGrid):
     return lava
 
   def _rivers(self, key: jax.Array) -> jax.Array:
-    """Vertical rivers, shifted by up to a cell, each with a gap at its top or bottom end.
+    """Vertical rivers, shifted by up to `river_shift` cells, each with a gap at its top or bottom end.
 
     The gaps alternate between ends, so walking from one side of the grid to the other snakes
     through every gap, while a running jump clears a river anywhere.
     """
     k_parity, k_shift = jax.random.split(key)
     parity = jax.random.randint(k_parity, (), 0, 2)
-    x0 = jp.asarray(self._river_x) + jax.random.randint(k_shift, (self._num_rivers,), -1, 2)
+    x0 = jp.asarray(self._river_x) + jax.random.randint(
+        k_shift, (self._num_rivers,), -self._river_shift, self._river_shift + 1)
     gap_top = (jp.arange(self._num_rivers) + parity) % 2 == 0
     x, y = self._cells[..., 0, None], self._cells[..., 1, None]  # [size, size, 1]
     in_river = (x >= x0) & (x < x0 + self._river_width)
